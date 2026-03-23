@@ -59,6 +59,15 @@ enum HandoffStatus {
   CLOSED
 }
 
+enum InvoiceStatus {
+  PENDING
+  PAID
+  FULFILLED
+  REFUNDED
+  FAILED
+  CANCELED
+}
+
 enum EventType {
   MESSAGE_RECEIVED
   MESSAGE_ANSWERED
@@ -67,6 +76,7 @@ enum EventType {
   MATERIAL_SENT
   PAYMENT_INVOICE_CREATED
   PAYMENT_CONFIRMED
+  PAYMENT_REFUNDED
   HANDOFF_REQUESTED
   HANDOFF_RESOLVED
 }
@@ -205,7 +215,7 @@ model Contact {
   intakeSubmissions IntakeSubmission[]
   invoices         Invoice[]
 
-  @@index([representativeId, telegramUserId])
+  @@unique([representativeId, telegramUserId])
 }
 
 model Conversation {
@@ -229,7 +239,7 @@ model Conversation {
   intakeSubmissions IntakeSubmission[]
   invoices         Invoice[]
 
-  @@index([representativeId, telegramChatId])
+  @@unique([representativeId, telegramChatId, contactId])
 }
 
 model ConversationTurn {
@@ -276,23 +286,32 @@ model HandoffRequest {
   contact              Contact          @relation(fields: [contactId], references: [id])
   conversation         Conversation?    @relation(fields: [conversationId], references: [id])
   intakeSubmission     IntakeSubmission? @relation(fields: [intakeSubmissionId], references: [id])
+
+  @@index([representativeId, status, createdAt])
 }
 
 model Invoice {
-  id               String          @id @default(cuid())
-  representativeId String
-  contactId        String
-  conversationId   String?
-  planType         PricingPlanType
-  starsAmount      Int
-  telegramInvoiceSlug String?
-  telegramChargeId String?
-  status           String          @default("PENDING")
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  representative   Representative  @relation(fields: [representativeId], references: [id])
-  contact          Contact         @relation(fields: [contactId], references: [id])
-  conversation     Conversation?   @relation(fields: [conversationId], references: [id])
+  id                      String          @id @default(cuid())
+  representativeId        String
+  contactId               String
+  conversationId          String?
+  planType                PricingPlanType
+  title                   String
+  payload                 String          @unique
+  starsAmount             Int
+  invoiceLink             String?
+  telegramPaymentChargeId String?
+  providerPaymentChargeId String?
+  status                  InvoiceStatus   @default(PENDING)
+  paidAt                  DateTime?
+  refundedAt              DateTime?
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  representative          Representative  @relation(fields: [representativeId], references: [id])
+  contact                 Contact         @relation(fields: [contactId], references: [id])
+  conversation            Conversation?   @relation(fields: [conversationId], references: [id])
+
+  @@index([representativeId, status, createdAt])
 }
 
 model EventAudit {

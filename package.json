@@ -9,8 +9,17 @@
     "dev:web": "pnpm --filter @delegate/web dev",
     "dev:bot": "pnpm --filter @delegate/bot dev",
     "registry:search:clawhub": "tsx scripts/clawhub-search.ts",
+    "docker:up": "docker compose up -d --build",
+    "docker:up:db": "docker compose up -d postgres",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "docker:ps": "docker compose ps",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
-    "db:validate": "prisma validate --schema prisma/schema.prisma"
+    "db:validate": "prisma validate --schema prisma/schema.prisma",
+    "db:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
+    "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:setup": "pnpm db:generate && pnpm db:deploy && pnpm db:seed"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

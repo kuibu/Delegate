@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.2",
     "@delegate/domain": "workspace:*",
     "@delegate/runtime": "workspace:*",
     "dotenv": "^17.2.3",

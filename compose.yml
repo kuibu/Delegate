@@ -1,0 +1,85 @@
+name: delegate
+
+x-app-environment: &app-environment
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/delegate
+  NEXT_PUBLIC_APP_URL: http://localhost:3000
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+  TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+  DEMO_REP_SLUG: ${DEMO_REP_SLUG:-lin-founder-rep}
+
+x-app-service: &app-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: delegate-app:local
+  working_dir: /app
+  environment: *app-environment
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: delegate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: delegate
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - delegate-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d delegate"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  migrate:
+    <<: *app-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -lc "pnpm db:deploy && pnpm db:seed"
+    restart: "no"
+
+  web:
+    <<: *app-service
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: >
+      sh -lc "pnpm --filter @delegate/web exec next start -H 0.0.0.0 -p 3000"
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then((res)=>{if(!res.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  bot:
+    <<: *app-service
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: >
+      sh -lc "if [ -n \"$$TELEGRAM_BOT_TOKEN\" ]; then
+        pnpm --filter @delegate/bot start;
+      else
+        echo 'TELEGRAM_BOT_TOKEN is empty. Bot container is idle; set the token to enable Telegram runtime.';
+        tail -f /dev/null;
+      fi"
+
+volumes:
+  delegate-postgres-data:

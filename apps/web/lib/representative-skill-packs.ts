@@ -6,7 +6,6 @@ import {
 import { fetchClawHubRepresentativeSkill } from "@delegate/registry";
 import {
   GroupActivation,
-  PricingPlanType,
   SkillPackSource,
   type Prisma,
 } from "@prisma/client";
@@ -30,7 +29,6 @@ export type RepresentativeSkillPackSnapshot = {
   skillPacks: DashboardRepresentativeSkillPack[];
 };
 
-const DEMO_OWNER_TELEGRAM_ID = "demo-owner-lin";
 const linkedSkillPackInclude = {
   skillPack: true,
 } as const;
@@ -55,9 +53,11 @@ type PersistableSkillPack = Pick<
 export async function getRepresentativeSkillPackSnapshot(
   representativeSlug: string,
 ): Promise<RepresentativeSkillPackSnapshot | null> {
-  try {
-    await ensureRepresentativeSeeded(representativeSlug);
+  if (shouldUseStaticFallbackMode(representativeSlug)) {
+    return cloneRepresentativeSnapshot(getOrCreateDemoFallbackSnapshot());
+  }
 
+  try {
     const representative = await prisma.representative.findUnique({
       where: { slug: representativeSlug },
       include: {
@@ -102,9 +102,11 @@ export async function installClawHubSkillPackForRepresentative(params: {
     throw new Error(`ClawHub skill "${params.skillPackSlug}" was not found.`);
   }
 
-  try {
-    await ensureRepresentativeSeeded(params.representativeSlug);
+  if (shouldUseStaticFallbackMode(params.representativeSlug)) {
+    return installClawHubSkillPackInDemoFallback(discovered);
+  }
 
+  try {
     const representative = await prisma.representative.findUnique({
       where: { slug: params.representativeSlug },
     });
@@ -180,9 +182,11 @@ export async function setRepresentativeSkillPackEnabled(params: {
   linkId: string;
   enabled: boolean;
 }): Promise<DashboardRepresentativeSkillPack> {
-  try {
-    await ensureRepresentativeSeeded(params.representativeSlug);
+  if (shouldUseStaticFallbackMode(params.representativeSlug)) {
+    return setDemoFallbackSkillPackEnabled(params.linkId, params.enabled);
+  }
 
+  try {
     const link = await prisma.representativeSkillPack.findFirst({
       where: {
         id: params.linkId,
@@ -215,129 +219,6 @@ export async function setRepresentativeSkillPackEnabled(params: {
     }
     throw error;
   }
-}
-
-async function ensureRepresentativeSeeded(representativeSlug: string): Promise<void> {
-  if (representativeSlug !== demoRepresentative.slug) {
-    return;
-  }
-
-  await prisma.$transaction(async (tx) => {
-    const owner = await tx.owner.upsert({
-      where: { telegramUserId: DEMO_OWNER_TELEGRAM_ID },
-      create: {
-        telegramUserId: DEMO_OWNER_TELEGRAM_ID,
-        displayName: demoRepresentative.ownerName,
-        handle: "lin",
-        timezone: "Asia/Shanghai",
-      },
-      update: {
-        displayName: demoRepresentative.ownerName,
-        handle: "lin",
-        timezone: "Asia/Shanghai",
-      },
-    });
-
-    const representative = await tx.representative.upsert({
-      where: { slug: demoRepresentative.slug },
-      create: {
-        ownerId: owner.id,
-        slug: demoRepresentative.slug,
-        displayName: demoRepresentative.name,
-        roleSummary: demoRepresentative.tagline,
-        tone: demoRepresentative.tone,
-        publicMode: true,
-        groupModeEnabled: true,
-        groupActivation: mapGroupActivationToDb(demoRepresentative.groupActivation),
-        humanInLoop: true,
-        freeReplyLimit: demoRepresentative.contract.freeReplyLimit,
-        freeMonthlyCredit: 100,
-        allowedSkills: demoRepresentative.skills,
-        actionGate: demoRepresentative.actionGate,
-      },
-      update: {
-        ownerId: owner.id,
-        displayName: demoRepresentative.name,
-        roleSummary: demoRepresentative.tagline,
-        tone: demoRepresentative.tone,
-        groupActivation: mapGroupActivationToDb(demoRepresentative.groupActivation),
-        allowedSkills: demoRepresentative.skills,
-        actionGate: demoRepresentative.actionGate,
-      },
-    });
-
-    const existingKnowledgePack = await tx.knowledgePack.findUnique({
-      where: { representativeId: representative.id },
-    });
-    if (!existingKnowledgePack) {
-      await tx.knowledgePack.create({
-        data: {
-          representativeId: representative.id,
-          identitySummary: demoRepresentative.knowledgePack.identitySummary,
-          faq: demoRepresentative.knowledgePack.faq,
-          materials: demoRepresentative.knowledgePack.materials,
-          policies: demoRepresentative.knowledgePack.policies,
-        },
-      });
-    }
-
-    const pricingPlanCount = await tx.pricingPlan.count({
-      where: { representativeId: representative.id },
-    });
-    if (pricingPlanCount === 0) {
-      await tx.pricingPlan.createMany({
-        data: demoRepresentative.pricing.map((plan) => ({
-          representativeId: representative.id,
-          type: mapPricingPlanType(plan.tier),
-          name: plan.name,
-          starsAmount: plan.stars,
-          summary: plan.summary,
-          includedReplies: plan.includedReplies,
-          includesPriorityHandoff: plan.includesPriorityHandoff,
-        })),
-      });
-    }
-
-    for (const pack of demoRepresentative.skillPacks) {
-      const persistedSkillPack = buildPersistedSkillPackFields(pack);
-      const skillPack = await tx.skillPack.upsert({
-        where: {
-          source_slug: {
-            source: mapSkillPackSourceToDb(pack.source),
-            slug: pack.slug,
-          },
-        },
-        create: {
-          source: mapSkillPackSourceToDb(pack.source),
-          slug: pack.slug,
-          ...persistedSkillPack,
-        },
-        update: persistedSkillPack,
-      });
-
-      const existingLink = await tx.representativeSkillPack.findUnique({
-        where: {
-          representativeId_skillPackId: {
-            representativeId: representative.id,
-            skillPackId: skillPack.id,
-          },
-        },
-      });
-
-      if (!existingLink) {
-        await tx.representativeSkillPack.create({
-          data: {
-            representativeId: representative.id,
-            skillPackId: skillPack.id,
-            enabled: pack.enabled,
-            installStatus: pack.installStatus,
-            installedVersion: pack.version ?? null,
-            installedAt: pack.installStatus === "available" ? null : new Date(),
-          },
-        });
-      }
-    }
-  });
 }
 
 function serializeLinkedSkillPack(
@@ -493,6 +374,10 @@ function shouldUseDemoFallback(error: unknown, representativeSlug: string): bool
   return representativeSlug === demoRepresentative.slug && isPrismaUnavailableError(error);
 }
 
+function shouldUseStaticFallbackMode(representativeSlug: string): boolean {
+  return representativeSlug === demoRepresentative.slug && !process.env.DATABASE_URL?.trim();
+}
+
 function isPrismaUnavailableError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -514,33 +399,6 @@ function parseCapabilityTags(value: Prisma.JsonValue): string[] {
     .filter((entry): entry is string => typeof entry === "string")
     .map((entry) => entry.trim())
     .filter(Boolean);
-}
-
-function mapPricingPlanType(tier: string): PricingPlanType {
-  switch (tier) {
-    case "free":
-      return PricingPlanType.FREE;
-    case "pass":
-      return PricingPlanType.PASS;
-    case "deep_help":
-      return PricingPlanType.DEEP_HELP;
-    case "sponsor":
-      return PricingPlanType.SPONSOR;
-    default:
-      return PricingPlanType.FREE;
-  }
-}
-
-function mapGroupActivationToDb(value: DomainGroupActivation): GroupActivation {
-  switch (value) {
-    case "mention_only":
-      return GroupActivation.MENTION_ONLY;
-    case "always":
-      return GroupActivation.ALWAYS;
-    case "reply_or_mention":
-    default:
-      return GroupActivation.REPLY_OR_MENTION;
-  }
 }
 
 function mapGroupActivationFromDb(value: GroupActivation): DomainGroupActivation {

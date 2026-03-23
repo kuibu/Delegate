@@ -45,6 +45,9 @@ importers:
       '@delegate/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      '@prisma/client':
+        specifier: ^6.19.2
+        version: 6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
       dotenv:
         specifier: ^17.2.3
         version: 17.3.1

@@ -16,8 +16,9 @@ This repository starts with the narrowest useful wedge:
 - Shared domain models for representatives, contracts, plans, handoff, and action gates
 - ClawHub-backed skill registry primitives for future representative skill packs
 - A deterministic policy engine that decides whether to answer, collect intake, hand off, or charge
-- A public representative page and dashboard stub in Next.js
-- A Prisma schema for the core product entities
+- A public representative page and an owner dashboard with inbox + billing snapshots
+- Telegram Stars invoice handling that writes back into conversations, wallet state, and owner inbox
+- A Prisma schema, initial Postgres migration, and deterministic demo seed for the core product entities
 
 ## Why this architecture
 
@@ -54,12 +55,30 @@ prisma/
 
 ```bash
 pnpm install
+pnpm docker:up
 cp .env.example .env
 pnpm typecheck
 pnpm test
 pnpm registry:search:clawhub "qualification"
+```
+
+`pnpm docker:up` now boots the whole local stack with Docker Compose: `postgres` + `migrate` + `web`, and `bot` joins automatically when `TELEGRAM_BOT_TOKEN` is set in your shell or `.env`. The web app is exposed at `http://localhost:3000`.
+
+If you only want the database container for local non-Docker app development, use:
+
+```bash
+pnpm docker:up:db
+pnpm db:setup
 pnpm dev:web
 pnpm dev:bot
+```
+
+Useful Docker commands:
+
+```bash
+pnpm docker:ps
+pnpm docker:logs
+pnpm docker:down
 ```
 
 ## Current MVP slice
@@ -71,6 +90,8 @@ The first implemented slice is `Founder Representative / private chat / FAQ + in
 - free vs paid continuation
 - collaboration and pricing intake
 - human handoff routing
+- owner inbox status flow
+- Telegram Stars invoice creation + payment confirmation persistence
 - explicit deny / ask-first / allow action gating
 
 The next delivery slices are documented in [docs/roadmap.md](./docs/roadmap.md).

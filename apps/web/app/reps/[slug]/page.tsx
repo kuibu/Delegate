@@ -42,6 +42,7 @@ export default async function RepresentativePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  const telegramBotUsername = process.env.TELEGRAM_BOT_USERNAME?.replace(/^@/, "");
 
   if (slug !== demoRepresentative.slug) {
     notFound();
@@ -261,6 +262,18 @@ export default async function RepresentativePage({
                   <span className="chip chip-safe">priority handoff</span>
                 ) : null}
               </div>
+              {telegramBotUsername ? (
+                <div className="button-row">
+                  <a
+                    className={plan.tier === "free" ? "button-secondary" : "button-primary"}
+                    href={buildTelegramPlanLink(telegramBotUsername, plan.tier)}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {plan.tier === "free" ? "Open in Telegram" : "Buy in Telegram"}
+                  </a>
+                </div>
+              ) : null}
             </article>
           ))}
         </div>
@@ -274,4 +287,12 @@ export default async function RepresentativePage({
       </section>
     </main>
   );
+}
+
+function buildTelegramPlanLink(botUsername: string, tier: (typeof demoRepresentative.pricing)[number]["tier"]): string {
+  if (tier === "free") {
+    return `https://t.me/${botUsername}?start=${demoRepresentative.slug}`;
+  }
+
+  return `https://t.me/${botUsername}?start=buy-${tier.replace(/_/g, "-")}`;
 }

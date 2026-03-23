@@ -1,0 +1,11 @@
+.git
+.gstack
+.next
+.turbo
+coverage
+dist
+node_modules
+.pnpm-store
+.env
+.env.local
+*.log
