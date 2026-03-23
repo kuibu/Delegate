@@ -15,7 +15,8 @@
     "baseUrl": ".",
     "paths": {
       "@delegate/domain": ["packages/domain/src/index.ts"],
-      "@delegate/runtime": ["packages/runtime/src/index.ts"]
+      "@delegate/runtime": ["packages/runtime/src/index.ts"],
+      "@delegate/registry": ["packages/registry/src/index.ts"]
     }
   }
 }

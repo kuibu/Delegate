@@ -38,6 +38,10 @@ export const representativeSkillSchema = z.enum([
   "paid_unlock",
 ]);
 
+export const skillPackSourceSchema = z.enum(["builtin", "owner_upload", "clawhub"]);
+
+export const groupActivationSchema = z.enum(["mention_only", "reply_or_mention", "always"]);
+
 export const planTierSchema = z.enum(["free", "pass", "deep_help", "sponsor"]);
 
 export const gateModeSchema = z.enum(["allow", "ask_first", "deny"]);
@@ -109,6 +113,22 @@ export const knowledgePackSchema = z.object({
 
 export const actionGateSchema = z.record(actionKeySchema, gateModeSchema);
 
+export const skillPackSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  displayName: z.string(),
+  source: skillPackSourceSchema,
+  summary: z.string(),
+  version: z.string().optional(),
+  sourceUrl: z.string().url().optional(),
+  ownerHandle: z.string().optional(),
+  verificationTier: z.string().optional(),
+  capabilityTags: z.array(z.string()),
+  executesCode: z.boolean(),
+  enabled: z.boolean(),
+  installStatus: z.enum(["available", "installed", "update_available"]),
+});
+
 export const representativeSchema = z.object({
   id: z.string(),
   slug: z.string(),
@@ -118,7 +138,9 @@ export const representativeSchema = z.object({
   tagline: z.string(),
   tone: z.string(),
   languages: z.array(z.string()),
+  groupActivation: groupActivationSchema,
   skills: z.array(representativeSkillSchema),
+  skillPacks: z.array(skillPackSchema),
   knowledgePack: knowledgePackSchema,
   contract: conversationContractSchema,
   pricing: z.array(pricingPlanSchema),
@@ -130,6 +152,8 @@ export type Channel = z.infer<typeof channelSchema>;
 export type AudienceRole = z.infer<typeof audienceRoleSchema>;
 export type KnowledgeDocument = z.infer<typeof knowledgeDocumentSchema>;
 export type RepresentativeSkill = z.infer<typeof representativeSkillSchema>;
+export type SkillPackSource = z.infer<typeof skillPackSourceSchema>;
+export type GroupActivation = z.infer<typeof groupActivationSchema>;
 export type PlanTier = z.infer<typeof planTierSchema>;
 export type GateMode = z.infer<typeof gateModeSchema>;
 export type ActionKey = z.infer<typeof actionKeySchema>;
@@ -137,4 +161,5 @@ export type InquiryIntent = z.infer<typeof inquiryIntentSchema>;
 export type PricingPlan = z.infer<typeof pricingPlanSchema>;
 export type ConversationContract = z.infer<typeof conversationContractSchema>;
 export type KnowledgePack = z.infer<typeof knowledgePackSchema>;
+export type SkillPack = z.infer<typeof skillPackSchema>;
 export type Representative = z.infer<typeof representativeSchema>;

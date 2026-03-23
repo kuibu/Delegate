@@ -145,13 +145,24 @@ The boundary is a first-class product feature, not a prompt convention.
 - `grammY` for the Telegram runtime
 - `Prisma + Postgres` for persisted conversations, leads, handoffs, and billing state
 - shared `zod` schemas for the boundary between runtime, UI, and future APIs
+- `ClawHub` as a discovery source for non-privileged representative skill packs
 
 ## Telegram-specific product choices
 
 - Start with private chat only, but keep group mention mode in the runtime contract.
+- Treat group activation as a first-class policy: default to `reply_or_mention`, not ambient listening.
 - Use deep links as the main acquisition primitive.
 - Treat Stars as the default payment surface for user-facing continuation plans.
 - Default to conservative group behavior: only answer in groups when explicitly addressed.
+
+## External skill registry policy
+
+OpenClaw's ClawHub pattern is worth adopting, but with a narrower trust boundary than OpenClaw itself.
+
+- Delegate may discover and version representative skill packs from ClawHub.
+- Delegate should store source, version, install time, and verification metadata for each installed pack.
+- Delegate should not treat ClawHub code plugins as executable authority inside the public representative runtime.
+- Only declarative or explicitly reviewed representative workflows should be allowed into production reps.
 
 ## Official Telegram references
 

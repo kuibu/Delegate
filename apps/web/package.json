@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@delegate/registry": "workspace:*",
+    "@prisma/client": "^6.19.2",
     "@delegate/domain": "workspace:*",
     "next": "^16.2.1",
     "react": "^19.2.0",

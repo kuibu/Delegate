@@ -30,6 +30,12 @@ const denyList = [
   "做不可逆商业承诺",
 ];
 
+const groupActivationLabels = {
+  mention_only: "仅 mention",
+  reply_or_mention: "reply 或 mention",
+  always: "始终响应",
+} as const;
+
 export default async function RepresentativePage({
   params,
 }: {
@@ -105,6 +111,9 @@ export default async function RepresentativePage({
             免费规则：前 {demoRepresentative.contract.freeReplyLimit} 条回复适合基础问答与资料领取；更深的合作判断、
             报价采集和预约意向会引导到付费续用或人工转接。
           </p>
+          <p className="footer-note">
+            群组激活策略：{groupActivationLabels[demoRepresentative.groupActivation]}。
+          </p>
         </article>
       </section>
 
@@ -139,6 +148,47 @@ export default async function RepresentativePage({
               ))}
             </ul>
           </article>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Skill Sources</p>
+            <h2>技能包可以有来源，但不能有越权</h2>
+          </div>
+          <p className="section-copy">参考 OpenClaw 的 ClawHub 习惯后，这里区分了 builtin 与 registry-backed skill packs。</p>
+        </div>
+
+        <div className="card-grid two-up">
+          {demoRepresentative.skillPacks.map((skillPack) => (
+            <article className="panel list-card" key={skillPack.id}>
+              <span className="kicker">
+                {skillPack.source === "clawhub" ? "ClawHub" : "Built-in"} · {skillPack.installStatus}
+              </span>
+              <h3>{skillPack.displayName}</h3>
+              <p>{skillPack.summary}</p>
+              <div className="chip-row">
+                {skillPack.version ? <span className="chip">v{skillPack.version}</span> : null}
+                {skillPack.ownerHandle ? <span className="chip">@{skillPack.ownerHandle}</span> : null}
+                {skillPack.verificationTier ? (
+                  <span className="chip chip-safe">{skillPack.verificationTier}</span>
+                ) : null}
+              </div>
+              <ul className="list">
+                {skillPack.capabilityTags.map((tag) => (
+                  <li className="list-item" key={tag}>
+                    {tag}
+                  </li>
+                ))}
+              </ul>
+              <p className="footer-note">
+                {skillPack.executesCode
+                  ? "This pack executes code and would require extra review."
+                  : "This pack is currently modeled as declarative/non-privileged for public runtime safety."}
+              </p>
+            </article>
+          ))}
         </div>
       </section>
 

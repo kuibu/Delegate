@@ -8,6 +8,7 @@
     "test": "turbo run test",
     "dev:web": "pnpm --filter @delegate/web dev",
     "dev:bot": "pnpm --filter @delegate/bot dev",
+    "registry:search:clawhub": "tsx scripts/clawhub-search.ts",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:validate": "prisma validate --schema prisma/schema.prisma"
   },

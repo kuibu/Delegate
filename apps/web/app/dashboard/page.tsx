@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { DashboardSkillPacks } from "./dashboard-skill-packs";
+
 const metrics = [
   { label: "今日新会话", value: "18", detail: "其中 6 个来自群组 mention 导流" },
   { label: "付费转化", value: "3", detail: "2 个 Pass，1 个 Deep Help" },
@@ -99,6 +101,8 @@ export default function DashboardPage() {
           </article>
         </div>
       </section>
+
+      <DashboardSkillPacks representativeSlug="lin-founder-rep" />
     </main>
   );
 }

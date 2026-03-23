@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   createConversationPlan,
   evaluateActionGate,
+  resolveTelegramGroupHandling,
   renderReplyPreview,
 } from "../src/index";
 
@@ -105,5 +106,43 @@ describe("conversation planning", () => {
 
     expect(plan.intent).toBe("refund");
     expect(plan.nextStep).toBe("ask_owner");
+  });
+});
+
+describe("telegram group gating", () => {
+  it("always handles private chats", () => {
+    const result = resolveTelegramGroupHandling({
+      chatType: "private",
+      activation: "mention_only",
+      wasMentioned: false,
+      isReplyToRepresentative: false,
+    });
+
+    expect(result.shouldHandle).toBe(true);
+    expect(result.reason).toBe("private_chat");
+  });
+
+  it("allows reply-based activation when configured", () => {
+    const result = resolveTelegramGroupHandling({
+      chatType: "group",
+      activation: "reply_or_mention",
+      wasMentioned: false,
+      isReplyToRepresentative: true,
+    });
+
+    expect(result.shouldHandle).toBe(true);
+    expect(result.reason).toBe("reply");
+  });
+
+  it("ignores ambient group traffic when mention_only is active", () => {
+    const result = resolveTelegramGroupHandling({
+      chatType: "supergroup",
+      activation: "mention_only",
+      wasMentioned: false,
+      isReplyToRepresentative: true,
+    });
+
+    expect(result.shouldHandle).toBe(false);
+    expect(result.reason).toBe("ignored");
   });
 });

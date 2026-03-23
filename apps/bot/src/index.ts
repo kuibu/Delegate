@@ -1,7 +1,11 @@
 import "dotenv/config";
 
 import { demoRepresentative } from "@delegate/domain";
-import { createConversationPlan, renderReplyPreview } from "@delegate/runtime";
+import {
+  createConversationPlan,
+  renderReplyPreview,
+  resolveTelegramGroupHandling,
+} from "@delegate/runtime";
 import { Bot } from "grammy";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -61,7 +65,14 @@ bot.on("message:text", async (ctx) => {
     typeof me.username === "string" &&
     rawText.toLowerCase().includes(`@${me.username.toLowerCase()}`);
 
-  if (!isPrivate && !isReplyToBot && !mentionsBot) {
+  const groupHandling = resolveTelegramGroupHandling({
+    chatType: ctx.chat.type,
+    activation: demoRepresentative.groupActivation,
+    wasMentioned: mentionsBot,
+    isReplyToRepresentative: isReplyToBot,
+  });
+
+  if (!groupHandling.shouldHandle) {
     return;
   }
 
