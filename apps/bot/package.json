@@ -1,0 +1,17 @@
+{
+  "name": "@delegate/bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@delegate/domain": "workspace:*",
+    "@delegate/runtime": "workspace:*",
+    "dotenv": "^17.2.3",
+    "grammy": "^1.41.1"
+  }
+}

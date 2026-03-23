@@ -1,0 +1,260 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Channel {
+  PRIVATE_CHAT
+  GROUP_MENTION
+  GROUP_REPLY
+  CHANNEL_ENTRY
+}
+
+enum PricingPlanType {
+  FREE
+  PASS
+  DEEP_HELP
+  SPONSOR
+}
+
+enum AudienceRole {
+  LEAD
+  PARTNER
+  CANDIDATE
+  MEDIA
+  COMMUNITY
+  OTHER
+}
+
+enum ContactStage {
+  NEW
+  QUALIFIED
+  PENDING_PAYMENT
+  WAITING_ON_OWNER
+  WON
+  LOST
+}
+
+enum HandoffStatus {
+  OPEN
+  REVIEWING
+  ACCEPTED
+  DECLINED
+  CLOSED
+}
+
+enum EventType {
+  MESSAGE_RECEIVED
+  MESSAGE_ANSWERED
+  INTAKE_STARTED
+  INTAKE_SUBMITTED
+  MATERIAL_SENT
+  PAYMENT_INVOICE_CREATED
+  PAYMENT_CONFIRMED
+  HANDOFF_REQUESTED
+  HANDOFF_RESOLVED
+}
+
+model Owner {
+  id              String           @id @default(cuid())
+  telegramUserId  String?          @unique
+  displayName     String
+  handle          String?
+  timezone        String           @default("UTC")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  wallet          Wallet?
+  representatives Representative[]
+}
+
+model Wallet {
+  id                String   @id @default(cuid())
+  ownerId           String   @unique
+  balanceCredits    Int      @default(0)
+  sponsorPoolCredit Int      @default(0)
+  starsBalance      Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  owner             Owner    @relation(fields: [ownerId], references: [id])
+}
+
+model Representative {
+  id                String            @id @default(cuid())
+  ownerId           String
+  slug              String            @unique
+  displayName       String
+  roleSummary       String
+  tone              String
+  avatarUrl         String?
+  publicMode        Boolean           @default(true)
+  groupModeEnabled  Boolean           @default(false)
+  humanInLoop       Boolean           @default(true)
+  freeReplyLimit    Int               @default(4)
+  freeMonthlyCredit Int               @default(100)
+  allowedSkills     Json
+  actionGate        Json
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  owner             Owner             @relation(fields: [ownerId], references: [id])
+  conversations     Conversation[]
+  contacts          Contact[]
+  events            EventAudit[]
+  handoffRequests   HandoffRequest[]
+  intakeSubmissions IntakeSubmission[]
+  invoices          Invoice[]
+  knowledgePack     KnowledgePack?
+  pricingPlans      PricingPlan[]
+}
+
+model KnowledgePack {
+  id               String         @id @default(cuid())
+  representativeId String         @unique
+  identitySummary  String
+  faq              Json
+  materials        Json
+  policies         Json
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  representative   Representative @relation(fields: [representativeId], references: [id])
+}
+
+model PricingPlan {
+  id                     String          @id @default(cuid())
+  representativeId       String
+  type                   PricingPlanType
+  name                   String
+  starsAmount            Int
+  summary                String
+  includedReplies        Int
+  includesPriorityHandoff Boolean       @default(false)
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+  representative         Representative  @relation(fields: [representativeId], references: [id])
+}
+
+model Contact {
+  id               String            @id @default(cuid())
+  representativeId String
+  telegramUserId   String
+  username         String?
+  displayName      String?
+  role             AudienceRole      @default(OTHER)
+  stage            ContactStage      @default(NEW)
+  isPaid           Boolean           @default(false)
+  source           String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  lastSeenAt       DateTime          @default(now())
+  representative   Representative    @relation(fields: [representativeId], references: [id])
+  conversations    Conversation[]
+  events           EventAudit[]
+  handoffRequests  HandoffRequest[]
+  intakeSubmissions IntakeSubmission[]
+  invoices         Invoice[]
+
+  @@index([representativeId, telegramUserId])
+}
+
+model Conversation {
+  id               String            @id @default(cuid())
+  representativeId String
+  contactId        String
+  telegramChatId   String
+  channel          Channel
+  state            String            @default("ACTIVE")
+  freeRepliesUsed  Int               @default(0)
+  passUnlockedAt   DateTime?
+  deepHelpUnlockedAt DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  lastMessageAt    DateTime          @default(now())
+  representative   Representative    @relation(fields: [representativeId], references: [id])
+  contact          Contact           @relation(fields: [contactId], references: [id])
+  turns            ConversationTurn[]
+  events           EventAudit[]
+  handoffRequests  HandoffRequest[]
+  intakeSubmissions IntakeSubmission[]
+  invoices         Invoice[]
+
+  @@index([representativeId, telegramChatId])
+}
+
+model ConversationTurn {
+  id             String       @id @default(cuid())
+  conversationId String
+  direction      String
+  messageText    String
+  intent         String?
+  summary        String?
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+}
+
+model IntakeSubmission {
+  id                 String          @id @default(cuid())
+  representativeId   String
+  contactId          String
+  conversationId     String?
+  requestType        String
+  payload            Json
+  priorityScore      Int             @default(0)
+  recommendedNextStep String
+  createdAt          DateTime        @default(now())
+  representative     Representative  @relation(fields: [representativeId], references: [id])
+  contact            Contact         @relation(fields: [contactId], references: [id])
+  conversation       Conversation?   @relation(fields: [conversationId], references: [id])
+  handoffRequests    HandoffRequest[]
+}
+
+model HandoffRequest {
+  id                   String           @id @default(cuid())
+  representativeId     String
+  contactId            String
+  conversationId       String?
+  intakeSubmissionId   String?
+  reason               String
+  summary              String
+  recommendedPriority  Int              @default(0)
+  recommendedOwnerAction String
+  status               HandoffStatus    @default(OPEN)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  representative       Representative   @relation(fields: [representativeId], references: [id])
+  contact              Contact          @relation(fields: [contactId], references: [id])
+  conversation         Conversation?    @relation(fields: [conversationId], references: [id])
+  intakeSubmission     IntakeSubmission? @relation(fields: [intakeSubmissionId], references: [id])
+}
+
+model Invoice {
+  id               String          @id @default(cuid())
+  representativeId String
+  contactId        String
+  conversationId   String?
+  planType         PricingPlanType
+  starsAmount      Int
+  telegramInvoiceSlug String?
+  telegramChargeId String?
+  status           String          @default("PENDING")
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  representative   Representative  @relation(fields: [representativeId], references: [id])
+  contact          Contact         @relation(fields: [contactId], references: [id])
+  conversation     Conversation?   @relation(fields: [conversationId], references: [id])
+}
+
+model EventAudit {
+  id               String          @id @default(cuid())
+  representativeId String
+  contactId        String?
+  conversationId   String?
+  type             EventType
+  payload          Json
+  createdAt        DateTime        @default(now())
+  representative   Representative  @relation(fields: [representativeId], references: [id])
+  contact          Contact?        @relation(fields: [contactId], references: [id])
+  conversation     Conversation?   @relation(fields: [conversationId], references: [id])
+}

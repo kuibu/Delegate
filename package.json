@@ -1,0 +1,27 @@
+{
+  "name": "delegate",
+  "private": true,
+  "packageManager": "pnpm@10.23.0",
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "dev:web": "pnpm --filter @delegate/web dev",
+    "dev:bot": "pnpm --filter @delegate/bot dev",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:validate": "prisma validate --schema prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "prisma": "^6.19.2",
+    "tsx": "^4.21.0",
+    "turbo": "^2.8.20",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.2"
+  }
+}
