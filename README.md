@@ -51,6 +51,7 @@ packages/
   web-ui/       Shared design system and control-plane UI primitives
 docs/
   architecture.md
+  delegate-architecture-decisions.md
   openclaw-adoption.md
   openviking-integration.md
   roadmap.md
@@ -146,3 +147,5 @@ Provider settings:
 - Volcengine path: `OPENVIKING_PROVIDER=volcengine`, `ARK_API_KEY`, optional `ARK_API_BASE`
 
 More detail lives in [docs/openviking-integration.md](./docs/openviking-integration.md).
+
+The forward-looking architecture decisions, including the isolated compute plane and capability-gate direction, live in [docs/delegate-architecture-decisions.md](./docs/delegate-architecture-decisions.md).

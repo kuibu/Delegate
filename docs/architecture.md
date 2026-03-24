@@ -52,6 +52,8 @@ flowchart TD
 
 Delegate also ships a separate marketing `Site` service, but it sits outside the runtime loop and acts as the top-of-funnel surface that links into the dashboard and representative app.
 
+For the next-phase target architecture, including the planned isolated compute plane and Claude-inspired capability decisions, see [docs/delegate-architecture-decisions.md](./delegate-architecture-decisions.md).
+
 ## Core runtime loop
 
 1. Telegram message enters through private chat or a clearly addressed group mention.
