@@ -1,7 +1,9 @@
 import type {
   CapabilityKind,
+  CapabilityPlanTier,
   CapabilityPolicyProfile,
   CapabilityPolicyRule,
+  PolicyChannel,
   PolicyDecision,
 } from "@delegate/compute-protocol";
 
@@ -10,6 +12,8 @@ export type EvaluateCapabilityRequest = {
   command?: string | undefined;
   path?: string | undefined;
   domain?: string | undefined;
+  channel?: PolicyChannel | undefined;
+  activePlanTier?: CapabilityPlanTier | undefined;
   estimatedCostCents?: number | undefined;
   hasPaidEntitlement?: boolean | undefined;
 };
@@ -24,6 +28,51 @@ export function evaluateCapabilityPolicy(
   profile: CapabilityPolicyProfile,
   request: EvaluateCapabilityRequest,
 ): EvaluatedCapabilityDecision {
+  const matched = evaluateCapabilityPolicyRules(profile, request);
+  if (matched) {
+    return matched;
+  }
+
+  return {
+    decision: profile.defaultDecision,
+    reason: "default_profile_decision",
+  };
+}
+
+export function evaluateCapabilityPolicyStack(
+  profiles: CapabilityPolicyProfile[],
+  request: EvaluateCapabilityRequest,
+): EvaluatedCapabilityDecision {
+  if (!profiles.length) {
+    return {
+      decision: "ask",
+      reason: "missing_policy_profiles",
+    };
+  }
+
+  const overlays = profiles.filter((profile) => profile.isManaged);
+  const baseProfile =
+    profiles.find((profile) => !profile.isManaged && profile.isDefault) ??
+    profiles.find((profile) => !profile.isManaged) ??
+    profiles[profiles.length - 1]!;
+
+  for (const profile of overlays.sort((left, right) => right.precedence - left.precedence)) {
+    const matched = evaluateCapabilityPolicyRules(profile, request);
+    if (matched) {
+      return {
+        ...matched,
+        reason: `managed_${matched.reason}`,
+      };
+    }
+  }
+
+  return evaluateCapabilityPolicy(baseProfile, request);
+}
+
+function evaluateCapabilityPolicyRules(
+  profile: CapabilityPolicyProfile,
+  request: EvaluateCapabilityRequest,
+): EvaluatedCapabilityDecision | null {
   const sortedRules = [...profile.rules].sort((left, right) => right.priority - left.priority);
 
   for (const rule of sortedRules) {
@@ -41,6 +90,18 @@ export function evaluateCapabilityPolicy(
 
     if (!matchesPattern(rule.domainPattern, request.domain)) {
       continue;
+    }
+
+    if (rule.channelCondition && request.channel !== rule.channelCondition) {
+      continue;
+    }
+
+    if (rule.requiredPlanTier && !satisfiesPlanTier(rule.requiredPlanTier, request.activePlanTier)) {
+      return {
+        decision: "deny",
+        reason: "plan_tier_required",
+        matchedRuleId: rule.id,
+      };
     }
 
     if (rule.requiresPaidPlan && !request.hasPaidEntitlement) {
@@ -78,10 +139,7 @@ export function evaluateCapabilityPolicy(
     };
   }
 
-  return {
-    decision: profile.defaultDecision,
-    reason: "default_profile_decision",
-  };
+  return null;
 }
 
 function matchesPattern(pattern: string | undefined, value: string | undefined): boolean {
@@ -98,4 +156,19 @@ function matchesPattern(pattern: string | undefined, value: string | undefined):
   } catch {
     return value.includes(pattern);
   }
+}
+
+function satisfiesPlanTier(
+  requiredPlanTier: CapabilityPlanTier,
+  activePlanTier: CapabilityPlanTier | undefined,
+): boolean {
+  if (!activePlanTier) {
+    return false;
+  }
+
+  if (requiredPlanTier === "pass") {
+    return activePlanTier === "pass" || activePlanTier === "deep_help";
+  }
+
+  return activePlanTier === requiredPlanTier;
 }

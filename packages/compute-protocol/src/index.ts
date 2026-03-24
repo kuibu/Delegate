@@ -1,7 +1,14 @@
 import { z } from "zod";
 
 export const capabilityKindSchema = z.enum(["exec", "read", "write", "process", "browser"]);
+export const capabilityPlanTierSchema = z.enum(["pass", "deep_help"]);
 export const policyDecisionSchema = z.enum(["allow", "ask", "deny"]);
+export const policyChannelSchema = z.enum([
+  "private_chat",
+  "group_mention",
+  "group_reply",
+  "channel_entry",
+]);
 export const computeSessionStatusSchema = z.enum([
   "requested",
   "starting",
@@ -52,6 +59,8 @@ export const capabilityPolicyRuleSchema = z.object({
   commandPattern: z.string().optional(),
   pathPattern: z.string().optional(),
   domainPattern: z.string().optional(),
+  channelCondition: policyChannelSchema.optional(),
+  requiredPlanTier: capabilityPlanTierSchema.optional(),
   maxCostCents: z.number().int().nonnegative().optional(),
   requiresPaidPlan: z.boolean().default(false),
   requiresHumanApproval: z.boolean().default(false),
@@ -63,6 +72,9 @@ export const capabilityPolicyProfileSchema = z.object({
   representativeId: z.string(),
   name: z.string(),
   isDefault: z.boolean(),
+  isManaged: z.boolean().default(false),
+  managedSource: z.string().optional(),
+  precedence: z.number().int().default(0),
   defaultDecision: policyDecisionSchema,
   maxSessionMinutes: z.number().int().positive(),
   maxParallelSessions: z.number().int().positive(),
@@ -244,7 +256,9 @@ export const artifactDetailResponseSchema = z.object({
 });
 
 export type CapabilityKind = z.infer<typeof capabilityKindSchema>;
+export type CapabilityPlanTier = z.infer<typeof capabilityPlanTierSchema>;
 export type PolicyDecision = z.infer<typeof policyDecisionSchema>;
+export type PolicyChannel = z.infer<typeof policyChannelSchema>;
 export type ComputeSessionStatus = z.infer<typeof computeSessionStatusSchema>;
 export type ToolExecutionStatus = z.infer<typeof toolExecutionStatusSchema>;
 export type ApprovalStatus = z.infer<typeof approvalStatusSchema>;

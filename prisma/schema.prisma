@@ -71,12 +71,15 @@ enum InvoiceStatus {
 enum EventType {
   MESSAGE_RECEIVED
   MESSAGE_ANSWERED
+  MODEL_CONTEXT_ASSEMBLED
+  MODEL_REPLY_COMPLETED
   INTAKE_STARTED
   INTAKE_SUBMITTED
   MATERIAL_SENT
   PAYMENT_INVOICE_CREATED
   PAYMENT_CONFIRMED
   PAYMENT_REFUNDED
+  HANDOFF_PREPARED
   HANDOFF_REQUESTED
   HANDOFF_RESOLVED
   COMPUTE_SESSION_REQUESTED
@@ -97,6 +100,11 @@ enum CapabilityKind {
   WRITE
   PROCESS
   BROWSER
+}
+
+enum CapabilityPlanTier {
+  PASS
+  DEEP_HELP
 }
 
 enum PolicyDecision {
@@ -492,6 +500,9 @@ model CapabilityPolicyProfile {
   representativeId   String
   name               String
   isDefault          Boolean               @default(true)
+  isManaged          Boolean               @default(false)
+  managedSource      String?
+  precedence         Int                   @default(0)
   defaultDecision    PolicyDecision        @default(ASK)
   maxSessionMinutes  Int                   @default(15)
   maxParallelSessions Int                  @default(1)
@@ -516,6 +527,8 @@ model CapabilityPolicyRule {
   commandPattern       String?
   pathPattern          String?
   domainPattern        String?
+  channelCondition     Channel?
+  requiredPlanTier     CapabilityPlanTier?
   maxCostCents         Int?
   requiresPaidPlan     Boolean               @default(false)
   requiresHumanApproval Boolean              @default(false)

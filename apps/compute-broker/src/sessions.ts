@@ -12,6 +12,7 @@ import {
   mapSessionStatusFromDb,
   serializeSession,
 } from "./serializers";
+import { computeLifecycleHooks } from "./lifecycle-hooks";
 
 export async function createComputeSession(rawInput: unknown) {
   const input = createComputeSessionRequestSchema.parse(rawInput);
@@ -126,18 +127,16 @@ export async function terminateComputeSession(sessionId: string, reason?: string
     },
   });
 
-  await prisma.eventAudit.create({
-    data: {
+  await computeLifecycleHooks.emit({
+    kind: "session_ended",
+    scope: {
       representativeId: updated.representativeId,
       contactId: updated.contactId ?? null,
       conversationId: updated.conversationId ?? null,
-      type: "COMPUTE_SESSION_TERMINATED",
-      payload: {
-        sessionId: updated.id,
-        reason: reason ?? "manual_terminate",
-        finalStatus: mapSessionStatusFromDb(updated.status),
-      },
     },
+    sessionId: updated.id,
+    reason: reason ?? "manual_terminate",
+    finalStatus: mapSessionStatusFromDb(updated.status),
   });
 
   return serializeSession(updated);

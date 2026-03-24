@@ -28,6 +28,14 @@ type ComputeSnapshot = {
       sponsorPoolCredit: number;
       starsBalance: number;
     };
+    managedProfiles: Array<{
+      id: string;
+      name: string;
+      managedSource?: string;
+      precedence: number;
+      ruleCount: number;
+      highlights: string[];
+    }>;
   };
   sessions: Array<{
     id: string;
@@ -349,6 +357,35 @@ export function DashboardCompute({
       <DashboardSignalStrip cards={platformCards} />
 
       <DashboardSurfaceGrid columns={2}>
+        <DashboardSurface
+          eyebrow={t.managedPoliciesEyebrow}
+          meta={<span className="chip">{t.managedPoliciesChip(snapshot.representative.managedProfiles.length)}</span>}
+          title={t.managedPoliciesTitle}
+        >
+          <div className="row-list">
+            {snapshot.representative.managedProfiles.length ? (
+              snapshot.representative.managedProfiles.map((profile) => (
+                <div className="skill-row" key={profile.id}>
+                  <div>
+                    <strong>{profile.name}</strong>
+                    <p>
+                      {t.managedPolicyMeta(profile.precedence, profile.ruleCount)}
+                    </p>
+                    <div className="chip-row">
+                      {profile.managedSource ? <span className="chip">{profile.managedSource}</span> : null}
+                      {profile.highlights.map((highlight) => (
+                        <span className="chip" key={highlight}>{highlight}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="muted">{t.noManagedPolicies}</p>
+            )}
+          </div>
+        </DashboardSurface>
+
         <DashboardSurface
           eyebrow={t.approvalsEyebrow}
           meta={<span className="chip">{t.pendingChip(pendingApprovals)}</span>}
@@ -678,6 +715,11 @@ const copy = {
       retention: "Retention",
       retentionDetail: "artifact 默认保留天数。",
     },
+    managedPoliciesEyebrow: "Managed Guardrails",
+    managedPoliciesTitle: "Delegate-managed overlays that take precedence over owner defaults",
+    managedPoliciesChip: (count: number) => `${count} overlays`,
+    managedPolicyMeta: (precedence: number, rules: number) => `precedence ${precedence} · ${rules} rules`,
+    noManagedPolicies: "No managed overlays loaded yet.",
     approvalsEyebrow: "Approval Queue",
     approvalsTitle: "先决定哪些请求值得放进 compute plane",
     pendingChip: (count: number) => `${count} pending`,
@@ -759,6 +801,11 @@ const copy = {
       retention: "Retention",
       retentionDetail: "Default artifact retention window.",
     },
+    managedPoliciesEyebrow: "托管护栏",
+    managedPoliciesTitle: "优先于 owner 默认策略的 Delegate 托管 overlay",
+    managedPoliciesChip: (count: number) => `${count} 个 overlay`,
+    managedPolicyMeta: (precedence: number, rules: number) => `优先级 ${precedence} · ${rules} 条规则`,
+    noManagedPolicies: "当前还没有托管 overlay。",
     approvalsEyebrow: "Approval Queue",
     approvalsTitle: "Decide which requests are worth letting into the compute plane",
     pendingChip: (count: number) => `${count} pending`,

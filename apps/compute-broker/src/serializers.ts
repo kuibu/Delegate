@@ -236,6 +236,9 @@ export function serializeCapabilityProfile(profile: {
   representativeId: string;
   name: string;
   isDefault: boolean;
+  isManaged: boolean;
+  managedSource: string | null;
+  precedence: number;
   defaultDecision: string;
   maxSessionMinutes: number;
   maxParallelSessions: number;
@@ -250,6 +253,8 @@ export function serializeCapabilityProfile(profile: {
     commandPattern: string | null;
     pathPattern: string | null;
     domainPattern: string | null;
+    channelCondition: string | null;
+    requiredPlanTier: string | null;
     maxCostCents: number | null;
     requiresPaidPlan: boolean;
     requiresHumanApproval: boolean;
@@ -261,6 +266,9 @@ export function serializeCapabilityProfile(profile: {
     representativeId: profile.representativeId,
     name: profile.name,
     isDefault: profile.isDefault,
+    isManaged: profile.isManaged,
+    ...(profile.managedSource ? { managedSource: profile.managedSource } : {}),
+    precedence: profile.precedence,
     defaultDecision: mapPolicyDecisionFromDb(profile.defaultDecision),
     maxSessionMinutes: profile.maxSessionMinutes,
     maxParallelSessions: profile.maxParallelSessions,
@@ -275,6 +283,12 @@ export function serializeCapabilityProfile(profile: {
       ...(rule.commandPattern ? { commandPattern: rule.commandPattern } : {}),
       ...(rule.pathPattern ? { pathPattern: rule.pathPattern } : {}),
       ...(rule.domainPattern ? { domainPattern: rule.domainPattern } : {}),
+      ...(rule.channelCondition
+        ? { channelCondition: rule.channelCondition.toLowerCase() as any }
+        : {}),
+      ...(rule.requiredPlanTier
+        ? { requiredPlanTier: rule.requiredPlanTier.toLowerCase() as any }
+        : {}),
       ...(typeof rule.maxCostCents === "number" ? { maxCostCents: rule.maxCostCents } : {}),
       requiresPaidPlan: rule.requiresPaidPlan,
       requiresHumanApproval: rule.requiresHumanApproval,

@@ -3,6 +3,7 @@ import "dotenv/config";
 import { demoRepresentative } from "@delegate/domain";
 import {
   AudienceRole,
+  CapabilityPlanTier,
   ComputeFilesystemMode,
   ComputeNetworkMode,
   Channel,
@@ -193,6 +194,7 @@ export async function seedDatabase(client: PrismaClient = prisma): Promise<void>
     });
 
     const defaultPolicyProfile = await upsertDefaultCapabilityPolicyProfile(tx, representative.id);
+    await upsertManagedCapabilityPolicyProfile(tx, representative.id);
 
     await tx.knowledgePack.upsert({
       where: { representativeId: representative.id },
@@ -793,6 +795,9 @@ async function upsertDefaultCapabilityPolicyProfile(
         data: {
           name: "Default Compute Guardrail",
           isDefault: true,
+          isManaged: false,
+          managedSource: null,
+          precedence: 0,
           defaultDecision: PolicyDecision.ASK,
           maxSessionMinutes: 15,
           maxParallelSessions: 1,
@@ -808,6 +813,8 @@ async function upsertDefaultCapabilityPolicyProfile(
           representativeId,
           name: "Default Compute Guardrail",
           isDefault: true,
+          isManaged: false,
+          precedence: 0,
           defaultDecision: PolicyDecision.ASK,
           maxSessionMinutes: 15,
           maxParallelSessions: 1,
@@ -865,6 +872,91 @@ async function upsertDefaultCapabilityPolicyProfile(
         priority: 70,
         requiresPaidPlan: true,
         requiresHumanApproval: true,
+      },
+    ],
+  });
+
+  return profile;
+}
+
+async function upsertManagedCapabilityPolicyProfile(
+  tx: Prisma.TransactionClient,
+  representativeId: string,
+) {
+  const profileId = `cap_profile_managed_${representativeId}`;
+  const profile = await tx.capabilityPolicyProfile.upsert({
+    where: { id: profileId },
+    update: {
+      name: "Delegate Managed Guardrail",
+      isDefault: false,
+      isManaged: true,
+      managedSource: "delegate-default",
+      precedence: 100,
+      defaultDecision: PolicyDecision.ASK,
+      maxSessionMinutes: 15,
+      maxParallelSessions: 1,
+      maxCommandSeconds: 30,
+      artifactRetentionDays: 14,
+      networkMode: ComputeNetworkMode.NO_NETWORK,
+      filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
+    },
+    create: {
+      id: profileId,
+      representativeId,
+      name: "Delegate Managed Guardrail",
+      isDefault: false,
+      isManaged: true,
+      managedSource: "delegate-default",
+      precedence: 100,
+      defaultDecision: PolicyDecision.ASK,
+      maxSessionMinutes: 15,
+      maxParallelSessions: 1,
+      maxCommandSeconds: 30,
+      artifactRetentionDays: 14,
+      networkMode: ComputeNetworkMode.NO_NETWORK,
+      filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
+    },
+  });
+
+  await tx.capabilityPolicyRule.deleteMany({
+    where: {
+      profileId: profile.id,
+    },
+  });
+
+  await tx.capabilityPolicyRule.createMany({
+    data: [
+      {
+        id: `${profile.id}_browser_paid_private`,
+        profileId: profile.id,
+        capability: "BROWSER",
+        decision: "ASK",
+        domainPattern: ".*",
+        channelCondition: Channel.PRIVATE_CHAT,
+        requiredPlanTier: CapabilityPlanTier.PASS,
+        priority: 220,
+        requiresPaidPlan: true,
+        requiresHumanApproval: true,
+      },
+      {
+        id: `${profile.id}_process_paid`,
+        profileId: profile.id,
+        capability: "PROCESS",
+        decision: "ASK",
+        requiredPlanTier: CapabilityPlanTier.PASS,
+        priority: 210,
+        requiresPaidPlan: true,
+        requiresHumanApproval: true,
+      },
+      {
+        id: `${profile.id}_write_secret_paths`,
+        profileId: profile.id,
+        capability: "WRITE",
+        decision: "DENY",
+        pathPattern: "^/workspace(?:/.*)?/(?:\\.env(?:\\..*)?|.*\\.pem|.*\\.key)$",
+        priority: 205,
+        requiresPaidPlan: false,
+        requiresHumanApproval: false,
       },
     ],
   });

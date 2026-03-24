@@ -36,6 +36,21 @@ type RepresentativeIdentity = {
       starsBalance: number;
     } | null;
   };
+  capabilityProfiles: Array<{
+    id: string;
+    name: string;
+    isManaged: boolean;
+    managedSource: string | null;
+    precedence: number;
+    rules: Array<{
+      id: string;
+      capability: string;
+      decision: string;
+      channelCondition: string | null;
+      requiredPlanTier: string | null;
+      priority: number;
+    }>;
+  }>;
 };
 
 export type RepresentativeComputeSnapshot = {
@@ -55,6 +70,14 @@ export type RepresentativeComputeSnapshot = {
       sponsorPoolCredit: number;
       starsBalance: number;
     };
+    managedProfiles: Array<{
+      id: string;
+      name: string;
+      managedSource?: string;
+      precedence: number;
+      ruleCount: number;
+      highlights: string[];
+    }>;
   };
   sessions: Array<{
     id: string;
@@ -431,6 +454,30 @@ async function getRepresentativeIdentity(
           },
         },
       },
+      capabilityProfiles: {
+        where: {
+          isManaged: true,
+        },
+        orderBy: [{ precedence: "desc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          name: true,
+          isManaged: true,
+          managedSource: true,
+          precedence: true,
+          rules: {
+            orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+            select: {
+              id: true,
+              capability: true,
+              decision: true,
+              channelCondition: true,
+              requiredPlanTier: true,
+              priority: true,
+            },
+          },
+        },
+      },
     },
   });
 }
@@ -480,6 +527,18 @@ function serializeRepresentativeIdentity(representative: RepresentativeIdentity)
       sponsorPoolCredit: representative.owner.wallet?.sponsorPoolCredit ?? 0,
       starsBalance: representative.owner.wallet?.starsBalance ?? 0,
     },
+    managedProfiles: representative.capabilityProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      ...(profile.managedSource ? { managedSource: profile.managedSource } : {}),
+      precedence: profile.precedence,
+      ruleCount: profile.rules.length,
+      highlights: profile.rules.slice(0, 3).map((rule) => {
+        const channel = rule.channelCondition ? ` @ ${rule.channelCondition.toLowerCase()}` : "";
+        const plan = rule.requiredPlanTier ? ` / ${rule.requiredPlanTier.toLowerCase()}` : "";
+        return `${rule.capability.toLowerCase()} -> ${rule.decision.toLowerCase()}${channel}${plan}`;
+      }),
+    })),
   };
 }
 

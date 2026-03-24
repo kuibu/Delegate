@@ -18,6 +18,7 @@ This repository starts with the narrowest useful wedge:
 - ClawHub-backed skill registry primitives for future representative skill packs
 - OpenViking-backed public memory and context retrieval plumbing
 - A deterministic policy engine that decides whether to answer, collect intake, hand off, or charge
+- An OpenAI Responses-backed answer lane with deterministic fallback when model credentials are missing or calls fail
 - A Telegram `/compute` lane that can create sandboxed sessions, run `exec / read / write / process / browser` requests, and surface approval outcomes back to chat
 - Three distinct Next.js surfaces: a marketing site, a public representative app, and an owner dashboard
 - Telegram Stars invoice handling that writes back into conversations, wallet state, and owner inbox
@@ -113,6 +114,23 @@ Representative-side compute examples in Telegram private chat:
 
 For real OpenViking ingestion / recall / memory extraction, set either `OPENAI_API_KEY` or `ARK_API_KEY` before starting the stack. If model credentials are missing, Delegate still starts the OpenViking service for local development, but representative sync and memory capture stay safely blocked instead of attempting real writes with fake credentials.
 
+For representative reply generation through OpenAI Responses, set:
+
+- `DELEGATE_MODEL_ENABLED=true`
+- `DELEGATE_MODEL_PROVIDER=openai`
+- `DELEGATE_OPENAI_MODEL=gpt-5-mini`
+- `DELEGATE_MODEL_MAX_INPUT_TOKENS=2400`
+- `OPENAI_API_KEY`
+
+If these are missing, the Telegram bot falls back to the existing deterministic reply previews instead of failing the conversation.
+
+The current model lane also ships a structured context assembler and lifecycle traces:
+
+- representative contract + snapshot segments
+- active collector state and recent-turn working context
+- OpenViking recall trimmed by input budget
+- lifecycle hook traces for model context assembly, model reply completion, handoff preparation, tool preflight, tool completion, and session termination
+
 If you only want the database container for local non-Docker app development, use:
 
 ```bash
@@ -178,7 +196,9 @@ The current governed compute slice now ships:
 
 - `exec / read / write / process / browser`
 - Docker-isolated execution
+- Playwright-backed deterministic browser lane
 - policy-driven `allow / ask / deny`
+- Delegate-managed policy overlays with channel / plan-tier conditions
 - approval creation and resolution for risky requests
 - stdout/stderr artifact persistence to MinIO
 - owner dashboard compute lane with session, approval, artifact, and ledger visibility

@@ -45,6 +45,12 @@ importers:
       '@delegate/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@delegate/lifecycle-hooks':
+        specifier: workspace:*
+        version: link:../../packages/lifecycle-hooks
+      '@delegate/model-runtime':
+        specifier: workspace:*
+        version: link:../../packages/model-runtime
       '@delegate/openviking':
         specifier: workspace:*
         version: link:../../packages/openviking
@@ -75,6 +81,9 @@ importers:
       '@delegate/compute-protocol':
         specifier: workspace:*
         version: link:../../packages/compute-protocol
+      '@delegate/lifecycle-hooks':
+        specifier: workspace:*
+        version: link:../../packages/lifecycle-hooks
       '@prisma/client':
         specifier: ^6.19.2
         version: 6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
@@ -191,6 +200,34 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.3.6
+
+  packages/lifecycle-hooks:
+    devDependencies:
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.0(@types/node@25.5.0)(vite@8.0.2(@types/node@25.5.0)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))
+
+  packages/model-runtime:
+    dependencies:
+      '@delegate/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@delegate/openviking':
+        specifier: workspace:*
+        version: link:../openviking
+      '@delegate/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      openai:
+        specifier: ^6.8.1
+        version: 6.32.0(zod@4.3.6)
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.0(@types/node@25.5.0)(vite@8.0.2(@types/node@25.5.0)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))
 
   packages/openviking:
     dependencies:
@@ -1479,6 +1516,18 @@ packages:
 
   ohash@2.0.11:
     resolution: {integrity: sha512-RdR9FQrFwNBNXAr4GixM8YaRZRJ5PUWbKYbE5eOsrwAjJW0q2REGcf79oYPsLyskQCZG1PLN+S/K1V00joZAoQ==}
+
+  openai@6.32.0:
+    resolution: {integrity: sha512-j3k+BjydAf8yQlcOI7WUQMQTbbF5GEIMAE2iZYCOzwwB3S2pCheaWYp+XZRNAch4jWVc52PMDGRRjutao3lLCg==}
+    hasBin: true
+    peerDependencies:
+      ws: ^8.18.0
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      ws:
+        optional: true
+      zod:
+        optional: true
 
   path-expression-matcher@1.2.0:
     resolution: {integrity: sha512-DwmPWeFn+tq7TiyJ2CxezCAirXjFxvaiD03npak3cRjlP9+OjTmSy1EpIrEbh+l6JgUundniloMLDQ/6VTdhLQ==}
@@ -3161,6 +3210,10 @@ snapshots:
   obug@2.1.1: {}
 
   ohash@2.0.11: {}
+
+  openai@6.32.0(zod@4.3.6):
+    optionalDependencies:
+      zod: 4.3.6
 
   path-expression-matcher@1.2.0: {}
 

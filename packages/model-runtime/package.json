@@ -1,0 +1,23 @@
+{
+  "name": "@delegate/model-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@delegate/domain": "workspace:*",
+    "@delegate/openviking": "workspace:*",
+    "@delegate/runtime": "workspace:*",
+    "openai": "^6.8.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.0"
+  }
+}

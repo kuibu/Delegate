@@ -1,4 +1,5 @@
 import type { PlanTier } from "@delegate/domain";
+import type { ModelContextSegmentTrace } from "@delegate/lifecycle-hooks";
 import type {
   ConversationPlan,
   ConversationUsage,
@@ -72,6 +73,11 @@ export type ConversationContextRecord = {
     conversationBudgetRemainingCredits?: number;
   };
 };
+
+type ConversationAuditScope = Pick<
+  ConversationContextRecord,
+  "representativeId" | "representativeSlug" | "contactId" | "conversationId"
+>;
 
 type StoredPlan = {
   id: string;
@@ -415,6 +421,159 @@ export async function recordOutboundReply(params: {
   });
 }
 
+export async function getRecentConversationTurns(params: {
+  conversationId: string;
+  limit?: number;
+}): Promise<
+  Array<{
+    direction: "inbound" | "outbound";
+    messageText: string;
+    intent?: string | null;
+    summary?: string | null;
+  }>
+> {
+  const turns = await prisma.conversationTurn.findMany({
+    where: {
+      conversationId: params.conversationId,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    take: params.limit ?? 6,
+    select: {
+      direction: true,
+      messageText: true,
+      intent: true,
+      summary: true,
+    },
+  });
+
+  return turns
+    .reverse()
+    .map((turn) => ({
+      direction: turn.direction === "inbound" ? "inbound" : "outbound",
+      messageText: turn.messageText,
+      ...(turn.intent ? { intent: turn.intent } : {}),
+      ...(turn.summary ? { summary: turn.summary } : {}),
+    }));
+}
+
+export async function recordModelUsage(params: {
+  context: ConversationContextRecord;
+  provider: string;
+  model: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  responseId?: string;
+}): Promise<void> {
+  const quantity =
+    typeof params.totalTokens === "number"
+      ? params.totalTokens
+      : (params.inputTokens ?? 0) + (params.outputTokens ?? 0);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.ledgerEntry.create({
+      data: {
+        representativeId: params.context.representativeId,
+        contactId: params.context.contactId,
+        conversationId: params.context.conversationId,
+        kind: "MODEL_USAGE",
+        quantity,
+        unit: "token",
+        costCents: 0,
+        creditDelta: 0,
+        notes: JSON.stringify({
+          provider: params.provider,
+          model: params.model,
+          inputTokens: params.inputTokens ?? 0,
+          outputTokens: params.outputTokens ?? 0,
+          totalTokens: quantity,
+          responseId: params.responseId ?? null,
+        }),
+      },
+    });
+
+    await tx.eventAudit.create({
+      data: {
+        representativeId: params.context.representativeId,
+        contactId: params.context.contactId,
+        conversationId: params.context.conversationId,
+        type: EventType.BILLING_LEDGER_RECORDED,
+        payload: {
+          kind: "MODEL_USAGE",
+          provider: params.provider,
+          model: params.model,
+          inputTokens: params.inputTokens ?? null,
+          outputTokens: params.outputTokens ?? null,
+          totalTokens: quantity,
+          responseId: params.responseId ?? null,
+        },
+      },
+    });
+  });
+}
+
+export async function recordModelContextAssembly(params: {
+  context: ConversationAuditScope;
+  provider: string;
+  model: string;
+  estimatedInputTokens: number;
+  segments: ModelContextSegmentTrace[];
+  selectedKnowledgeTitles: string[];
+  selectedRecallUris: string[];
+}): Promise<void> {
+  await prisma.eventAudit.create({
+    data: {
+      representativeId: params.context.representativeId,
+      contactId: params.context.contactId,
+      conversationId: params.context.conversationId,
+      type: EventType.MODEL_CONTEXT_ASSEMBLED,
+      payload: {
+        provider: params.provider,
+        model: params.model,
+        estimatedInputTokens: params.estimatedInputTokens,
+        segments: params.segments,
+        selectedKnowledgeTitles: params.selectedKnowledgeTitles,
+        selectedRecallUris: params.selectedRecallUris,
+      },
+    },
+  });
+}
+
+export async function recordModelReplyCompleted(params: {
+  context: ConversationAuditScope;
+  provider: string;
+  model: string;
+  success: boolean;
+  reason?: string;
+  responseId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  estimatedInputTokens?: number;
+}): Promise<void> {
+  await prisma.eventAudit.create({
+    data: {
+      representativeId: params.context.representativeId,
+      contactId: params.context.contactId,
+      conversationId: params.context.conversationId,
+      type: EventType.MODEL_REPLY_COMPLETED,
+      payload: {
+        provider: params.provider,
+        model: params.model,
+        success: params.success,
+        reason: params.reason ?? null,
+        responseId: params.responseId ?? null,
+        inputTokens: params.inputTokens ?? null,
+        outputTokens: params.outputTokens ?? null,
+        totalTokens: params.totalTokens ?? null,
+        estimatedInputTokens: params.estimatedInputTokens ?? null,
+      },
+    },
+  });
+}
+
 export async function recordComputeReply(params: {
   context: ConversationContextRecord;
   messageText: string;
@@ -452,6 +611,11 @@ export async function maybeCreateHandoffRequest(params: {
   context: ConversationContextRecord;
   plan: ConversationPlan;
   text: string;
+  prepared?: {
+    priority: number;
+    summary: string;
+    ownerAction: string;
+  };
 }): Promise<{
   id: string;
   status: HandoffStatus;
@@ -493,7 +657,7 @@ export async function maybeCreateHandoffRequest(params: {
           suggestedPlan: params.plan.suggestedPlan ?? null,
           reasons: params.plan.reasons,
         },
-        priorityScore: calculatePriority(params.plan),
+        priorityScore: params.prepared?.priority ?? calculatePriority(params.plan),
         recommendedNextStep: params.plan.nextStep === "ask_owner" ? "owner_approval" : "owner_review",
       },
     });
@@ -505,9 +669,9 @@ export async function maybeCreateHandoffRequest(params: {
         conversationId: params.context.conversationId,
         intakeSubmissionId: intake.id,
         reason: params.plan.intent,
-        summary: summarizeText(params.text),
-        recommendedPriority: calculatePriority(params.plan),
-        recommendedOwnerAction: buildOwnerAction(params.plan),
+        summary: params.prepared?.summary ?? summarizeText(params.text),
+        recommendedPriority: params.prepared?.priority ?? calculatePriority(params.plan),
+        recommendedOwnerAction: params.prepared?.ownerAction ?? buildOwnerAction(params.plan),
         status: HandoffStatus.OPEN,
       },
     });
@@ -537,6 +701,46 @@ export async function maybeCreateHandoffRequest(params: {
       id: handoff.id,
       status: handoff.status,
     };
+  });
+}
+
+export function buildHandoffPreparation(params: {
+  plan: ConversationPlan;
+  text: string;
+}): {
+  priority: number;
+  summary: string;
+  ownerAction: string;
+} {
+  return {
+    priority: calculatePriority(params.plan),
+    summary: summarizeText(params.text),
+    ownerAction: buildOwnerAction(params.plan),
+  };
+}
+
+export async function recordHandoffPrepared(params: {
+  context: ConversationAuditScope;
+  intent: string;
+  nextStep: string;
+  summary: string;
+  ownerAction: string;
+  priority: number;
+}): Promise<void> {
+  await prisma.eventAudit.create({
+    data: {
+      representativeId: params.context.representativeId,
+      contactId: params.context.contactId,
+      conversationId: params.context.conversationId,
+      type: EventType.HANDOFF_PREPARED,
+      payload: {
+        intent: params.intent,
+        nextStep: params.nextStep,
+        summary: params.summary,
+        ownerAction: params.ownerAction,
+        priority: params.priority,
+      },
+    },
   });
 }
 

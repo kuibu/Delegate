@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateCapabilityPolicy } from "../src/index";
+import { evaluateCapabilityPolicy, evaluateCapabilityPolicyStack } from "../src/index";
 
 describe("evaluateCapabilityPolicy", () => {
   const profile = {
@@ -7,6 +7,8 @@ describe("evaluateCapabilityPolicy", () => {
     representativeId: "rep_1",
     name: "Default",
     isDefault: true,
+    isManaged: false,
+    precedence: 0,
     defaultDecision: "ask" as const,
     maxSessionMinutes: 15,
     maxParallelSessions: 1,
@@ -63,5 +65,39 @@ describe("evaluateCapabilityPolicy", () => {
 
     expect(result.decision).toBe("ask");
     expect(result.reason).toBe("default_profile_decision");
+  });
+
+  it("lets managed overlays override the base profile when channel and plan conditions match", () => {
+    const managedProfile = {
+      ...profile,
+      id: "managed_1",
+      name: "Managed",
+      isDefault: false,
+      isManaged: true,
+      precedence: 100,
+      rules: [
+        {
+          id: "managed_browser_paid",
+          capability: "browser" as const,
+          decision: "ask" as const,
+          channelCondition: "private_chat" as const,
+          requiredPlanTier: "pass" as const,
+          priority: 200,
+          requiresHumanApproval: true,
+          requiresPaidPlan: true,
+        },
+      ],
+    };
+
+    const result = evaluateCapabilityPolicyStack([managedProfile, profile], {
+      capability: "browser",
+      channel: "private_chat",
+      activePlanTier: "pass",
+      hasPaidEntitlement: true,
+    });
+
+    expect(result.decision).toBe("ask");
+    expect(result.reason).toBe("managed_human_approval_required");
+    expect(result.matchedRuleId).toBe("managed_browser_paid");
   });
 });

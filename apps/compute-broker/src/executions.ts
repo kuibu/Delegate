@@ -17,8 +17,10 @@ import {
   summarizeBudgetAvailability,
   type ExecutionBillingSummary,
 } from "./billing";
+import { buildPlaywrightBrowseCommand } from "./browser";
 import { computeBrokerConfig } from "./config";
 import { persistExecutionArtifacts } from "./artifacts";
+import { computeLifecycleHooks } from "./lifecycle-hooks";
 import { normalizeContainerPath } from "./path-utils";
 import { prisma } from "./prisma";
 import { evaluateExecutionRequest, loadSessionPolicyContext } from "./policy";
@@ -75,23 +77,22 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
     totalAvailableCredits: budgetAvailability.totalAvailableCredits,
   });
 
-  await prisma.eventAudit.create({
-    data: {
+  await computeLifecycleHooks.emit({
+    kind: "tool_preflight",
+    scope: {
       representativeId: context.session.representativeId,
+      representativeSlug: context.session.representative.slug,
       contactId: context.session.contactId ?? null,
       conversationId: context.session.conversationId ?? null,
-      type: "TOOL_EXECUTION_REQUESTED",
-      payload: {
-        sessionId,
-        capability: normalized.capability,
-        command: normalized.command ?? null,
-        path: normalized.path ?? null,
-        url: normalized.url ?? null,
-        workingDirectory: normalized.workingDirectory ?? null,
-        decision: effectiveDecision.decision,
-        estimatedCredits,
-      },
     },
+    sessionId,
+    capability: normalized.capability,
+    decision: effectiveDecision.decision,
+    reason: effectiveDecision.reason,
+    ...(normalized.command ? { requestedCommand: normalized.command } : {}),
+    ...(normalized.path ? { requestedPath: normalized.path } : {}),
+    ...(normalized.workingDirectory ? { workingDirectory: normalized.workingDirectory } : {}),
+    estimatedCredits,
   });
 
   if (effectiveDecision.decision === "deny") {
@@ -443,7 +444,10 @@ async function runAllowedExecution(params: {
     image: executionPlan.runnerImage,
     command: executionPlan.command,
     hostWorkspaceRoot: computeBrokerConfig.hostWorkspaceRoot,
-    maxCommandSeconds: params.context.profile.maxCommandSeconds,
+    maxCommandSeconds:
+      executionPlan.capability === "browser"
+        ? Math.max(params.context.profile.maxCommandSeconds, computeBrokerConfig.browserMaxCommandSeconds)
+        : params.context.profile.maxCommandSeconds,
     networkMode: executionPlan.networkMode,
     filesystemMode: executionPlan.filesystemMode,
     workingDirectory: executionPlan.workingDirectory,
@@ -508,38 +512,37 @@ async function runAllowedExecution(params: {
     finishedAt,
   });
 
-  await prisma.$transaction([
-    prisma.eventAudit.create({
-      data: {
-        representativeId: params.context.session.representativeId,
-        contactId: params.context.session.contactId ?? null,
-        conversationId: params.context.session.conversationId ?? null,
-        type: "TOOL_EXECUTION_COMPLETED",
-        payload: {
-          sessionId: params.context.session.id,
-          executionId: execution.id,
-          capability: executionPlan.capability,
-          exitCode: runnerResult.exitCode,
-          wallMs: runnerResult.wallMs,
-          artifactCount: artifacts.length,
-        },
+  await computeLifecycleHooks.emit({
+    kind: "tool_completed",
+    scope: {
+      representativeId: params.context.session.representativeId,
+      representativeSlug: params.context.session.representative.slug,
+      contactId: params.context.session.contactId ?? null,
+      conversationId: params.context.session.conversationId ?? null,
+    },
+    sessionId: params.context.session.id,
+    executionId: execution.id,
+    capability: executionPlan.capability,
+    exitCode: runnerResult.exitCode,
+    wallMs: runnerResult.wallMs,
+    artifactCount: artifacts.length,
+    actualCredits: billing.actualCredits,
+  });
+
+  await prisma.eventAudit.create({
+    data: {
+      representativeId: params.context.session.representativeId,
+      contactId: params.context.session.contactId ?? null,
+      conversationId: params.context.session.conversationId ?? null,
+      type: "BILLING_LEDGER_RECORDED",
+      payload: {
+        sessionId: params.context.session.id,
+        executionId: execution.id,
+        kinds: ["COMPUTE_MINUTES", "STORAGE_BYTES"],
+        actualCredits: billing.actualCredits,
       },
-    }),
-    prisma.eventAudit.create({
-      data: {
-        representativeId: params.context.session.representativeId,
-        contactId: params.context.session.contactId ?? null,
-        conversationId: params.context.session.conversationId ?? null,
-        type: "BILLING_LEDGER_RECORDED",
-        payload: {
-          sessionId: params.context.session.id,
-          executionId: execution.id,
-          kinds: ["COMPUTE_MINUTES", "STORAGE_BYTES"],
-          actualCredits: billing.actualCredits,
-        },
-      },
-    }),
-  ]);
+    },
+  });
 
   return executeToolResponseSchema.parse({
     outcome: runnerResult.exitCode === 0 ? "completed" : "failed",
@@ -867,7 +870,10 @@ function buildExecutionPlan(
         requestedPath: undefined,
         workingDirectory: undefined,
         runnerImage: computeBrokerConfig.browserImage,
-        command: buildBrowserFetchCommand(input.url!),
+        command: buildPlaywrightBrowseCommand({
+          url: input.url!,
+          playwrightVersion: computeBrokerConfig.browserPlaywrightVersion,
+        }),
         networkMode:
           context.profile.networkMode === "no_network" ? "full" : context.profile.networkMode,
         filesystemMode: "ephemeral_full",
@@ -925,7 +931,7 @@ function buildRiskSummary(reason: string): string {
     case "complex_shell_command":
       return "The command uses shell control operators and must be reviewed before execution.";
     case "browser_requires_network":
-      return "Browser fetch requires a network-enabled policy profile.";
+      return "Browser automation requires a network-enabled policy profile.";
     case "filesystem_read_only":
       return "This representative is currently running with a read-only filesystem policy.";
     case "insufficient_compute_budget":
@@ -942,7 +948,7 @@ function summarizeAction(input: NormalizedExecutionInput) {
     case "write":
       return `Write to "${truncate(input.path ?? "", 120)}".`;
     case "browser":
-      return `Fetch "${truncate(input.url ?? "", 120)}" in the isolated browser lane.`;
+      return `Browse "${truncate(input.url ?? "", 120)}" in the isolated Playwright lane.`;
     case "process":
       return `Run process "${truncate(input.command ?? "", 120)}"${input.workingDirectory ? ` in ${input.workingDirectory}` : ""}.`;
     case "exec":
@@ -975,23 +981,6 @@ function buildWriteCommand(rawPath: string, content: string) {
     content,
     delimiter,
   ].join("\n");
-}
-
-function buildBrowserFetchCommand(url: string) {
-  const serializedUrl = JSON.stringify(url);
-  const script = [
-    `const url=${serializedUrl};`,
-    "fetch(url)",
-    "  .then(async (response) => {",
-    "    const text = await response.text();",
-    "    process.stdout.write(text.slice(0, 20000));",
-    "  })",
-    "  .catch((error) => {",
-    "    console.error(error.stack || error.message);",
-    "    process.exit(1);",
-    "  });",
-  ].join("\n");
-  return `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt node -e ${shellQuote(script)}`;
 }
 
 function resolveHeredocDelimiter(content: string) {

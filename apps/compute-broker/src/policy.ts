@@ -1,4 +1,4 @@
-import { evaluateCapabilityPolicy } from "@delegate/capability-policy";
+import { evaluateCapabilityPolicyStack } from "@delegate/capability-policy";
 import { toolExecutionRequestSchema } from "@delegate/compute-protocol";
 
 import { normalizeContainerPath } from "./path-utils";
@@ -15,6 +15,17 @@ export async function loadSessionPolicyContext(sessionId: string) {
           owner: {
             include: {
               wallet: true,
+            },
+          },
+          capabilityProfiles: {
+            where: {
+              isManaged: true,
+            },
+            orderBy: [{ precedence: "desc" }, { createdAt: "asc" }],
+            include: {
+              rules: {
+                orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+              },
             },
           },
         },
@@ -50,6 +61,9 @@ export async function loadSessionPolicyContext(sessionId: string) {
   return {
     session,
     profile: serializeCapabilityProfile(session.policyProfile),
+    managedProfiles: session.representative.capabilityProfiles.map((profile) =>
+      serializeCapabilityProfile(profile),
+    ),
   };
 }
 
@@ -61,14 +75,32 @@ export async function evaluateExecutionRequest(sessionId: string, rawInput: unkn
       : input.path;
   const context = await loadSessionPolicyContext(sessionId);
   const hasPaidEntitlement = input.hasPaidEntitlement || Boolean(context.session.contact?.isPaid);
-  const decision = evaluateCapabilityPolicy(context.profile, {
-    capability: input.capability,
-    command: input.command,
-    path: normalizedPath,
-    domain: input.domain,
-    estimatedCostCents: input.estimatedCostCents,
-    hasPaidEntitlement,
-  });
+  const activePlanTier = context.session.conversation?.deepHelpUnlockedAt
+    ? "deep_help"
+    : context.session.conversation?.passUnlockedAt || hasPaidEntitlement
+      ? "pass"
+      : undefined;
+  const decision = evaluateCapabilityPolicyStack(
+    [...context.managedProfiles, context.profile],
+    {
+      capability: input.capability,
+      command: input.command,
+      path: normalizedPath,
+      domain: input.domain,
+      ...(context.session.conversation?.channel
+        ? {
+            channel: context.session.conversation.channel.toLowerCase() as
+              | "private_chat"
+              | "group_mention"
+              | "group_reply"
+              | "channel_entry",
+          }
+        : {}),
+      ...(activePlanTier ? { activePlanTier } : {}),
+      estimatedCostCents: input.estimatedCostCents,
+      hasPaidEntitlement,
+    },
+  );
 
   return {
     input: normalizedPath ? { ...input, path: normalizedPath } : input,

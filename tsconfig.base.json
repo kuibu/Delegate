@@ -18,6 +18,8 @@
       "@delegate/runtime": ["packages/runtime/src/index.ts"],
       "@delegate/registry": ["packages/registry/src/index.ts"],
       "@delegate/openviking": ["packages/openviking/src/index.ts"],
+      "@delegate/lifecycle-hooks": ["packages/lifecycle-hooks/src/index.ts"],
+      "@delegate/model-runtime": ["packages/model-runtime/src/index.ts"],
       "@delegate/compute-protocol": ["packages/compute-protocol/src/index.ts"],
       "@delegate/capability-policy": ["packages/capability-policy/src/index.ts"],
       "@delegate/artifacts": ["packages/artifacts/src/index.ts"],

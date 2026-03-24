@@ -1,0 +1,390 @@
+import type { KnowledgeDocument, Representative } from "@delegate/domain";
+import type { OpenVikingRecallItem } from "@delegate/openviking";
+import type { ConversationPlan, StructuredCollectorState } from "@delegate/runtime";
+
+import type {
+  ModelRuntimeRecentTurn,
+  RepresentativeReplyInput,
+  RepresentativeReplyContextTrace,
+  RepresentativeReplyPrompt,
+} from "./types";
+
+const MAX_RECENT_TURNS = 6;
+const MAX_RECALLED_ITEMS = 4;
+const MAX_KNOWLEDGE_ITEMS = 6;
+
+type PromptSegment = {
+  kind: string;
+  text: string;
+  priority: number;
+  itemCount?: number;
+  required?: boolean;
+};
+
+export function assembleRepresentativeReplyPrompt(
+  params: RepresentativeReplyInput,
+  options?: {
+    maxInputTokens?: number;
+  },
+): {
+  prompt: RepresentativeReplyPrompt;
+  trace: RepresentativeReplyContextTrace;
+} {
+  const segments = buildPromptSegments(params);
+  const maxInputTokens = options?.maxInputTokens ?? 2_400;
+  const selectedSegments = selectPromptSegments(segments, maxInputTokens);
+
+  return {
+    prompt: {
+      instructions: buildInstructions(params.representative, params.plan),
+      input: selectedSegments.included
+        .map((segment) => segment.text)
+        .join("\n\n"),
+    },
+    trace: {
+      estimatedInputTokens: selectedSegments.estimatedInputTokens,
+      segments: selectedSegments.trace,
+      selectedKnowledgeTitles: selectedSegments.selectedKnowledgeTitles,
+      selectedRecallUris: selectedSegments.selectedRecallUris,
+    },
+  };
+}
+
+export function buildRepresentativeReplyPrompt(
+  params: RepresentativeReplyInput,
+  options?: {
+    maxInputTokens?: number;
+  },
+): RepresentativeReplyPrompt {
+  return assembleRepresentativeReplyPrompt(params, options).prompt;
+}
+
+function buildInstructions(representative: Representative, plan: ConversationPlan): string {
+  return [
+    `You are ${representative.name}, the public Telegram representative for ${representative.ownerName}.`,
+    "You are a public-facing representative, not a private assistant and not the owner.",
+    "Only use public knowledge, safe recalled context, and the provided conversation snapshot.",
+    "Never imply access to private workspaces, private memory, local files, credentials, or hidden owner systems.",
+    "Do not invent pricing promises, discounts, refunds, owner approval, or human handoff commitments.",
+    `The policy engine already selected next_step=${plan.nextStep} for this turn.`,
+    "Because this turn is already in the answer lane, produce a concise reply that directly helps the user and stays within the provided outline.",
+    "Use the user's language when possible.",
+    "Keep the reply suitable for Telegram: short paragraphs, compact bullets only when useful, and no markdown tables.",
+  ].join("\n");
+}
+
+function buildRepresentativeSnapshot(representative: Representative, plan: ConversationPlan): string {
+  return [
+    "Representative snapshot:",
+    `- Name: ${representative.name}`,
+    `- Owner: ${representative.ownerName}`,
+    `- Tagline: ${representative.tagline}`,
+    `- Tone: ${representative.tone}`,
+    `- Supported languages: ${representative.languages.join(", ")}`,
+    `- Intent: ${plan.intent}`,
+    `- Audience role: ${plan.audienceRole}`,
+    `- Free reply limit: ${representative.contract.freeReplyLimit}`,
+    `- Public skills: ${representative.skills.join(", ")}`,
+    `- Action reason: ${plan.reasons.join(" ")}`,
+    `- Public identity summary: ${representative.knowledgePack.identitySummary}`,
+  ].join("\n");
+}
+
+function buildContractBlock(representative: Representative): string {
+  const askFirstActions = Object.entries(representative.actionGate)
+    .filter(([, mode]) => mode === "ask_first")
+    .map(([action]) => action);
+  const deniedActions = Object.entries(representative.actionGate)
+    .filter(([, mode]) => mode === "deny")
+    .map(([action]) => action);
+
+  return [
+    "Conversation contract:",
+    `- Free reply limit: ${representative.contract.freeReplyLimit}`,
+    `- Free scope: ${representative.contract.freeScope.join(", ")}`,
+    `- Paid plans: ${representative.pricing
+      .map((plan) => `${plan.name} (${plan.stars} Stars)`)
+      .join(", ")}`,
+    `- Ask-first actions: ${askFirstActions.join(", ") || "none"}`,
+    `- Cannot do: ${deniedActions.join(", ") || "none"}`,
+  ].join("\n");
+}
+
+function buildCollectorStateBlock(collectorState: StructuredCollectorState | null | undefined): string | null {
+  if (!collectorState) {
+    return null;
+  }
+
+  const answers = Object.entries(collectorState.answers)
+    .map(([key, value]) => `- ${key}: ${value}`)
+    .join("\n");
+
+  return [
+    "Active collector state:",
+    `- Kind: ${collectorState.kind}`,
+    `- Intent: ${collectorState.intent}`,
+    `- Step index: ${collectorState.stepIndex}`,
+    answers,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildRecentTurnsBlock(turns: ModelRuntimeRecentTurn[]): string | null {
+  const trimmed = turns.slice(-MAX_RECENT_TURNS);
+  if (!trimmed.length) {
+    return null;
+  }
+
+  return [
+    "Recent conversation turns:",
+    ...trimmed.map((turn) => {
+      const meta = [turn.intent ?? undefined, turn.summary ?? undefined].filter(Boolean).join(" | ");
+      return `- ${turn.direction}: ${turn.messageText}${meta ? ` (${meta})` : ""}`;
+    }),
+  ].join("\n");
+}
+
+function buildKnowledgeBlock(
+  representative: Representative,
+  plan: ConversationPlan,
+  userText: string,
+): string | null {
+  const docs = selectKnowledgeDocuments(representative, plan, userText);
+  if (!docs.length) {
+    return null;
+  }
+
+  return [
+    "Public knowledge highlights:",
+    ...docs.map((doc) => {
+      const url = doc.url ? ` | URL: ${doc.url}` : "";
+      return `- [${doc.kind}] ${doc.title}: ${doc.summary}${url}`;
+    }),
+  ].join("\n");
+}
+
+function selectKnowledgeDocuments(
+  representative: Representative,
+  plan: ConversationPlan,
+  userText: string,
+): KnowledgeDocument[] {
+  const pool = [
+    ...representative.knowledgePack.faq,
+    ...representative.knowledgePack.materials,
+    ...representative.knowledgePack.policies,
+  ];
+  const normalized = userText.toLowerCase();
+
+  return pool
+    .map((doc) => ({
+      doc,
+      score: scoreDocument(doc, normalized, plan.intent),
+    }))
+    .sort((left, right) => right.score - left.score)
+    .slice(0, MAX_KNOWLEDGE_ITEMS)
+    .map((entry) => entry.doc);
+}
+
+function scoreDocument(doc: KnowledgeDocument, normalizedText: string, intent: ConversationPlan["intent"]): number {
+  let score = 1;
+  const haystack = `${doc.title} ${doc.summary}`.toLowerCase();
+
+  if (haystack.includes(normalizedText)) {
+    score += 4;
+  }
+
+  if (normalizedText.split(/\s+/).some((token) => token.length > 2 && haystack.includes(token))) {
+    score += 2;
+  }
+
+  if (intent === "materials" && ["case_study", "deck", "download"].includes(doc.kind)) {
+    score += 3;
+  }
+
+  if (intent === "faq" && doc.kind === "faq") {
+    score += 3;
+  }
+
+  if (intent === "unknown" && doc.kind === "policy") {
+    score += 1;
+  }
+
+  return score;
+}
+
+function buildRecalledContextBlock(recalled: OpenVikingRecallItem[]): string | null {
+  const trimmed = recalled.slice(0, MAX_RECALLED_ITEMS);
+  if (!trimmed.length) {
+    return null;
+  }
+
+  return [
+    "Recalled public-safe context:",
+    ...trimmed.map((item) => {
+      const summary = item.overview ?? item.abstract ?? item.content ?? "";
+      return `- ${item.contextType.toUpperCase()} ${item.uri} [${item.layer}, score=${item.score.toFixed(2)}]: ${summary}`;
+    }),
+  ].join("\n");
+}
+
+function buildPromptSegments(params: RepresentativeReplyInput): PromptSegment[] {
+  const knowledgeBlock = buildKnowledgeBlock(params.representative, params.plan, params.userText);
+  const recalledBlock = buildRecalledContextBlock(params.recalled);
+  const segments: PromptSegment[] = [
+    {
+      kind: "conversation_contract",
+      text: buildContractBlock(params.representative),
+      priority: 95,
+      required: true,
+    },
+    {
+      kind: "representative_snapshot",
+      text: buildRepresentativeSnapshot(params.representative, params.plan),
+      priority: 100,
+      required: true,
+    },
+    {
+      kind: "user_message",
+      text: `User message:\n${params.userText}`,
+      priority: 110,
+      required: true,
+    },
+    {
+      kind: "reply_outline",
+      text: `Reply outline:\n${params.plan.responseOutline.map((line) => `- ${line}`).join("\n")}`,
+      priority: 105,
+      required: true,
+    },
+  ];
+
+  const collectorStateBlock = buildCollectorStateBlock(params.collectorState);
+  if (collectorStateBlock) {
+    segments.push({
+      kind: "collector_state",
+      text: collectorStateBlock,
+      priority: 98,
+      itemCount: Object.keys(params.collectorState?.answers ?? {}).length,
+      required: true,
+    });
+  }
+
+  const recentTurnsBlock = buildRecentTurnsBlock(params.recentTurns);
+  if (recentTurnsBlock) {
+    segments.push({
+      kind: "recent_turns",
+      text: recentTurnsBlock,
+      priority: 80,
+      itemCount: Math.min(params.recentTurns.length, MAX_RECENT_TURNS),
+    });
+  }
+
+  if (knowledgeBlock) {
+    segments.push({
+      kind: "public_knowledge",
+      text: knowledgeBlock,
+      priority: 75,
+      itemCount: countListItems(knowledgeBlock),
+    });
+  }
+
+  if (recalledBlock) {
+    segments.push({
+      kind: "recalled_context",
+      text: recalledBlock,
+      priority: 70,
+      itemCount: Math.min(params.recalled.length, MAX_RECALLED_ITEMS),
+    });
+  }
+
+  return segments;
+}
+
+function selectPromptSegments(
+  segments: PromptSegment[],
+  maxInputTokens: number,
+): {
+  included: PromptSegment[];
+  estimatedInputTokens: number;
+  trace: RepresentativeReplyContextTrace["segments"];
+  selectedKnowledgeTitles: string[];
+  selectedRecallUris: string[];
+} {
+  const required = segments.filter((segment) => segment.required);
+  const optional = segments
+    .filter((segment) => !segment.required)
+    .sort((left, right) => right.priority - left.priority);
+
+  const included = [...required];
+  let totalTokens = required.reduce((sum, segment) => sum + estimateTokenCount(segment.text), 0);
+  const dropped = new Set<string>();
+
+  for (const segment of optional) {
+    const estimatedTokens = estimateTokenCount(segment.text);
+    if (totalTokens + estimatedTokens <= maxInputTokens) {
+      included.push(segment);
+      totalTokens += estimatedTokens;
+    } else {
+      dropped.add(segment.kind);
+    }
+  }
+
+  const trace = segments.map((segment) => ({
+    kind: segment.kind,
+    priority: segment.priority,
+    estimatedTokens: estimateTokenCount(segment.text),
+    included: included.some((entry) => entry.kind === segment.kind),
+    ...(typeof segment.itemCount === "number" ? { itemCount: segment.itemCount } : {}),
+    ...(dropped.has(segment.kind) ? { trimReason: "max_input_tokens" } : {}),
+  }));
+
+  const knowledgeTitles = included
+    .filter((segment) => segment.kind === "public_knowledge")
+    .flatMap((segment) => parseSegmentTitles(segment.text));
+  const recalledUris = included
+    .filter((segment) => segment.kind === "recalled_context")
+    .flatMap((segment) => parseRecalledUris(segment.text));
+
+  return {
+    included: segments.filter((segment) => included.some((entry) => entry.kind === segment.kind)),
+    estimatedInputTokens: totalTokens,
+    trace,
+    selectedKnowledgeTitles: knowledgeTitles,
+    selectedRecallUris: recalledUris,
+  };
+}
+
+function estimateTokenCount(text: string): number {
+  return Math.max(1, Math.ceil(text.trim().length / 4));
+}
+
+function countListItems(text: string): number {
+  return text
+    .split("\n")
+    .filter((line) => line.trim().startsWith("- "))
+    .length;
+}
+
+function parseSegmentTitles(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("- ["))
+    .map((line) => {
+      const kindEnd = line.indexOf("] ");
+      const titleStart = kindEnd === -1 ? 2 : kindEnd + 2;
+      const colonIndex = line.indexOf(":");
+      const titleEnd = colonIndex === -1 ? line.length : colonIndex;
+      return line.slice(titleStart, titleEnd).trim();
+    });
+}
+
+function parseRecalledUris(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("- "))
+    .map((line) => {
+      const uriStart = line.indexOf(" ", 2) + 1;
+      const uriEnd = line.indexOf(" [");
+      return uriEnd === -1 ? line.slice(uriStart).trim() : line.slice(uriStart, uriEnd).trim();
+    });
+}

@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 import { demoRepresentative, type PlanTier } from "@delegate/domain";
+import { generateRepresentativeReply } from "@delegate/model-runtime";
 import { Channel } from "@prisma/client";
 import type { ToolExecutionRequest } from "@delegate/compute-protocol";
 import {
@@ -19,14 +20,18 @@ import { Bot, InlineKeyboard } from "grammy";
 
 import { createAudienceComputeSession, executeAudienceTool } from "./compute-broker";
 import { formatComputeUsageExamples, parseComputeRequest } from "./compute-parser";
+import { botLifecycleHooks } from "./lifecycle-hooks";
 import {
+  buildHandoffPreparation,
   clearStructuredCollectorState,
   confirmInvoicePayment,
   createPlanInvoice,
   getActiveRepresentativeSlugForChat,
   getConversationContext,
+  getRecentConversationTurns,
   markInvoiceDeliveryFailed,
   maybeCreateHandoffRequest,
+  recordModelUsage,
   recordComputeInboundTurn,
   recordComputeReply,
   recordInboundTurn,
@@ -562,19 +567,181 @@ bot.on("message:text", async (ctx) => {
   }
 
   const handoff = conversationContext
-    ? await maybeCreateHandoffRequest({
-        context: conversationContext,
-        plan,
-        text: normalizedText,
-      })
+    ? await (async () => {
+        const prepared =
+          plan.nextStep === "handoff" || plan.nextStep === "ask_owner"
+            ? buildHandoffPreparation({
+                plan,
+                text: normalizedText,
+              })
+            : null;
+
+        if (prepared) {
+          await botLifecycleHooks.emit({
+            kind: "handoff_prepared",
+            scope: {
+              representativeId: conversationContext.representativeId,
+              representativeSlug: conversationContext.representativeSlug,
+              contactId: conversationContext.contactId,
+              conversationId: conversationContext.conversationId,
+            },
+            intent: plan.intent,
+            nextStep: plan.nextStep,
+            priority: prepared.priority,
+            summary: prepared.summary,
+            ownerAction: prepared.ownerAction,
+          });
+        }
+
+        return maybeCreateHandoffRequest({
+          context: conversationContext,
+          plan,
+          text: normalizedText,
+          ...(prepared ? { prepared } : {}),
+        });
+      })()
     : null;
 
-  const replyText = [
+  const fallbackReplyText = [
     renderReplyPreview(representative, plan),
     handoff ? `已创建 owner inbox 收件项：${handoff.id}` : null,
   ]
     .filter(Boolean)
     .join("\n\n");
+  let replyText = fallbackReplyText;
+  let usedModelSkill:
+    | {
+        uri: string;
+        input?: Record<string, unknown>;
+        output?: string;
+        success: boolean;
+      }
+    | undefined;
+
+  if (plan.nextStep === "answer") {
+    const recentTurns = conversationContext
+      ? await getRecentConversationTurns({
+          conversationId: conversationContext.conversationId,
+          limit: 6,
+        })
+      : [];
+    const generated = await generateRepresentativeReply({
+      representative,
+      plan,
+      userText: normalizedText,
+      recalled,
+      recentTurns,
+      collectorState: conversationContext?.collectorState ?? null,
+    });
+
+    if (conversationContext && generated.contextTrace) {
+      await botLifecycleHooks.emit({
+        kind: "model_context_assembled",
+        scope: {
+          representativeId: conversationContext.representativeId,
+          representativeSlug: conversationContext.representativeSlug,
+          contactId: conversationContext.contactId,
+          conversationId: conversationContext.conversationId,
+        },
+        provider: generated.provider ?? "openai",
+        model: generated.model ?? "gpt-5-mini",
+        estimatedInputTokens: generated.contextTrace.estimatedInputTokens,
+        segments: generated.contextTrace.segments,
+        selectedKnowledgeTitles: generated.contextTrace.selectedKnowledgeTitles,
+        selectedRecallUris: generated.contextTrace.selectedRecallUris,
+      });
+    }
+
+    if (generated.ok) {
+      replyText = [generated.replyText, handoff ? `已创建 owner inbox 收件项：${handoff.id}` : null]
+        .filter(Boolean)
+        .join("\n\n");
+
+      if (conversationContext && generated.usage) {
+        await recordModelUsage({
+          context: conversationContext,
+          provider: generated.provider,
+          model: generated.model,
+          ...(typeof generated.usage.inputTokens === "number"
+            ? { inputTokens: generated.usage.inputTokens }
+            : {}),
+          ...(typeof generated.usage.outputTokens === "number"
+            ? { outputTokens: generated.usage.outputTokens }
+            : {}),
+          ...(typeof generated.usage.totalTokens === "number"
+            ? { totalTokens: generated.usage.totalTokens }
+            : {}),
+          ...(generated.usage.responseId ? { responseId: generated.usage.responseId } : {}),
+        });
+      }
+
+      if (conversationContext) {
+        await botLifecycleHooks.emit({
+          kind: "model_reply_completed",
+          scope: {
+            representativeId: conversationContext.representativeId,
+            representativeSlug: conversationContext.representativeSlug,
+            contactId: conversationContext.contactId,
+            conversationId: conversationContext.conversationId,
+          },
+          provider: generated.provider,
+          model: generated.model,
+          success: true,
+          ...(generated.usage?.responseId ? { responseId: generated.usage.responseId } : {}),
+          ...(typeof generated.usage?.inputTokens === "number"
+            ? { inputTokens: generated.usage.inputTokens }
+            : {}),
+          ...(typeof generated.usage?.outputTokens === "number"
+            ? { outputTokens: generated.usage.outputTokens }
+            : {}),
+          ...(typeof generated.usage?.totalTokens === "number"
+            ? { totalTokens: generated.usage.totalTokens }
+            : {}),
+          estimatedInputTokens: generated.contextTrace.estimatedInputTokens,
+        });
+      }
+
+      usedModelSkill = {
+        uri: `delegate://skills/model-reply/${generated.provider}`,
+        input: {
+          model: generated.model,
+          intent: plan.intent,
+        },
+        output: replyText,
+        success: true,
+      };
+    } else {
+      console.warn("Model runtime fallback:", generated.reason);
+      if (conversationContext) {
+        await botLifecycleHooks.emit({
+          kind: "model_reply_completed",
+          scope: {
+            representativeId: conversationContext.representativeId,
+            representativeSlug: conversationContext.representativeSlug,
+            contactId: conversationContext.contactId,
+            conversationId: conversationContext.conversationId,
+          },
+          provider: generated.provider ?? "openai",
+          model: generated.model ?? "gpt-5-mini",
+          success: false,
+          reason: generated.reason,
+          ...(typeof generated.contextTrace?.estimatedInputTokens === "number"
+            ? { estimatedInputTokens: generated.contextTrace.estimatedInputTokens }
+            : {}),
+        });
+      }
+      usedModelSkill = {
+        uri: "delegate://skills/model-reply/fallback",
+        input: {
+          reason: generated.reason,
+          state: generated.state,
+          provider: generated.provider ?? null,
+        },
+        output: fallbackReplyText,
+        success: false,
+      };
+    }
+  }
 
   const replyMarkup = buildPlanKeyboardForConversation(plan);
   await ctx.reply(replyText, replyMarkup ? { reply_markup: replyMarkup } : {});
@@ -592,6 +759,7 @@ bot.on("message:text", async (ctx) => {
       assistantText: replyText,
       recalled,
       reason: normalizeOpenVikingReason(plan.nextStep),
+      ...(usedModelSkill ? { usedSkill: usedModelSkill } : {}),
     });
   }
 });

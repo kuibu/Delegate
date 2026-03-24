@@ -16,16 +16,17 @@ Delegate already has a meaningful middle state:
 
 - Telegram-native public representative runtime
 - deterministic FAQ / intake / handoff flow
+- OpenAI Responses-backed reply generation with deterministic fallback
 - OpenViking-backed public-safe memory layer
 - ClawHub-backed skill discovery and provenance
+- Playwright-backed deterministic browser lane
 - governed compute plane with approvals, artifacts, and dual-ledger seed
+- lifecycle hook bus for model, handoff, and compute audit points
 - owner dashboard control plane
 
 Delegate does **not** yet have the full target stack described in the architecture decisions doc. In particular:
 
-- no direct OpenAI Responses runtime for representative replies
 - no Anthropic secondary model lane
-- no Playwright/CDP browser lane
 - no native Claude/OpenAI computer-use lane
 - no Temporal orchestration
 - no remote MCP execution path
@@ -38,13 +39,13 @@ Treat the matrix below as source of truth for "what is done vs. what is still ne
 
 | # | Area | Current status | What is already in repo | Next step | Why it is not fully done yet | Priority |
 |---|------|----------------|-------------------------|-----------|------------------------------|----------|
-| 1 | Model access layer | Not started | Public runtime is still deterministic; OpenViking provider config exists, but it is not the representative reply runtime | Add `OpenAI Responses API` as primary runtime, Anthropic/Claude as secondary lane, with narrow provider abstraction and cost tracking | Trust/billing/compute foundation was prioritized before multi-model orchestration | P0 |
+| 1 | Model access layer | Partial, foundation landed | Public runtime now has an `OpenAI Responses` answer lane, structured context assembly, usage ledger hooks, and deterministic fallback | Add Anthropic/Claude as the secondary lane, sharpen provider cooldown/fallback, and harden model cost accounting | The repo intentionally shipped the smallest trustworthy model path before adding a second provider lane | P1 |
 | 2 | General compute plane | Partial, strong foundation | Docker-isolated broker, capability policy, approval flow, artifact persistence, dual-ledger debit path, Telegram `/compute` entry | Turn logical `ComputeSession` into a real reusable lease model or runner abstraction, then prepare microVM upgrade path | Current implementation uses `docker run --rm` per execution because it was the fastest safe way to close approval/artifact/billing loops | P0 |
-| 3 | Browser / computer use | Partial, intentionally minimal | A governed `browser` capability exists, but it currently behaves like an isolated fetch lane, not a real browser automation stack | Add `Playwright/CDP` deterministic lane first, then native Claude/OpenAI computer-use lane behind approvals | `V2.5` browser-heavy execution was intentionally deferred; current implementation only proves governance and billing | P0 |
-| 4 | Permission system | Partial | `allow / ask / deny`, capability rules, path/domain/cost/paid-plan gates, dashboard-editable compute defaults | Add managed policy layers, richer resource scopes, channel/plan-tier conditions, and future org/team policy overlays | The product is still single-owner / single-representative first; no org/IAM model exists yet | P1 |
-| 5 | Hooks and audit | Partial | Fixed audit events, approval events, artifact events, ledger events, OpenViking recall/commit traces | Extract an explicit lifecycle hook bus for `PreToolUse`, `PostToolUse`, `SessionEnd`, `PreHandoff`, and retention/memory filtering | Hard-coded lifecycle interception came first to make behavior safe before adding programmability | P1 |
+| 3 | Browser / computer use | Partial, deterministic lane landed | A governed `browser` capability now runs through an isolated Playwright lane with approval, artifacts, and billing | Add richer browser session management, screenshot/download UX, and native Claude/OpenAI computer-use lanes behind approvals | The current slice proves governed browser execution, but not the higher-level native computer-use stack yet | P1 |
+| 4 | Permission system | Partial, managed overlays landed | `allow / ask / deny`, capability rules, path/domain/cost/paid-plan gates, dashboard-editable compute defaults, and managed overlay profiles with channel / plan-tier conditions | Add richer resource scopes, customer/org policy overlays, and approval-aware MCP policy binding | The product still has no org/IAM layer, so managed policy today is Delegate-owned rather than customer-administered | P1 |
+| 5 | Hooks and audit | Partial, explicit bus landed | Lifecycle hook bus now exists for `PreToolUse`, `PostToolUse`, `SessionEnd`, `PreHandoff`, and model reply/context audit points | Expand hooks into retention, memory filtering, billing budget gates, and owner-facing webhookable summaries | The first hook slice focused on making lifecycle boundaries explicit before adding programmable policies | P1 |
 | 6 | Subagents / multi-agent | Not started | Structured collectors and compute broker exist, but there are no scoped subagents | Introduce explicit `triage-agent`, `compute-agent`, `browser-agent`, `quote-agent`, and `handoff-agent` with isolated budgets and tool scopes | This belongs to the next networked phase, not the current Founder Representative wedge | P2 |
-| 7 | Context management | Partial | Postgres truth + OpenViking recall/commit + artifact store + ephemeral compute state are present | Build a real prompt assembler with static prefix, working context, context editing, token accounting, and selective long-term recall | There is no primary LLM reply runtime yet, so advanced context shaping is not wired into generation | P1 |
+| 7 | Context management | Partial, structured assembler landed | Postgres truth + OpenViking recall/commit + artifact store + ephemeral compute state are present, and the model lane now assembles contract/snapshot/collector/recent-turn/recall segments with token estimates | Add richer context editing, tool-result compaction, and adaptive recall/token budgeting | Advanced pruning is still heuristic and there is no Claude-style context editing or token-aware multi-provider stack yet | P1 |
 | 8 | Files and artifacts | Partial, strong | Object storage, retention, representative/contact/session attribution, detail/download APIs, dashboard artifact viewer | Expand beyond stdout/stderr into screenshots, generated docs, archives, pinned artifacts, and unified material/file workflows | Compute outputs were the smallest high-value slice to ship first | P1 |
 | 9 | Memory | Partial, strong | Public-safe OpenViking memory, filtering, provenance, recall traces, commit traces, separation from artifacts and Postgres truth | Add memory promotion rules, stronger safety classification, and tool-like memory access semantics for the future model runtime | The current design intentionally keeps memory conservative and bounded until the model layer is in place | P1 |
 | 10 | MCP and capability transport | Partial | ClawHub discovery/provenance and internal capability services exist | Add remote MCP execution with allowlists, provenance, policy binding, and approval defaults | Third-party execution inside a public runtime is being deferred until internal capability paths are stable | P1 |
@@ -84,20 +85,16 @@ Do **not** try to close all 12 rows in one pass.
 
 Recommended order:
 
-1. `P0-A` Model runtime foundation
-2. `P0-B` Real browser/computer-use lane
-3. `P1-A` Hook bus + richer context assembly
-4. `P1-B` MCP transport + managed policy layers
-5. `P1-C` Richer billing and file/artifact productization
-6. `P2` Scoped subagents
-7. `P2+` Temporal and broader agent-network infrastructure
+1. `P1-B` MCP transport + managed policy layers
+2. `P1-C` Richer billing and file/artifact productization
+3. `P2-A` Scoped subagents
+4. `P2-B` Temporal and broader agent-network infrastructure
 
 Why this order:
 
-- Rows `1 + 7 + 11` unlock the missing model-runtime backbone
-- Row `3` removes the biggest mismatch between the desired architecture and the current "browser" implementation
-- Rows `5 + 10` are easier to do correctly after model/runtime and browser lanes are real
-- Row `6` should wait until the lower layers are stable
+- Rows `10 + 4` are now the sharpest missing capability boundary for external tools and managed policy
+- Row `11` becomes much more meaningful now that model and browser lanes emit real usage and lifecycle traces
+- Row `6` should still wait until policy, MCP transport, and billing semantics are stable
 
 ## Codex prompt rules
 
