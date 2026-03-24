@@ -72,6 +72,8 @@ Success:
 - owners can see what ran, why it ran, what it cost, and what files were produced
 - sensitive actions are intercepted instead of silently executed
 
+Implementation detail: [docs/v2-isolated-compute-plane-plan.md](./v2-isolated-compute-plane-plan.md)
+
 ## V2.5: Browser and Native Computer Use
 
 Goal: add browser execution as a governed product surface instead of a generic automation hack.

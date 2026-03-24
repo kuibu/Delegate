@@ -211,6 +211,8 @@ Discovery and provenance are useful. Executable authority should live in isolate
 
 The phased implementation sequence that maps these decisions onto product delivery lives in [docs/roadmap.md](./roadmap.md).
 
+The detailed engineering breakdown for `V2: Isolated Compute Plane` lives in [docs/v2-isolated-compute-plane-plan.md](./v2-isolated-compute-plane-plan.md).
+
 ## Sources
 
 - OpenClaw model providers: <https://docs.openclaw.ai/concepts/model-providers>
