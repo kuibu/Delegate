@@ -114,16 +114,16 @@ Every Codex run should follow these rules:
 - prefer staged delivery over a giant rewrite
 - finish each selected slice end-to-end: schema, runtime, API, dashboard, tests, docs, verification
 
-## Recommended next prompt
+## 12 Codex prompts
 
-This is the highest-leverage next Codex prompt.
+Use **one prompt at a time**. The recommended order above still applies.
+
+### Prompt 1: Model access layer
 
 ```text
 You are Codex working inside /Users/a/repos/Delegate.
 
-Your task is to implement the next highest-leverage architecture slice for Delegate:
-
-P0-A: Model runtime foundation for the public representative.
+Implement the model runtime foundation for Delegate's public representative.
 
 Current repo state:
 - Telegram representative runtime exists
@@ -133,7 +133,7 @@ Current repo state:
 - there is no real OpenAI Responses runtime for representative replies yet
 - there is no Anthropic secondary lane yet
 
-Your goal:
+Goal:
 Add a narrow, production-minded model access layer that uses:
 - OpenAI Responses API as the primary runtime
 - Anthropic / Claude as a secondary lane only where clearly justified
@@ -168,32 +168,53 @@ Key files:
 - packages/runtime/src/structured-collector.ts
 - prisma/schema.prisma
 - docs/delegate-architecture-decisions.md
-
-Acceptance criteria:
-- representative replies can run through OpenAI Responses
-- context assembly is explicit and bounded
-- model failures fall back safely
-- internal usage can be recorded for future margin analysis
-- pnpm typecheck, pnpm test, pnpm build, and Docker startup still pass
 ```
 
-## Follow-up prompt after that
-
-Once the model runtime foundation lands, the next Codex run should target `P0-B`:
+### Prompt 2: General compute plane
 
 ```text
 You are Codex working inside /Users/a/repos/Delegate.
 
-Your task is to replace the current minimal browser capability with a real governed browser stack.
+Upgrade Delegate's compute plane from per-execution `docker run --rm` into a more explicit reusable session/lease model without widening trust boundaries.
 
 Current repo state:
 - compute broker exists
 - approvals, artifacts, and billing exist
-- browser capability is currently just a sandboxed fetch-style lane
+- compute sessions are modeled in Prisma
+- actual execution still launches one ephemeral Docker container per tool execution
+
+Goal:
+Move closer to a real compute-lease architecture while preserving today's safety and API behavior.
+
+Implement end to end:
+1. formalize session lease lifecycle in the broker
+2. separate session management from execution management
+3. add runner abstraction so Docker is the first backend and microVM can be added later
+4. preserve policy, approval, billing, and artifact semantics
+5. document the session/lease model
+
+Constraints:
+- no host execution for representative traffic
+- no regression in current `exec / read / write / process / browser` flows
+- keep Docker as the default backend for now
+- do not add microVM as a hard dependency in this slice
+```
+
+### Prompt 3: Browser / computer use
+
+```text
+You are Codex working inside /Users/a/repos/Delegate.
+
+Replace the current minimal browser capability with a real governed browser stack.
+
+Current repo state:
+- compute broker exists
+- approvals, artifacts, and billing exist
+- browser capability is currently a sandboxed fetch-style lane
 - this is not sufficient for the intended Delegate architecture
 
 Goal:
-Implement a dual browser strategy:
+Implement a dual browser strategy foundation:
 - Playwright/CDP deterministic lane first
 - keep the interface ready for future native Claude/OpenAI computer-use lanes
 
@@ -210,6 +231,304 @@ Constraints:
 - no shared cookies across representatives
 - no silent destructive browser actions
 - preserve existing compute approvals and ledger behavior
+```
+
+### Prompt 4: Permission system
+
+```text
+You are Codex working inside /Users/a/repos/Delegate.
+
+Upgrade Delegate's capability permission system from representative-level defaults into a richer managed policy engine.
+
+Current repo state:
+- allow / ask / deny exists
+- capability, path, domain, cost, and paid-plan rules exist
+- representative-level compute defaults are editable in dashboard
+- there is no managed/org-level policy layer yet
+
+Goal:
+Add the next layer of policy sophistication without making the product team-heavy before it is ready.
+
+Implement end to end:
+1. add managed policy concepts to the schema and runtime
+2. support override precedence between managed defaults and representative settings
+3. extend policy evaluation to include more explicit resource scope and plan/channel conditions
+4. expose the right read-only / editable state in dashboard
+5. add tests for precedence and deny behavior
+
+Constraints:
+- keep the public representative trust model strict
+- representative-local settings must not be able to bypass managed deny rules
+- do not introduce full team/IAM complexity beyond what this slice needs
+```
+
+### Prompt 5: Hooks and audit
+
+```text
+You are Codex working inside /Users/a/repos/Delegate.
+
+Turn Delegate's hard-coded lifecycle interception points into an explicit hook system for compute, handoff, memory, and billing.
+
+Current repo state:
+- audit events already exist
+- approvals, artifacts, and billing create event records
+- OpenViking recall and commit traces exist
+- there is no first-class lifecycle hook bus
+
+Goal:
+Implement an internal hook framework that can intercept and observe representative runtime events.
+
+Implement end to end:
+1. define hook phases such as:
+   - PreToolUse
+   - PostToolUse
+   - SessionEnd
+   - PreHandoff
+   - MemoryCommit
+   - BillingRecorded
+2. wire compute broker and runtime paths through the hook layer
+3. preserve current behavior by implementing default built-in hooks
+4. document hook contracts and ordering
+5. add tests proving hooks can block, annotate, and audit
+
+Constraints:
+- do not expose arbitrary user-authored hooks yet
+- do not change business outcomes unless hook logic explicitly says so
+- keep performance overhead small
+```
+
+### Prompt 6: Subagents / multi-agent
+
+```text
+You are Codex working inside /Users/a/repos/Delegate.
+
+Introduce the first scoped subagent structure for Delegate without turning the product into an unbounded multi-agent playground.
+
+Current repo state:
+- structured collectors exist
+- compute broker exists
+- there are no explicit subagents with scoped tools, context, and budgets
+
+Goal:
+Add internal subagent boundaries for the public representative runtime.
+
+Implement end to end:
+1. define a minimal subagent abstraction
+2. create initial subagents such as:
+   - triage-agent
+   - compute-agent
+   - quote-agent
+   - handoff-agent
+3. scope each subagent's context and allowed capabilities
+4. route the existing runtime through these abstractions where justified
+5. add docs and tests for isolation boundaries
+
+Constraints:
+- do not create multiple anthropomorphic chat personas
+- subagents are execution boundaries, not marketing personas
+- keep trust, budget, and capability scopes explicit
+```
+
+### Prompt 7: Context management
+
+```text
+You are Codex working inside /Users/a/repos/Delegate.
+
+Implement the next-generation context assembly layer for Delegate's public representative runtime.
+
+Current repo state:
+- Postgres stores workflow truth
+- OpenViking stores public-safe long-term context
+- compute artifacts live in object storage
+- there is no explicit prompt assembler with static prefix, working context, and context editing
+
+Goal:
+Build a real context-management layer suitable for OpenAI Responses-based runtime.
+
+Implement end to end:
+1. define context layers:
+   - static cached prefix
+   - working context
+   - tool/collector context
+   - OpenViking long-term recall
+2. build a context assembler in code
+3. add lightweight context editing / trimming rules
+4. add token accounting hooks for observability
+5. document how artifacts and memory are intentionally kept separate
+
+Constraints:
+- do not treat transcript accumulation as the only context strategy
+- do not mix raw artifacts into long-term memory
+- keep public-safe boundaries explicit
+```
+
+### Prompt 8: Files and artifacts
+
+```text
+You are Codex working inside /Users/a/repos/Delegate.
+
+Upgrade Delegate's artifact layer from stdout/stderr-centric storage into a broader file and deliverable system.
+
+Current repo state:
+- object storage exists
+- stdout/stderr artifacts are persisted
+- detail and download APIs exist
+- dashboard artifact viewer exists
+
+Goal:
+Expand the artifact system toward a real representative file/output layer.
+
+Implement end to end:
+1. support additional artifact kinds such as:
+   - screenshot
+   - json
+   - generated document
+   - archive
+2. improve metadata and retention handling
+3. support pinned artifacts or owner-preserved artifacts
+4. improve dashboard browsing/filtering/downloading
+5. document how public materials vs compute outputs are distinguished
+
+Constraints:
+- keep object storage as the raw artifact layer
+- do not move large artifacts into Postgres
+- do not auto-promote raw files into memory
+```
+
+### Prompt 9: Memory
+
+```text
+You are Codex working inside /Users/a/repos/Delegate.
+
+Strengthen Delegate's memory layer while preserving strict public-safety boundaries.
+
+Current repo state:
+- OpenViking integration exists
+- public-safe filtering exists
+- recall and commit traces exist
+- memory is conservative and does not yet have strong promotion policies
+
+Goal:
+Turn the current memory layer into a more deliberate long-term context system.
+
+Implement end to end:
+1. define memory promotion rules from runtime events into OpenViking
+2. improve safety classification before writes
+3. distinguish clearly between:
+   - resource memory
+   - contact memory
+   - representative agent patterns
+4. add better owner-side visibility into what memory was promoted and why
+5. add tests for memory leakage and unsafe-promotion prevention
+
+Constraints:
+- never store owner-private context
+- never auto-promote raw compute output
+- preserve representative/contact scoping
+```
+
+### Prompt 10: MCP and capability transport
+
+```text
+You are Codex working inside /Users/a/repos/Delegate.
+
+Add the first real MCP-oriented capability transport layer to Delegate.
+
+Current repo state:
+- ClawHub discovery and provenance exist
+- internal capability services exist
+- there is no remote MCP execution path yet
+
+Goal:
+Add a safe remote capability transport layer aligned with MCP direction, without allowing arbitrary third-party code into the public runtime.
+
+Implement end to end:
+1. define MCP-capable capability metadata
+2. add a remote MCP client/service path for approved capabilities
+3. bind MCP capability execution to existing policy and approval layers
+4. record provenance and audit for MCP calls
+5. expose safe MCP-related visibility in dashboard
+
+Constraints:
+- no arbitrary plugin execution inside the representative runtime
+- default to approval for remote capability execution
+- maintain allowlisted resource/tool scope
+```
+
+### Prompt 11: Billing
+
+```text
+You are Codex working inside /Users/a/repos/Delegate.
+
+Expand Delegate's dual-ledger system so it covers the full architecture, not just compute/storage seed costs.
+
+Current repo state:
+- wallet, sponsor pool, and Telegram Stars plans exist
+- compute and storage debit entries exist
+- conversation compute budget exists
+- there is no model-cost accounting layer yet
+- there is no productized Compute Pass yet
+
+Goal:
+Make billing match the intended product/economics architecture.
+
+Implement end to end:
+1. add internal accounting categories for:
+   - model usage
+   - compute minutes
+   - browser minutes
+   - storage bytes / egress
+   - MCP/connector costs
+2. preserve the external product model:
+   - Free
+   - Pass
+   - Deep Help
+   - Sponsor
+   - add Compute Pass if justified
+3. surface internal cost visibility for owners/admin analysis
+4. add tests for debit order and fallback funding sources
+
+Constraints:
+- do not expose raw token pricing as the public product model
+- keep sponsor pool and owner wallet semantics intact
+- keep conversation-level compute budgets first-class
+```
+
+### Prompt 12: Final target stack convergence
+
+```text
+You are Codex working inside /Users/a/repos/Delegate.
+
+Implement the next convergence slice that moves Delegate closer to the intended final architecture:
+- public representative interface
+- governed compute plane
+- model runtime
+- memory layer
+- capability transport
+- durable workflow backbone
+
+Current repo state:
+- public representative runtime exists
+- governed compute exists
+- OpenViking exists
+- artifact layer exists
+- model runtime, MCP transport, and Temporal are still incomplete or absent
+
+Goal:
+Close the highest-leverage remaining integration gaps after the lower-level slices are landed.
+
+Implement a carefully scoped convergence pass that:
+1. integrates the active model runtime with context assembly and billing
+2. integrates the active browser/capability transport with policy and dashboard surfaces
+3. adds Temporal-backed long-running workflow handling where it clearly replaces ad hoc logic
+4. prepares the secrets/config boundary for future Vault/Infisical-style secret management
+5. updates docs to reflect the new integrated architecture
+
+Constraints:
+- do not rewrite the whole system
+- only integrate what the repo already has foundations for
+- preserve Telegram-first product focus
+- preserve strict public/private trust boundaries
 ```
 
 ## What Codex should not do
