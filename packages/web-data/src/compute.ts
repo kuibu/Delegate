@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
-import type { ResolveApprovalResponse } from "@delegate/compute-protocol";
+import type { ArtifactDetailResponse, ResolveApprovalResponse } from "@delegate/compute-protocol";
 
+import { readArtifactObject } from "./artifact-store";
 import { prisma } from "./prisma";
 
 const computeSessionInclude = Prisma.validator<Prisma.ComputeSessionDefaultArgs>()({
@@ -28,6 +29,13 @@ type RepresentativeIdentity = {
   computeArtifactRetentionDays: number;
   computeNetworkMode: string;
   computeFilesystemMode: string;
+  owner: {
+    wallet: {
+      balanceCredits: number;
+      sponsorPoolCredit: number;
+      starsBalance: number;
+    } | null;
+  };
 };
 
 export type RepresentativeComputeSnapshot = {
@@ -42,6 +50,11 @@ export type RepresentativeComputeSnapshot = {
     artifactRetentionDays: number;
     networkMode: "no_network" | "allowlist" | "full";
     filesystemMode: "workspace_only" | "read_only_workspace" | "ephemeral_full";
+    wallet: {
+      balanceCredits: number;
+      sponsorPoolCredit: number;
+      starsBalance: number;
+    };
   };
   sessions: Array<{
     id: string;
@@ -62,6 +75,18 @@ export type RepresentativeComputeSnapshot = {
       requestedCommand?: string;
       createdAt: string;
     };
+  }>;
+  ledger: Array<{
+    id: string;
+    kind: string;
+    creditDelta: number;
+    costCents: number;
+    quantity: number;
+    unit: string;
+    createdAt: string;
+    notes?: string;
+    sessionId?: string;
+    toolExecutionId?: string;
   }>;
 };
 
@@ -98,9 +123,17 @@ export type RepresentativeComputeArtifactSnapshot = {
     sizeBytes: number;
     summary?: string;
     createdAt: string;
+    retentionUntil?: string;
     sessionId?: string;
     toolExecutionId?: string;
   }>;
+};
+
+export type RepresentativeComputeArtifactDetail = ArtifactDetailResponse & {
+  representative: {
+    slug: string;
+    displayName: string;
+  };
 };
 
 export type ResolveRepresentativeComputeApprovalInput = {
@@ -119,16 +152,35 @@ export async function getRepresentativeComputeSnapshot(
     return null;
   }
 
-  const sessions = await prisma.computeSession.findMany({
-    where: { representativeId: representative.id },
-    ...computeSessionInclude,
-    orderBy: [{ createdAt: "desc" }],
-    take: 20,
-  });
+  const [sessions, ledgerEntries] = await Promise.all([
+    prisma.computeSession.findMany({
+      where: { representativeId: representative.id },
+      ...computeSessionInclude,
+      orderBy: [{ createdAt: "desc" }],
+      take: 20,
+    }),
+    prisma.ledgerEntry.findMany({
+      where: { representativeId: representative.id },
+      orderBy: [{ createdAt: "desc" }],
+      take: 15,
+    }),
+  ]);
 
   return {
     representative: serializeRepresentativeIdentity(representative),
     sessions: sessions.map((session) => serializeComputeSession(session)),
+    ledger: ledgerEntries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind.toLowerCase(),
+      creditDelta: entry.creditDelta,
+      costCents: entry.costCents,
+      quantity: entry.quantity,
+      unit: entry.unit,
+      createdAt: entry.createdAt.toISOString(),
+      ...(entry.notes ? { notes: entry.notes } : {}),
+      ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
+      ...(entry.toolExecutionId ? { toolExecutionId: entry.toolExecutionId } : {}),
+    })),
   };
 }
 
@@ -196,9 +248,88 @@ export async function getRepresentativeComputeArtifacts(
       sizeBytes: artifact.sizeBytes,
       ...(artifact.summary ? { summary: artifact.summary } : {}),
       createdAt: artifact.createdAt.toISOString(),
+      ...(artifact.retentionUntil ? { retentionUntil: artifact.retentionUntil.toISOString() } : {}),
       ...(artifact.sessionId ? { sessionId: artifact.sessionId } : {}),
       ...(artifact.toolExecutionId ? { toolExecutionId: artifact.toolExecutionId } : {}),
     })),
+  };
+}
+
+export async function getRepresentativeComputeArtifactDetail(
+  representativeSlug: string,
+  artifactId: string,
+): Promise<RepresentativeComputeArtifactDetail | null> {
+  const artifact = await getRepresentativeArtifactRecord(representativeSlug, artifactId);
+
+  if (!artifact) {
+    return null;
+  }
+
+  const { buffer } = await readArtifactObject(artifact.objectKey);
+  const isTextArtifact =
+    artifact.mimeType.startsWith("text/") ||
+    artifact.mimeType.includes("json") ||
+    artifact.kind === "STDOUT" ||
+    artifact.kind === "STDERR" ||
+    artifact.kind === "TRACE";
+  const text = isTextArtifact ? buffer.toString("utf8") : null;
+  const maxChars = 20000;
+  const contentText = text ? text.slice(0, maxChars) : null;
+
+  return {
+    representative: {
+      slug: artifact.representative.slug,
+      displayName: artifact.representative.displayName,
+    },
+    artifact: {
+      id: artifact.id,
+      representativeId: artifact.representativeId,
+      contactId: artifact.contactId,
+      conversationId: artifact.conversationId,
+      sessionId: artifact.sessionId,
+      toolExecutionId: artifact.toolExecutionId,
+      kind: artifact.kind.toLowerCase() as
+        | "stdout"
+        | "stderr"
+        | "file"
+        | "archive"
+        | "screenshot"
+        | "json"
+        | "trace",
+      bucket: artifact.bucket,
+      objectKey: artifact.objectKey,
+      mimeType: artifact.mimeType,
+      sizeBytes: artifact.sizeBytes,
+      sha256: artifact.sha256,
+      retentionUntil: artifact.retentionUntil?.toISOString() ?? null,
+      summary: artifact.summary,
+      createdAt: artifact.createdAt.toISOString(),
+    },
+    contentText,
+    truncated: Boolean(text && text.length > maxChars),
+  };
+}
+
+export async function getRepresentativeComputeArtifactDownload(
+  representativeSlug: string,
+  artifactId: string,
+): Promise<{
+  fileName: string;
+  mimeType: string;
+  buffer: Buffer;
+} | null> {
+  const artifact = await getRepresentativeArtifactRecord(representativeSlug, artifactId);
+
+  if (!artifact) {
+    return null;
+  }
+
+  const { buffer } = await readArtifactObject(artifact.objectKey);
+
+  return {
+    fileName: buildArtifactFileName(artifact),
+    mimeType: artifact.mimeType,
+    buffer,
   };
 }
 
@@ -289,6 +420,36 @@ async function getRepresentativeIdentity(
       computeArtifactRetentionDays: true,
       computeNetworkMode: true,
       computeFilesystemMode: true,
+      owner: {
+        select: {
+          wallet: {
+            select: {
+              balanceCredits: true,
+              sponsorPoolCredit: true,
+              starsBalance: true,
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+async function getRepresentativeArtifactRecord(representativeSlug: string, artifactId: string) {
+  return prisma.artifact.findFirst({
+    where: {
+      id: artifactId,
+      representative: {
+        slug: representativeSlug,
+      },
+    },
+    include: {
+      representative: {
+        select: {
+          slug: true,
+          displayName: true,
+        },
+      },
     },
   });
 }
@@ -314,7 +475,27 @@ function serializeRepresentativeIdentity(representative: RepresentativeIdentity)
       | "workspace_only"
       | "read_only_workspace"
       | "ephemeral_full",
+    wallet: {
+      balanceCredits: representative.owner.wallet?.balanceCredits ?? 0,
+      sponsorPoolCredit: representative.owner.wallet?.sponsorPoolCredit ?? 0,
+      starsBalance: representative.owner.wallet?.starsBalance ?? 0,
+    },
   };
+}
+
+function buildArtifactFileName(artifact: {
+  id: string;
+  kind: string;
+  objectKey: string;
+  mimeType: string;
+}) {
+  const extension =
+    artifact.mimeType.includes("json")
+      ? "json"
+      : artifact.mimeType.includes("text/")
+        ? "txt"
+        : artifact.objectKey.split(".").pop() || "bin";
+  return `${artifact.kind.toLowerCase()}-${artifact.id}.${extension}`;
 }
 
 async function callComputeBroker(pathname: string, init: RequestInit): Promise<unknown> {

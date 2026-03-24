@@ -14,6 +14,8 @@ import {
 import {
   AudienceRole,
   Channel,
+  ComputeFilesystemMode,
+  ComputeNetworkMode,
   ContactStage,
   EventType,
   HandoffStatus,
@@ -57,6 +59,17 @@ export type ConversationContextRecord = {
     targetUri?: string;
     sessionId?: string;
     sessionKey?: string;
+  };
+  compute: {
+    enabled: boolean;
+    defaultPolicyMode: "allow" | "ask" | "deny";
+    baseImage: string;
+    maxSessionMinutes: number;
+    autoApproveBudgetCents: number;
+    artifactRetentionDays: number;
+    networkMode: "no_network" | "allowlist" | "full";
+    filesystemMode: "workspace_only" | "read_only_workspace" | "ephemeral_full";
+    conversationBudgetRemainingCredits?: number;
   };
 };
 
@@ -178,6 +191,24 @@ export async function getConversationContext(
         : {}),
       ...(conversation.openvikingSessionId ? { sessionId: conversation.openvikingSessionId } : {}),
       ...(conversation.openvikingSessionKey ? { sessionKey: conversation.openvikingSessionKey } : {}),
+    },
+    compute: {
+      enabled: representative.computeEnabled,
+      defaultPolicyMode: representative.computeDefaultPolicyMode.toLowerCase() as
+        | "allow"
+        | "ask"
+        | "deny",
+      baseImage: representative.computeBaseImage,
+      maxSessionMinutes: representative.computeMaxSessionMinutes,
+      autoApproveBudgetCents: representative.computeAutoApproveBudgetCents,
+      artifactRetentionDays: representative.computeArtifactRetentionDays,
+      networkMode: mapComputeNetworkModeFromDb(representative.computeNetworkMode),
+      filesystemMode: mapComputeFilesystemModeFromDb(representative.computeFilesystemMode),
+      ...(typeof conversation.computeBudgetRemainingCredits === "number"
+        ? {
+            conversationBudgetRemainingCredits: conversation.computeBudgetRemainingCredits,
+          }
+        : {}),
     },
   };
 }
@@ -306,6 +337,37 @@ export async function recordInboundTurn(params: {
   });
 }
 
+export async function recordComputeInboundTurn(params: {
+  context: ConversationContextRecord;
+  text: string;
+  capability: string;
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.conversationTurn.create({
+      data: {
+        conversationId: params.context.conversationId,
+        direction: "inbound",
+        messageText: params.text,
+        intent: "compute",
+        summary: `Compute request (${params.capability}).`,
+      },
+    });
+
+    await tx.eventAudit.create({
+      data: {
+        representativeId: params.context.representativeId,
+        contactId: params.context.contactId,
+        conversationId: params.context.conversationId,
+        type: EventType.MESSAGE_RECEIVED,
+        payload: {
+          intent: "compute",
+          capability: params.capability,
+        },
+      },
+    });
+  });
+}
+
 export async function recordOutboundReply(params: {
   context: ConversationContextRecord;
   plan: ConversationPlan;
@@ -350,6 +412,39 @@ export async function recordOutboundReply(params: {
         },
       });
     }
+  });
+}
+
+export async function recordComputeReply(params: {
+  context: ConversationContextRecord;
+  messageText: string;
+  capability: string;
+  outcome: string;
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.conversationTurn.create({
+      data: {
+        conversationId: params.context.conversationId,
+        direction: "outbound",
+        messageText: params.messageText,
+        intent: "compute",
+        summary: `Compute ${params.outcome} (${params.capability}).`,
+      },
+    });
+
+    await tx.eventAudit.create({
+      data: {
+        representativeId: params.context.representativeId,
+        contactId: params.context.contactId,
+        conversationId: params.context.conversationId,
+        type: EventType.MESSAGE_ANSWERED,
+        payload: {
+          intent: "compute",
+          capability: params.capability,
+          outcome: params.outcome,
+        },
+      },
+    });
   });
 }
 
@@ -465,6 +560,19 @@ export async function setConversationOpenVikingSession(params: {
     data: {
       openvikingSessionId: params.sessionId,
       openvikingSessionKey: params.sessionKey,
+    },
+  });
+}
+
+export async function setActiveComputeSession(params: {
+  conversationId: string;
+  sessionId: string;
+}): Promise<void> {
+  await prisma.conversation.update({
+    where: { id: params.conversationId },
+    data: {
+      activeComputeSessionId: params.sessionId,
+      lastComputeAt: new Date(),
     },
   });
 }
@@ -880,14 +988,23 @@ export async function confirmInvoicePayment(
     });
 
     if (invoice.conversationId) {
+      const nextComputeBudget =
+        (invoice.conversation?.computeBudgetRemainingCredits ?? 0) +
+        computeCreditsForPlan(invoice.planType);
       await tx.conversation.update({
         where: { id: invoice.conversationId },
         data: {
           ...(invoice.planType === PricingPlanType.PASS
-            ? { passUnlockedAt: paidAt }
+            ? {
+                passUnlockedAt: paidAt,
+                computeBudgetRemainingCredits: nextComputeBudget,
+              }
             : {}),
           ...(invoice.planType === PricingPlanType.DEEP_HELP
-            ? { deepHelpUnlockedAt: paidAt }
+            ? {
+                deepHelpUnlockedAt: paidAt,
+                computeBudgetRemainingCredits: nextComputeBudget,
+              }
             : {}),
         },
       });
@@ -937,6 +1054,25 @@ function buildOwnerAction(plan: ConversationPlan): string {
       return "Review context, budget, and decide whether to take the lead personally.";
     default:
       return "Review the request and decide whether the owner should step in.";
+  }
+}
+
+function mapComputeNetworkModeFromDb(value: ComputeNetworkMode) {
+  return value.toLowerCase() as "no_network" | "allowlist" | "full";
+}
+
+function mapComputeFilesystemModeFromDb(value: ComputeFilesystemMode) {
+  return value.toLowerCase() as "workspace_only" | "read_only_workspace" | "ephemeral_full";
+}
+
+function computeCreditsForPlan(planType: PricingPlanType): number {
+  switch (planType) {
+    case PricingPlanType.DEEP_HELP:
+      return 180;
+    case PricingPlanType.PASS:
+      return 60;
+    default:
+      return 0;
   }
 }
 

@@ -39,6 +39,9 @@ importers:
 
   apps/bot:
     dependencies:
+      '@delegate/compute-protocol':
+        specifier: workspace:*
+        version: link:../../packages/compute-protocol
       '@delegate/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -212,6 +215,12 @@ importers:
 
   packages/web-data:
     dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.914.0
+        version: 3.1015.0
+      '@delegate/artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
       '@delegate/compute-protocol':
         specifier: workspace:*
         version: link:../compute-protocol

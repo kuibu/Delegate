@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@delegate/compute-protocol": "workspace:*",
     "@prisma/client": "^6.19.2",
     "@delegate/domain": "workspace:*",
     "@delegate/openviking": "workspace:*",

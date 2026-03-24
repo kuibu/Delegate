@@ -1,17 +1,30 @@
+import { posix as pathPosix } from "node:path";
+
 import {
   executeToolResponseSchema,
   listApprovalsResponseSchema,
   listArtifactsResponseSchema,
   resolveApprovalRequestSchema,
   resolveApprovalResponseSchema,
+  type CapabilityKind,
+  type ToolExecutionRequest,
 } from "@delegate/compute-protocol";
 
 import { createApprovalRequestForExecution } from "./approvals";
+import {
+  applyExecutionBilling,
+  estimateCreditUsage,
+  summarizeBudgetAvailability,
+  type ExecutionBillingSummary,
+} from "./billing";
+import { computeBrokerConfig } from "./config";
 import { persistExecutionArtifacts } from "./artifacts";
+import { normalizeContainerPath } from "./path-utils";
 import { prisma } from "./prisma";
 import { evaluateExecutionRequest, loadSessionPolicyContext } from "./policy";
 import { runDockerExecution } from "./runner";
 import {
+  mapCapabilityFromDb,
   mapPolicyDecisionToDb,
   serializeApprovalRequest,
   serializeArtifact,
@@ -21,42 +34,46 @@ import {
 import { SessionError } from "./sessions";
 
 type PolicyExecutionContext = Awaited<ReturnType<typeof loadSessionPolicyContext>>;
-type AllowedExecInput = {
-  capability: "exec";
+type NormalizedExecutionInput = {
+  capability: CapabilityKind;
+  command: string | undefined;
+  content: string | undefined;
+  path: string | undefined;
+  domain: string | undefined;
+  url: string | undefined;
+  workingDirectory: string | undefined;
+  estimatedCostCents: number | undefined;
+  hasPaidEntitlement: boolean;
+};
+
+type ExecutionPlan = {
+  capability: CapabilityKind;
+  requestedCommand: string | undefined;
+  requestedPath: string | undefined;
+  workingDirectory: string | undefined;
+  runnerImage: string;
   command: string;
-  path?: string | undefined;
-  domain?: string | undefined;
-  workingDirectory?: string | undefined;
-  estimatedCostCents?: number | undefined;
-  hasPaidEntitlement?: boolean | undefined;
+  networkMode: PolicyExecutionContext["profile"]["networkMode"];
+  filesystemMode: PolicyExecutionContext["profile"]["filesystemMode"];
 };
 
 export async function executeTool(sessionId: string, rawInput: unknown) {
   const { input, context, decision } = await evaluateExecutionRequest(sessionId, rawInput);
-  const effectiveDecision =
-    input.capability === "exec" && input.command && !isSimpleExecCommand(input.command)
-      ? {
-          decision: "ask" as const,
-          reason: "complex_shell_command",
-          matchedRuleId: undefined,
-        }
-      : decision;
-
-  if (input.capability !== "exec") {
-    return blockExecution({
-      session: context.session,
-      capability: input.capability,
-      requestedCommand: input.command,
-      requestedPath: input.path,
-      workingDirectory: input.workingDirectory,
-      policyDecision: "deny",
-      reason: "phase_b_exec_only",
-    });
-  }
-
-  if (!input.command) {
-    throw new SessionError(400, "command_required_for_exec");
-  }
+  const normalized = normalizeExecutionInput(input);
+  const estimatedCredits = estimateCreditUsage({
+    capability: normalized.capability,
+    ...(typeof normalized.estimatedCostCents === "number"
+      ? { estimatedCostCents: normalized.estimatedCostCents }
+      : {}),
+  });
+  const budgetAvailability = summarizeBudgetAvailability(context.session);
+  const effectiveDecision = resolveEffectiveDecision({
+    context,
+    input: normalized,
+    decision,
+    estimatedCredits,
+    totalAvailableCredits: budgetAvailability.totalAvailableCredits,
+  });
 
   await prisma.eventAudit.create({
     data: {
@@ -66,11 +83,13 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
       type: "TOOL_EXECUTION_REQUESTED",
       payload: {
         sessionId,
-        capability: input.capability,
-        command: input.command,
-        path: input.path ?? null,
-        workingDirectory: input.workingDirectory ?? null,
+        capability: normalized.capability,
+        command: normalized.command ?? null,
+        path: normalized.path ?? null,
+        url: normalized.url ?? null,
+        workingDirectory: normalized.workingDirectory ?? null,
         decision: effectiveDecision.decision,
+        estimatedCredits,
       },
     },
   });
@@ -78,12 +97,18 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
   if (effectiveDecision.decision === "deny") {
     return blockExecution({
       session: context.session,
-      capability: input.capability,
-      requestedCommand: input.command,
-      requestedPath: input.path,
-      workingDirectory: input.workingDirectory,
+      capability: normalized.capability,
+      requestedCommand: getPersistedCommand(normalized),
+      requestedPath: normalized.path,
+      workingDirectory: normalized.workingDirectory,
       policyDecision: "deny",
       reason: effectiveDecision.reason,
+      billing: {
+        estimatedCredits,
+        conversationBudgetRemainingCredits: budgetAvailability.conversationCredits,
+        ownerBalanceCredits: budgetAvailability.ownerBalanceCredits,
+        sponsorPoolCredit: budgetAvailability.sponsorPoolCredit,
+      },
     });
   }
 
@@ -91,11 +116,16 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
     const execution = await prisma.toolExecution.create({
       data: {
         sessionId,
-        capability: input.capability.toUpperCase() as "EXEC",
+        capability: normalized.capability.toUpperCase() as
+          | "EXEC"
+          | "READ"
+          | "WRITE"
+          | "PROCESS"
+          | "BROWSER",
         status: "BLOCKED",
-        requestedCommand: input.command,
-        requestedPath: input.path ?? null,
-        workingDirectory: input.workingDirectory ?? null,
+        requestedCommand: getPersistedCommand(normalized) ?? null,
+        requestedPath: normalized.path ?? null,
+        workingDirectory: normalized.workingDirectory ?? null,
         policyDecision: mapPolicyDecisionToDb("ask"),
       },
     });
@@ -107,7 +137,7 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
       sessionId,
       executionId: execution.id,
       reason: effectiveDecision.reason,
-      requestedActionSummary: summarizeAction(input.command, input.workingDirectory),
+      requestedActionSummary: summarizeAction(normalized),
       riskSummary: buildRiskSummary(effectiveDecision.reason),
     });
 
@@ -138,23 +168,19 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
       }),
       approvalRequest: serializeApprovalRequest(approval),
       artifacts: [],
+      billing: {
+        estimatedCredits,
+        conversationBudgetRemainingCredits: budgetAvailability.conversationCredits,
+        ownerBalanceCredits: budgetAvailability.ownerBalanceCredits,
+        sponsorPoolCredit: budgetAvailability.sponsorPoolCredit,
+      },
     });
   }
 
-  const result = await runAllowedExecExecution({
+  return runAllowedExecution({
     context,
-    input: {
-      ...input,
-      capability: "exec",
-      command: input.command,
-    },
-  });
-
-  return executeToolResponseSchema.parse({
-    outcome: result.outcome,
-    session: result.session,
-    execution: result.execution,
-    artifacts: result.artifacts,
+    input: normalized,
+    estimatedCredits,
   });
 }
 
@@ -250,10 +276,7 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
     });
   }
 
-  const context =
-    approval.sessionId && blockedExecution?.capability === "EXEC" && blockedExecution.requestedCommand
-      ? await loadSessionPolicyContext(approval.sessionId)
-      : null;
+  const context = approval.sessionId ? await loadSessionPolicyContext(approval.sessionId) : null;
 
   const resolvedAt = new Date();
   const updatedApproval = await prisma.approvalRequest.update({
@@ -291,7 +314,7 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
       : []),
   ]);
 
-  if (!blockedExecution || !context || blockedExecution.capability !== "EXEC") {
+  if (!blockedExecution || !context) {
     return resolveApprovalResponseSchema.parse({
       outcome: "approved",
       approvalRequest: serializeApprovalRequest(updatedApproval),
@@ -299,21 +322,10 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
     });
   }
 
-  if (!blockedExecution.requestedCommand) {
-    throw new SessionError(409, "approved_execution_missing_command");
-  }
-
-  const result = await runAllowedExecExecution({
+  const normalized = reconstructExecutionInput(blockedExecution);
+  const result = await runAllowedExecution({
     context,
-    input: {
-      capability: "exec",
-      command: blockedExecution.requestedCommand,
-      hasPaidEntitlement: true,
-      ...(blockedExecution.requestedPath ? { path: blockedExecution.requestedPath } : {}),
-      ...(blockedExecution.workingDirectory
-        ? { workingDirectory: blockedExecution.workingDirectory }
-        : {}),
-    },
+    input: normalized,
     existingExecutionId: blockedExecution.id,
   });
 
@@ -323,6 +335,7 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
     session: result.session,
     execution: result.execution,
     artifacts: result.artifacts,
+    billing: result.billing,
   });
 }
 
@@ -366,20 +379,28 @@ export async function listSessionApprovals(sessionId: string) {
   });
 }
 
-async function runAllowedExecExecution(params: {
+async function runAllowedExecution(params: {
   context: PolicyExecutionContext;
-  input: AllowedExecInput;
+  input: NormalizedExecutionInput;
+  estimatedCredits?: number;
   existingExecutionId?: string;
 }) {
   const startedAt = new Date();
+  const executionPlan = buildExecutionPlan(params.context, params.input);
   const execution = params.existingExecutionId
     ? await prisma.toolExecution.update({
         where: { id: params.existingExecutionId },
         data: {
           status: "RUNNING",
-          requestedCommand: params.input.command,
-          requestedPath: params.input.path ?? null,
-          workingDirectory: params.input.workingDirectory ?? null,
+          capability: executionPlan.capability.toUpperCase() as
+            | "EXEC"
+            | "READ"
+            | "WRITE"
+            | "PROCESS"
+            | "BROWSER",
+          requestedCommand: executionPlan.requestedCommand ?? null,
+          requestedPath: executionPlan.requestedPath ?? null,
+          workingDirectory: executionPlan.workingDirectory ?? null,
           policyDecision: mapPolicyDecisionToDb("allow"),
           startedAt,
           finishedAt: null,
@@ -393,11 +414,16 @@ async function runAllowedExecExecution(params: {
     : await prisma.toolExecution.create({
         data: {
           sessionId: params.context.session.id,
-          capability: "EXEC",
+          capability: executionPlan.capability.toUpperCase() as
+            | "EXEC"
+            | "READ"
+            | "WRITE"
+            | "PROCESS"
+            | "BROWSER",
           status: "RUNNING",
-          requestedCommand: params.input.command,
-          requestedPath: params.input.path ?? null,
-          workingDirectory: params.input.workingDirectory ?? null,
+          requestedCommand: executionPlan.requestedCommand ?? null,
+          requestedPath: executionPlan.requestedPath ?? null,
+          workingDirectory: executionPlan.workingDirectory ?? null,
           policyDecision: mapPolicyDecisionToDb("allow"),
           startedAt,
         },
@@ -414,13 +440,13 @@ async function runAllowedExecExecution(params: {
   });
 
   const runnerResult = await runDockerExecution({
-    image: params.context.session.baseImage,
-    command: params.input.command,
-    hostWorkspaceRoot: process.env.COMPUTE_HOST_WORKSPACE_ROOT ?? "/Users/a/repos/Delegate",
+    image: executionPlan.runnerImage,
+    command: executionPlan.command,
+    hostWorkspaceRoot: computeBrokerConfig.hostWorkspaceRoot,
     maxCommandSeconds: params.context.profile.maxCommandSeconds,
-    networkMode: params.context.profile.networkMode,
-    filesystemMode: params.context.profile.filesystemMode,
-    workingDirectory: params.input.workingDirectory,
+    networkMode: executionPlan.networkMode,
+    filesystemMode: executionPlan.filesystemMode,
+    workingDirectory: executionPlan.workingDirectory,
     sessionId: params.context.session.id,
     executionId: execution.id,
   });
@@ -461,33 +487,28 @@ async function runAllowedExecExecution(params: {
     },
   });
 
+  const computeCostCents = Math.max(1, Math.ceil(runnerResult.wallMs / 1000));
+  const storageCostCents = totalArtifactBytes > 0 ? Math.max(1, Math.ceil(totalArtifactBytes / 65536)) : 0;
+  const computeCredits = estimateCreditUsage({
+    capability: executionPlan.capability,
+    estimatedCostCents: computeCostCents,
+  });
+  const storageCredits = totalArtifactBytes > 0 ? Math.ceil(totalArtifactBytes / 65536) : 0;
+  const billing = await applyExecutionBilling({
+    representativeId: params.context.session.representativeId,
+    contactId: params.context.session.contactId ?? null,
+    conversationId: params.context.session.conversationId ?? null,
+    sessionId: params.context.session.id,
+    toolExecutionId: execution.id,
+    ownerId: params.context.session.representative.owner.id,
+    computeCredits,
+    storageCredits,
+    computeCostCents,
+    storageCostCents,
+    finishedAt,
+  });
+
   await prisma.$transaction([
-    prisma.ledgerEntry.create({
-      data: {
-        representativeId: params.context.session.representativeId,
-        contactId: params.context.session.contactId ?? null,
-        conversationId: params.context.session.conversationId ?? null,
-        sessionId: params.context.session.id,
-        toolExecutionId: execution.id,
-        kind: "COMPUTE_MINUTES",
-        quantity: runnerResult.wallMs / 60000,
-        unit: "minute",
-        costCents: Math.max(1, Math.ceil(runnerResult.wallMs / 1000)),
-      },
-    }),
-    prisma.ledgerEntry.create({
-      data: {
-        representativeId: params.context.session.representativeId,
-        contactId: params.context.session.contactId ?? null,
-        conversationId: params.context.session.conversationId ?? null,
-        sessionId: params.context.session.id,
-        toolExecutionId: execution.id,
-        kind: "STORAGE_BYTES",
-        quantity: totalArtifactBytes,
-        unit: "byte",
-        costCents: 0,
-      },
-    }),
     prisma.eventAudit.create({
       data: {
         representativeId: params.context.session.representativeId,
@@ -497,6 +518,7 @@ async function runAllowedExecExecution(params: {
         payload: {
           sessionId: params.context.session.id,
           executionId: execution.id,
+          capability: executionPlan.capability,
           exitCode: runnerResult.exitCode,
           wallMs: runnerResult.wallMs,
           artifactCount: artifacts.length,
@@ -513,27 +535,22 @@ async function runAllowedExecExecution(params: {
           sessionId: params.context.session.id,
           executionId: execution.id,
           kinds: ["COMPUTE_MINUTES", "STORAGE_BYTES"],
+          actualCredits: billing.actualCredits,
         },
       },
     }),
-    ...(params.context.session.conversationId
-      ? [
-          prisma.conversation.update({
-            where: { id: params.context.session.conversationId },
-            data: {
-              lastComputeAt: finishedAt,
-            },
-          }),
-        ]
-      : []),
   ]);
 
-  return {
+  return executeToolResponseSchema.parse({
     outcome: runnerResult.exitCode === 0 ? "completed" : "failed",
     session: serializeSession(updatedSession),
     execution: serializeExecution(updatedExecution),
     artifacts: artifacts.map((artifact) => serializeArtifact(artifact)),
-  } as const;
+    billing: {
+      estimatedCredits: params.estimatedCredits,
+      ...billing,
+    },
+  });
 }
 
 async function touchSessionIdle(sessionId: string) {
@@ -566,12 +583,13 @@ async function blockExecution(params: {
     failureReason: string | null;
     policyProfileId: string | null;
   };
-  capability: "exec" | "read" | "write" | "process" | "browser";
-  requestedCommand?: string | undefined;
-  requestedPath?: string | undefined;
-  workingDirectory?: string | undefined;
+  capability: CapabilityKind;
+  requestedCommand: string | undefined;
+  requestedPath: string | undefined;
+  workingDirectory: string | undefined;
   policyDecision: "deny" | "ask";
   reason: string;
+  billing?: ExecutionBillingSummary;
 }) {
   const execution = await prisma.toolExecution.create({
     data: {
@@ -607,26 +625,385 @@ async function blockExecution(params: {
     session: serializeSession(session),
     execution: serializeExecution(execution),
     artifacts: [],
+    billing: params.billing,
   });
+}
+
+function resolveEffectiveDecision(params: {
+  context: PolicyExecutionContext;
+  input: NormalizedExecutionInput;
+  decision: {
+    decision: "allow" | "ask" | "deny";
+    reason: string;
+    matchedRuleId?: string;
+  };
+  estimatedCredits: number;
+  totalAvailableCredits: number;
+}) {
+  if (
+    (params.input.capability === "exec" || params.input.capability === "process") &&
+    params.input.command &&
+    !isSimpleExecCommand(params.input.command)
+  ) {
+    return {
+      decision: "ask" as const,
+      reason: "complex_shell_command",
+    };
+  }
+
+  if (params.input.capability === "browser" && params.context.profile.networkMode === "no_network") {
+    return {
+      decision: "deny" as const,
+      reason: "browser_requires_network",
+    };
+  }
+
+  if (
+    params.input.capability === "write" &&
+    params.context.profile.filesystemMode === "read_only_workspace"
+  ) {
+    return {
+      decision: "deny" as const,
+      reason: "filesystem_read_only",
+    };
+  }
+
+  if (
+    params.context.session.representative.computeAutoApproveBudgetCents > 0 &&
+    typeof params.input.estimatedCostCents === "number" &&
+    params.input.estimatedCostCents > params.context.session.representative.computeAutoApproveBudgetCents &&
+    params.decision.decision === "allow"
+  ) {
+    return {
+      decision: "ask" as const,
+      reason: "auto_approve_budget_exceeded",
+    };
+  }
+
+  if (params.estimatedCredits > params.totalAvailableCredits) {
+    return {
+      decision: "deny" as const,
+      reason: "insufficient_compute_budget",
+    };
+  }
+
+  return params.decision;
+}
+
+function normalizeExecutionInput(input: ToolExecutionRequest): NormalizedExecutionInput {
+  switch (input.capability) {
+    case "read": {
+      if (!input.path) {
+        throw new SessionError(400, "path_required_for_read");
+      }
+      return {
+        capability: "read",
+        command: undefined,
+        content: undefined,
+        path: input.path,
+        domain: undefined,
+        url: undefined,
+        workingDirectory: input.workingDirectory,
+        estimatedCostCents: input.estimatedCostCents,
+        hasPaidEntitlement: input.hasPaidEntitlement,
+      };
+    }
+    case "write": {
+      const content = input.content ?? input.command;
+      if (!input.path) {
+        throw new SessionError(400, "path_required_for_write");
+      }
+      if (!content) {
+        throw new SessionError(400, "content_required_for_write");
+      }
+      return {
+        capability: "write",
+        command: undefined,
+        path: input.path,
+        content,
+        domain: undefined,
+        url: undefined,
+        workingDirectory: input.workingDirectory,
+        estimatedCostCents: input.estimatedCostCents,
+        hasPaidEntitlement: input.hasPaidEntitlement,
+      };
+    }
+    case "browser": {
+      const url = input.url ?? input.command;
+      if (!url) {
+        throw new SessionError(400, "url_required_for_browser");
+      }
+      const parsed = new URL(url);
+      return {
+        capability: "browser",
+        command: undefined,
+        content: undefined,
+        path: undefined,
+        url: parsed.toString(),
+        domain: input.domain ?? parsed.hostname,
+        workingDirectory: undefined,
+        estimatedCostCents: input.estimatedCostCents,
+        hasPaidEntitlement: input.hasPaidEntitlement,
+      };
+    }
+    case "process":
+    case "exec":
+    default: {
+      if (!input.command) {
+        throw new SessionError(400, "command_required_for_exec");
+      }
+      return {
+        capability: input.capability,
+        command: input.command,
+        content: undefined,
+        path: input.path,
+        domain: input.domain,
+        url: undefined,
+        workingDirectory: input.workingDirectory,
+        estimatedCostCents: input.estimatedCostCents,
+        hasPaidEntitlement: input.hasPaidEntitlement,
+      };
+    }
+  }
+}
+
+function reconstructExecutionInput(execution: {
+  capability: string;
+  requestedCommand: string | null;
+  requestedPath: string | null;
+  workingDirectory: string | null;
+}) {
+  const capability = mapCapabilityFromDb(execution.capability);
+
+  if (capability === "read") {
+    if (!execution.requestedPath) {
+      throw new SessionError(409, "approved_read_missing_path");
+    }
+    return normalizeExecutionInput({
+      capability,
+      path: execution.requestedPath,
+      hasPaidEntitlement: true,
+    });
+  }
+
+  if (capability === "write") {
+    if (!execution.requestedPath || !execution.requestedCommand) {
+      throw new SessionError(409, "approved_write_missing_payload");
+    }
+    return normalizeExecutionInput({
+      capability,
+      path: execution.requestedPath,
+      content: execution.requestedCommand,
+      workingDirectory: execution.workingDirectory ?? undefined,
+      hasPaidEntitlement: true,
+    });
+  }
+
+  if (capability === "browser") {
+    if (!execution.requestedCommand) {
+      throw new SessionError(409, "approved_browser_missing_url");
+    }
+    return normalizeExecutionInput({
+      capability,
+      command: undefined,
+      content: undefined,
+      path: undefined,
+      url: execution.requestedCommand,
+      domain: undefined,
+      workingDirectory: undefined,
+      estimatedCostCents: undefined,
+      hasPaidEntitlement: true,
+    });
+  }
+
+  if (!execution.requestedCommand) {
+    throw new SessionError(409, "approved_execution_missing_command");
+  }
+
+  return normalizeExecutionInput({
+    capability,
+    command: execution.requestedCommand,
+    content: undefined,
+    ...(execution.requestedPath ? { path: execution.requestedPath } : {}),
+    domain: undefined,
+    url: undefined,
+    ...(execution.workingDirectory ? { workingDirectory: execution.workingDirectory } : {}),
+    estimatedCostCents: undefined,
+    hasPaidEntitlement: true,
+  });
+}
+
+function buildExecutionPlan(
+  context: PolicyExecutionContext,
+  input: NormalizedExecutionInput,
+): ExecutionPlan {
+  switch (input.capability) {
+    case "read":
+      return {
+        capability: "read",
+        requestedCommand: input.path,
+        requestedPath: input.path,
+        workingDirectory: input.workingDirectory,
+        runnerImage: context.session.baseImage,
+        command: buildReadCommand(input.path!),
+        networkMode: context.profile.networkMode,
+        filesystemMode: context.profile.filesystemMode,
+      };
+    case "write":
+      return {
+        capability: "write",
+        requestedCommand: input.content,
+        requestedPath: input.path,
+        workingDirectory: input.workingDirectory,
+        runnerImage: context.session.baseImage,
+        command: buildWriteCommand(input.path!, input.content!),
+        networkMode: context.profile.networkMode,
+        filesystemMode: context.profile.filesystemMode,
+      };
+    case "browser":
+      return {
+        capability: "browser",
+        requestedCommand: input.url,
+        requestedPath: undefined,
+        workingDirectory: undefined,
+        runnerImage: computeBrokerConfig.browserImage,
+        command: buildBrowserFetchCommand(input.url!),
+        networkMode:
+          context.profile.networkMode === "no_network" ? "full" : context.profile.networkMode,
+        filesystemMode: "ephemeral_full",
+      };
+    case "process":
+      return {
+        capability: "process",
+        requestedCommand: input.command,
+        requestedPath: input.path,
+        workingDirectory: input.workingDirectory,
+        runnerImage: context.session.baseImage,
+        command: input.command!,
+        networkMode: context.profile.networkMode,
+        filesystemMode: context.profile.filesystemMode,
+      };
+    case "exec":
+    default:
+      return {
+        capability: "exec",
+        requestedCommand: input.command,
+        requestedPath: input.path,
+        workingDirectory: input.workingDirectory,
+        runnerImage: context.session.baseImage,
+        command: input.command!,
+        networkMode: context.profile.networkMode,
+        filesystemMode: context.profile.filesystemMode,
+      };
+  }
+}
+
+function getPersistedCommand(input: NormalizedExecutionInput) {
+  switch (input.capability) {
+    case "write":
+      return input.content;
+    case "browser":
+      return input.url;
+    case "read":
+      return input.path;
+    case "process":
+    case "exec":
+    default:
+      return input.command;
+  }
 }
 
 function buildRiskSummary(reason: string): string {
   switch (reason) {
     case "human_approval_required":
-      return "This command matched a rule that requires explicit owner approval.";
+      return "This request matched a rule that requires explicit owner approval.";
     case "cost_above_rule_limit":
-      return "The estimated execution cost is above the auto-approval ceiling.";
+    case "auto_approve_budget_exceeded":
+      return "The estimated execution cost is above the current auto-approval ceiling.";
     case "paid_plan_required":
-      return "This command requires a paid entitlement before execution.";
+      return "This request requires a paid entitlement before execution.";
     case "complex_shell_command":
       return "The command uses shell control operators and must be reviewed before execution.";
+    case "browser_requires_network":
+      return "Browser fetch requires a network-enabled policy profile.";
+    case "filesystem_read_only":
+      return "This representative is currently running with a read-only filesystem policy.";
+    case "insufficient_compute_budget":
+      return "The available compute credits are below the estimated charge for this run.";
     default:
       return `Policy requested review before execution (${reason}).`;
   }
 }
 
-function summarizeAction(command: string, workingDirectory?: string) {
-  return `Run "${truncate(command, 120)}"${workingDirectory ? ` in ${workingDirectory}` : ""}.`;
+function summarizeAction(input: NormalizedExecutionInput) {
+  switch (input.capability) {
+    case "read":
+      return `Read "${truncate(input.path ?? "", 120)}".`;
+    case "write":
+      return `Write to "${truncate(input.path ?? "", 120)}".`;
+    case "browser":
+      return `Fetch "${truncate(input.url ?? "", 120)}" in the isolated browser lane.`;
+    case "process":
+      return `Run process "${truncate(input.command ?? "", 120)}"${input.workingDirectory ? ` in ${input.workingDirectory}` : ""}.`;
+    case "exec":
+    default:
+      return `Run "${truncate(input.command ?? "", 120)}"${input.workingDirectory ? ` in ${input.workingDirectory}` : ""}.`;
+  }
+}
+
+function buildReadCommand(rawPath: string) {
+  const target = shellQuote(normalizeContainerPath(rawPath));
+  return [
+    `target=${target}`,
+    'if [ -d "$target" ]; then',
+    '  ls -la "$target";',
+    'elif [ -f "$target" ]; then',
+    '  sed -n "1,200p" "$target";',
+    "else",
+    '  echo "Path not found: $target" >&2;',
+    "  exit 2;",
+    "fi",
+  ].join("\n");
+}
+
+function buildWriteCommand(rawPath: string, content: string) {
+  const target = normalizeContainerPath(rawPath);
+  const delimiter = resolveHeredocDelimiter(content);
+  return [
+    `mkdir -p ${shellQuote(pathPosix.dirname(target))}`,
+    `cat <<'${delimiter}' > ${shellQuote(target)}`,
+    content,
+    delimiter,
+  ].join("\n");
+}
+
+function buildBrowserFetchCommand(url: string) {
+  const serializedUrl = JSON.stringify(url);
+  const script = [
+    `const url=${serializedUrl};`,
+    "fetch(url)",
+    "  .then(async (response) => {",
+    "    const text = await response.text();",
+    "    process.stdout.write(text.slice(0, 20000));",
+    "  })",
+    "  .catch((error) => {",
+    "    console.error(error.stack || error.message);",
+    "    process.exit(1);",
+    "  });",
+  ].join("\n");
+  return `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt node -e ${shellQuote(script)}`;
+}
+
+function resolveHeredocDelimiter(content: string) {
+  let delimiter = "DELEGATE_CONTENT";
+  while (content.includes(delimiter)) {
+    delimiter = `${delimiter}_${Math.random().toString(16).slice(2, 8)}`;
+  }
+  return delimiter;
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
 function truncate(value: string, maxLength: number) {

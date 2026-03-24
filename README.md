@@ -18,6 +18,7 @@ This repository starts with the narrowest useful wedge:
 - ClawHub-backed skill registry primitives for future representative skill packs
 - OpenViking-backed public memory and context retrieval plumbing
 - A deterministic policy engine that decides whether to answer, collect intake, hand off, or charge
+- A Telegram `/compute` lane that can create sandboxed sessions, run `exec / read / write / process / browser` requests, and surface approval outcomes back to chat
 - Three distinct Next.js surfaces: a marketing site, a public representative app, and an owner dashboard
 - Telegram Stars invoice handling that writes back into conversations, wallet state, and owner inbox
 - A Prisma schema, initial Postgres migration, and deterministic demo seed for the core product entities
@@ -99,6 +100,15 @@ Local URLs:
 - artifact store console: `http://localhost:9001`
 - OpenViking API: `http://localhost:1933`
 - OpenViking console docs: `http://localhost:8020/docs`
+
+Representative-side compute examples in Telegram private chat:
+
+```text
+/compute pwd
+/compute read README.md
+/compute write notes/demo.txt ::: hello from delegate
+/compute browser https://example.com
+```
 
 For real OpenViking ingestion / recall / memory extraction, set either `OPENAI_API_KEY` or `ARK_API_KEY` before starting the stack. If model credentials are missing, Delegate still starts the OpenViking service for local development, but representative sync and memory capture stay safely blocked instead of attempting real writes with fake credentials.
 

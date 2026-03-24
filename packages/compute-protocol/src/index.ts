@@ -124,8 +124,10 @@ export const terminateComputeSessionRequestSchema = z.object({
 export const toolExecutionRequestSchema = z.object({
   capability: capabilityKindSchema,
   command: z.string().min(1).optional(),
+  content: z.string().optional(),
   path: z.string().min(1).optional(),
   domain: z.string().min(1).optional(),
+  url: z.string().url().optional(),
   workingDirectory: z.string().min(1).optional(),
   estimatedCostCents: z.number().int().nonnegative().optional(),
   hasPaidEntitlement: z.boolean().default(false),
@@ -196,6 +198,17 @@ export const executeToolResponseSchema = z.object({
   execution: toolExecutionSnapshotSchema,
   approvalRequest: approvalRequestSnapshotSchema.nullable().optional(),
   artifacts: z.array(artifactSnapshotSchema).default([]),
+  billing: z
+    .object({
+      estimatedCredits: z.number().int().nonnegative().optional(),
+      actualCredits: z.number().int().nonnegative().optional(),
+      computeCostCents: z.number().int().nonnegative().optional(),
+      storageCostCents: z.number().int().nonnegative().optional(),
+      conversationBudgetRemainingCredits: z.number().int().nullable().optional(),
+      ownerBalanceCredits: z.number().int().nullable().optional(),
+      sponsorPoolCredit: z.number().int().nullable().optional(),
+    })
+    .optional(),
 });
 
 export const resolveApprovalResponseSchema = z.object({
@@ -204,6 +217,7 @@ export const resolveApprovalResponseSchema = z.object({
   session: computeSessionSnapshotSchema.nullable().optional(),
   execution: toolExecutionSnapshotSchema.nullable().optional(),
   artifacts: z.array(artifactSnapshotSchema).default([]),
+  billing: executeToolResponseSchema.shape.billing,
 });
 
 export const listArtifactsResponseSchema = z.object({
@@ -221,6 +235,12 @@ export const brokerHealthSchema = z.object({
   service: z.literal("compute-broker"),
   runnerType: computeRunnerTypeSchema,
   artifactBucket: z.string(),
+});
+
+export const artifactDetailResponseSchema = z.object({
+  artifact: artifactSnapshotSchema,
+  contentText: z.string().nullable(),
+  truncated: z.boolean().default(false),
 });
 
 export type CapabilityKind = z.infer<typeof capabilityKindSchema>;
@@ -251,3 +271,4 @@ export type ExecuteToolResponse = z.infer<typeof executeToolResponseSchema>;
 export type ListArtifactsResponse = z.infer<typeof listArtifactsResponseSchema>;
 export type ListApprovalsResponse = z.infer<typeof listApprovalsResponseSchema>;
 export type BrokerHealth = z.infer<typeof brokerHealthSchema>;
+export type ArtifactDetailResponse = z.infer<typeof artifactDetailResponseSchema>;

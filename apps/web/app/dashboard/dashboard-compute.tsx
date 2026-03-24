@@ -23,6 +23,11 @@ type ComputeSnapshot = {
     artifactRetentionDays: number;
     networkMode: "no_network" | "allowlist" | "full";
     filesystemMode: "workspace_only" | "read_only_workspace" | "ephemeral_full";
+    wallet: {
+      balanceCredits: number;
+      sponsorPoolCredit: number;
+      starsBalance: number;
+    };
   };
   sessions: Array<{
     id: string;
@@ -43,6 +48,18 @@ type ComputeSnapshot = {
       requestedCommand?: string;
       createdAt: string;
     };
+  }>;
+  ledger: Array<{
+    id: string;
+    kind: string;
+    creditDelta: number;
+    costCents: number;
+    quantity: number;
+    unit: string;
+    createdAt: string;
+    notes?: string;
+    sessionId?: string;
+    toolExecutionId?: string;
   }>;
 };
 
@@ -71,9 +88,29 @@ type ComputeArtifactsSnapshot = {
     sizeBytes: number;
     summary?: string;
     createdAt: string;
+    retentionUntil?: string;
     sessionId?: string;
     toolExecutionId?: string;
   }>;
+};
+
+type ComputeArtifactDetail = {
+  artifact: {
+    id: string;
+    kind: string;
+    bucket: string;
+    objectKey: string;
+    mimeType: string;
+    sizeBytes: number;
+    sha256: string;
+    retentionUntil?: string | null;
+    summary?: string | null;
+    createdAt: string;
+    sessionId?: string | null;
+    toolExecutionId?: string | null;
+  };
+  contentText: string | null;
+  truncated: boolean;
 };
 
 export function DashboardCompute({
@@ -87,6 +124,8 @@ export function DashboardCompute({
   const [snapshot, setSnapshot] = useState<ComputeSnapshot | null>(null);
   const [approvals, setApprovals] = useState<ComputeApprovalsSnapshot["approvals"]>([]);
   const [artifacts, setArtifacts] = useState<ComputeArtifactsSnapshot["artifacts"]>([]);
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const [artifactDetail, setArtifactDetail] = useState<ComputeArtifactDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -95,6 +134,48 @@ export function DashboardCompute({
   useEffect(() => {
     void refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
   }, [representativeSlug]);
+
+  useEffect(() => {
+    if (!artifacts.length) {
+      setSelectedArtifactId(null);
+      setArtifactDetail(null);
+      return;
+    }
+
+    if (!selectedArtifactId || !artifacts.some((artifact) => artifact.id === selectedArtifactId)) {
+      setSelectedArtifactId(artifacts[0]!.id);
+    }
+  }, [artifacts, selectedArtifactId]);
+
+  useEffect(() => {
+    if (!selectedArtifactId) {
+      setArtifactDetail(null);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const response = await fetch(
+        `/api/dashboard/representatives/${representativeSlug}/compute/artifacts/${selectedArtifactId}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        throw new Error(await extractError(response));
+      }
+      const payload = (await response.json()) as ComputeArtifactDetail;
+      if (!cancelled) {
+        setArtifactDetail(payload);
+      }
+    })().catch((nextError: unknown) => {
+      if (!cancelled) {
+        setError(nextError instanceof Error ? nextError.message : t.messages.error);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [representativeSlug, selectedArtifactId, t.messages.error]);
 
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending").length;
   const liveSessions = snapshot
@@ -128,6 +209,16 @@ export function DashboardCompute({
           label: t.signalCards.autoApproveBudget,
           value: `$${(snapshot.representative.autoApproveBudgetCents / 100).toFixed(2)}`,
           detail: t.signalCards.autoApproveBudgetDetail,
+        },
+        {
+          label: t.signalCards.walletCredits,
+          value: `${snapshot.representative.wallet.balanceCredits}`,
+          detail: t.signalCards.walletCreditsDetail,
+        },
+        {
+          label: t.signalCards.sponsorPool,
+          value: `${snapshot.representative.wallet.sponsorPoolCredit}`,
+          detail: t.signalCards.sponsorPoolDetail,
         },
       ]
     : [];
@@ -368,7 +459,14 @@ export function DashboardCompute({
           <div className="row-list">
             {artifacts.length ? (
               artifacts.map((artifact) => (
-                <div className="skill-row" key={artifact.id}>
+                <button
+                  className={
+                    selectedArtifactId === artifact.id ? "skill-row skill-row-active" : "skill-row"
+                  }
+                  key={artifact.id}
+                  onClick={() => setSelectedArtifactId(artifact.id)}
+                  type="button"
+                >
                   <div>
                     <strong>{artifact.kind}</strong>
                     <p>{artifact.objectKey}</p>
@@ -376,6 +474,11 @@ export function DashboardCompute({
                       <span className="chip">{artifact.mimeType}</span>
                       <span className="chip">{formatBytes(artifact.sizeBytes)}</span>
                       <span className="chip">{formatTimestamp(artifact.createdAt, locale)}</span>
+                      {artifact.retentionUntil ? (
+                        <span className="chip">
+                          {t.retentionChip(formatTimestamp(artifact.retentionUntil, locale))}
+                        </span>
+                      ) : null}
                     </div>
                     {artifact.summary ? (
                       <p className="footer-note">{artifact.summary}</p>
@@ -384,10 +487,79 @@ export function DashboardCompute({
                       <p className="footer-note">{t.sessionLabel(artifact.sessionId)}</p>
                     ) : null}
                   </div>
-                </div>
+                </button>
               ))
             ) : (
               <p className="muted">{t.noArtifacts}</p>
+            )}
+          </div>
+        </DashboardSurface>
+
+        <DashboardSurface
+          eyebrow={t.artifactDetailEyebrow}
+          meta={
+            selectedArtifactId ? <span className="chip">{selectedArtifactId.slice(0, 10)}</span> : undefined
+          }
+          title={t.artifactDetailTitle}
+        >
+          {artifactDetail ? (
+            <div className="row-list">
+              <div className="skill-row">
+                <div>
+                  <strong>{artifactDetail.artifact.kind}</strong>
+                  <p>{artifactDetail.artifact.objectKey}</p>
+                  <div className="chip-row">
+                    <span className="chip">{artifactDetail.artifact.mimeType}</span>
+                    <span className="chip">{formatBytes(artifactDetail.artifact.sizeBytes)}</span>
+                    <span className="chip">{artifactDetail.artifact.sha256.slice(0, 12)}</span>
+                  </div>
+                </div>
+              </div>
+              {artifactDetail.contentText ? (
+                <pre className="artifact-preview">{artifactDetail.contentText}</pre>
+              ) : (
+                <p className="muted">{t.noArtifactPreview}</p>
+              )}
+              <div className="button-row">
+                <a
+                  className="button-secondary"
+                  href={`/api/dashboard/representatives/${representativeSlug}/compute/artifacts/${artifactDetail.artifact.id}/download`}
+                >
+                  {t.downloadArtifact}
+                </a>
+                {artifactDetail.truncated ? <span className="chip">{t.previewTruncated}</span> : null}
+              </div>
+            </div>
+          ) : (
+            <p className="muted">{t.noArtifactSelected}</p>
+          )}
+        </DashboardSurface>
+
+        <DashboardSurface
+          eyebrow={t.ledgerEyebrow}
+          meta={<span className="chip">{t.ledgerChip(snapshot.ledger.length)}</span>}
+          title={t.ledgerTitle}
+        >
+          <div className="row-list">
+            {snapshot.ledger.length ? (
+              snapshot.ledger.map((entry) => (
+                <div className="skill-row" key={entry.id}>
+                  <div>
+                    <strong>{entry.kind}</strong>
+                    <p>
+                      {entry.creditDelta} credits · ${ (entry.costCents / 100).toFixed(2) }
+                    </p>
+                    <div className="chip-row">
+                      <span className="chip">{entry.quantity} {entry.unit}</span>
+                      <span className="chip">{formatTimestamp(entry.createdAt, locale)}</span>
+                      {entry.sessionId ? <span className="chip">{entry.sessionId.slice(0, 8)}</span> : null}
+                    </div>
+                    {entry.notes ? <p className="footer-note">{entry.notes}</p> : null}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="muted">{t.noLedger}</p>
             )}
           </div>
         </DashboardSurface>
@@ -491,6 +663,10 @@ const copy = {
       artifactsDetail: "已经落入对象存储的输出总数。",
       autoApproveBudget: "Auto-approve budget",
       autoApproveBudgetDetail: "当前代表级预算阈值，后续可用于轻量自动放行。",
+      walletCredits: "Wallet credits",
+      walletCreditsDetail: "Owner wallet 里还能直接支付 compute 的 credits。",
+      sponsorPool: "Sponsor pool",
+      sponsorPoolDetail: "可以给陌生人或免费流量兜底的公共 compute 额度。",
     },
     platformCards: {
       policyMode: "Default policy",
@@ -525,6 +701,17 @@ const copy = {
     artifactsEyebrow: "Artifact Store",
     artifactsTitle: "确认 stdout / stderr 等结果已经进入对象存储",
     artifactsChip: (count: number) => `${count} artifacts`,
+    artifactDetailEyebrow: "Artifact Detail",
+    artifactDetailTitle: "直接查看 artifact 内容，而不是只看 object key",
+    retentionChip: (value: string) => `retains until ${value}`,
+    noArtifactSelected: "先从左侧 artifact 列表里选择一个输出。",
+    noArtifactPreview: "这个 artifact 当前没有可直接内联展示的文本预览。",
+    downloadArtifact: "下载 artifact",
+    previewTruncated: "预览已截断",
+    ledgerEyebrow: "Billing Ledger",
+    ledgerTitle: "看清每次执行到底烧掉了多少 credits",
+    ledgerChip: (count: number) => `${count} entries`,
+    noLedger: "还没有 ledger 记录。",
     noArtifacts: "还没有 artifact。",
     messages: {
       approved: "审批已通过，若命令可恢复执行，会继续在 compute plane 中跑完。",
@@ -557,6 +744,10 @@ const copy = {
       artifactsDetail: "Outputs already persisted into object storage.",
       autoApproveBudget: "Auto-approve budget",
       autoApproveBudgetDetail: "Representative-level budget threshold for future low-risk auto-approval.",
+      walletCredits: "Wallet credits",
+      walletCreditsDetail: "Credits available in the owner wallet for direct compute spend.",
+      sponsorPool: "Sponsor pool",
+      sponsorPoolDetail: "Shared credits that can subsidize public or free-flow compute.",
     },
     platformCards: {
       policyMode: "Default policy",
@@ -591,6 +782,17 @@ const copy = {
     artifactsEyebrow: "Artifact Store",
     artifactsTitle: "Confirm stdout, stderr, and other outputs are persisted",
     artifactsChip: (count: number) => `${count} artifacts`,
+    artifactDetailEyebrow: "Artifact Detail",
+    artifactDetailTitle: "Inspect artifact content directly instead of just reading the object key",
+    retentionChip: (value: string) => `retains until ${value}`,
+    noArtifactSelected: "Select an artifact from the list to inspect it here.",
+    noArtifactPreview: "This artifact does not currently have an inline text preview.",
+    downloadArtifact: "Download artifact",
+    previewTruncated: "Preview truncated",
+    ledgerEyebrow: "Billing Ledger",
+    ledgerTitle: "See how many credits each execution actually burned",
+    ledgerChip: (count: number) => `${count} entries`,
+    noLedger: "No ledger activity yet.",
     noArtifacts: "No artifacts yet.",
     messages: {
       approved: "Approval granted. If the execution could resume, it is now running inside the compute plane.",

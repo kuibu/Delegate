@@ -593,6 +593,43 @@ select {
   border-top: 1px solid var(--line);
 }
 
+button.skill-row {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  padding: 16px 0 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+
+button.skill-row:hover {
+  opacity: 0.92;
+}
+
+.skill-row-active {
+  border-radius: 18px;
+  padding-inline: 12px;
+  padding-bottom: 12px;
+  background: rgba(195, 91, 45, 0.08);
+}
+
+.artifact-preview {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(15, 28, 35, 0.9);
+  color: rgba(250, 245, 236, 0.94);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
 .setup-stack {
   display: flex;
   flex-direction: column;

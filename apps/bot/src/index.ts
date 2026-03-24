@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { demoRepresentative, type PlanTier } from "@delegate/domain";
 import { Channel } from "@prisma/client";
+import type { ToolExecutionRequest } from "@delegate/compute-protocol";
 import {
   advanceStructuredCollector,
   beginStructuredCollector,
@@ -16,6 +17,8 @@ import {
 } from "@delegate/runtime";
 import { Bot, InlineKeyboard } from "grammy";
 
+import { createAudienceComputeSession, executeAudienceTool } from "./compute-broker";
+import { formatComputeUsageExamples, parseComputeRequest } from "./compute-parser";
 import {
   clearStructuredCollectorState,
   confirmInvoicePayment,
@@ -24,8 +27,11 @@ import {
   getConversationContext,
   markInvoiceDeliveryFailed,
   maybeCreateHandoffRequest,
+  recordComputeInboundTurn,
+  recordComputeReply,
   recordInboundTurn,
   recordOutboundReply,
+  setActiveComputeSession,
   setActiveRepresentativeForChat,
   setStructuredCollectorState,
   submitStructuredCollector,
@@ -54,6 +60,7 @@ await bot.api.setMyCommands([
   { command: "start", description: "Introduce the representative" },
   { command: "plans", description: "Show Free / Pass / Deep Help / Sponsor" },
   { command: "buy", description: "Buy Pass / Deep Help / Sponsor in Telegram Stars" },
+  { command: "compute", description: "Run a governed compute request in the sandbox" },
   { command: "paysupport", description: "Explain payment and refund support" },
 ]);
 
@@ -142,6 +149,32 @@ bot.command("paysupport", async (ctx) => {
       "如果你需要退款或人工协助，请直接说明发票背景，我会把请求送进 ask-first / owner inbox 流程。",
     ].join("\n\n"),
   );
+});
+
+bot.command("compute", async (ctx) => {
+  if (ctx.chat.type !== "private" || !ctx.from) {
+    await ctx.reply("Compute 请求目前只在 bot 私聊里开放。");
+    return;
+  }
+
+  const parsed = parseComputeRequest(`/compute ${ctx.match?.trim() ?? ""}`);
+  if (!parsed) {
+    await ctx.reply(
+      [
+        "用法示例：",
+        formatComputeUsageExamples(),
+      ].join("\n"),
+    );
+    return;
+  }
+
+  const representativeSlug = await resolveRepresentativeSlugForChat(ctx.chat.type, ctx.chat.id);
+  await handleComputeRequest({
+    ctx,
+    representativeSlug,
+    parsed,
+    rawText: `/compute ${ctx.match?.trim() ?? ""}`.trim(),
+  });
 });
 
 bot.callbackQuery(/^buy:(pass|deep_help|sponsor)$/i, async (ctx) => {
@@ -276,6 +309,7 @@ bot.on("message:text", async (ctx) => {
   const runtimeChannel =
     isPrivate ? "private_chat" : isReplyToBot ? "group_reply" : "group_mention";
   const normalizedText = text.length > 0 ? text : rawText;
+  const inlineComputeRequest = isPrivate ? parseComputeRequest(normalizedText) : null;
 
   let conversationContext:
     | Awaited<ReturnType<typeof getConversationContext>>
@@ -313,6 +347,19 @@ bot.on("message:text", async (ctx) => {
         includeL2: plan.intent === "materials",
       })
     : [];
+
+  if (inlineComputeRequest && conversationContext) {
+    await handleComputeRequest({
+      ctx,
+      representativeSlug,
+      parsed: inlineComputeRequest,
+      rawText: normalizedText,
+      representative,
+      conversationContext,
+      recalled,
+    });
+    return;
+  }
 
   if (conversationContext?.collectorState) {
     const collectorPlan = buildCollectorConversationPlan(conversationContext.collectorState);
@@ -816,4 +863,241 @@ function normalizeOpenVikingReason(nextStep: ConversationPlan["nextStep"]): stri
     default:
       return "answer_turn";
   }
+}
+
+async function handleComputeRequest(params: {
+  ctx: any;
+  representativeSlug: string;
+  parsed: ReturnType<typeof parseComputeRequest>;
+  rawText: string;
+  representative?: Awaited<ReturnType<typeof getRepresentativeRuntimeConfig>>;
+  conversationContext?: Awaited<ReturnType<typeof getConversationContext>>;
+  recalled?: Awaited<ReturnType<typeof recallOpenVikingContext>>;
+}) {
+  const parsed = params.parsed;
+  if (!parsed || !params.ctx.from || params.ctx.chat.type !== "private") {
+    return;
+  }
+
+  const representative =
+    params.representative ?? (await getRepresentativeRuntimeConfig(params.representativeSlug));
+  const conversationContext =
+    params.conversationContext ??
+    (await getConversationContext(params.representativeSlug, {
+      telegramUserId: params.ctx.from.id,
+      ...(params.ctx.from.username ? { username: params.ctx.from.username } : {}),
+      ...buildDisplayName(params.ctx.from.first_name, params.ctx.from.last_name),
+      chatId: params.ctx.chat.id,
+      channel: Channel.PRIVATE_CHAT,
+    }));
+
+  if (!conversationContext.compute.enabled) {
+    const replyText = [
+      representative.name,
+      representative.tagline,
+      "这个代表的隔离 compute lane 目前还没有打开。你可以先继续问 FAQ、收资料，或者让 owner 在 dashboard 里启用 compute。",
+    ].join("\n\n");
+    await params.ctx.reply(replyText);
+    await recordComputeReply({
+      context: conversationContext,
+      messageText: replyText,
+      capability: parsed.capability,
+      outcome: "compute_disabled",
+    });
+    return;
+  }
+
+  await recordComputeInboundTurn({
+    context: conversationContext,
+    text: params.rawText,
+    capability: parsed.capability,
+  });
+
+  try {
+    const session = await createAudienceComputeSession({
+      representativeId: conversationContext.representativeId,
+      contactId: conversationContext.contactId,
+      conversationId: conversationContext.conversationId,
+      requestedCapabilities: [parsed.capability],
+      reason: `telegram:${parsed.capability}`,
+      requestedBaseImage: conversationContext.compute.baseImage,
+    });
+
+    await setActiveComputeSession({
+      conversationId: conversationContext.conversationId,
+      sessionId: session.session.id,
+    });
+
+    const execution = await executeAudienceTool(
+      session.session.id,
+      {
+        ...(parsed as ToolExecutionRequest),
+        hasPaidEntitlement:
+          parsed.hasPaidEntitlement ||
+          conversationContext.contactIsPaid ||
+          conversationContext.usage.passUnlocked ||
+          conversationContext.usage.deepHelpUnlocked,
+      },
+    );
+
+    const replyText = formatComputeReply({
+      representativeName: representative.name,
+      representativeTagline: representative.tagline,
+      parsed,
+      result: execution,
+    });
+
+    await params.ctx.reply(replyText, buildComputeReplyOptions(execution, representative));
+    await recordComputeReply({
+      context: conversationContext,
+      messageText: replyText,
+      capability: parsed.capability,
+      outcome: execution.outcome,
+    });
+    await captureTurnToOpenViking({
+      context: conversationContext,
+      chatId: params.ctx.chat.id,
+      userText: params.rawText,
+      assistantText: replyText,
+      recalled: params.recalled ?? [],
+      reason: "compute_turn",
+      usedSkill: {
+        uri: `delegate://skills/compute/${parsed.capability}`,
+        input: {
+          capability: parsed.capability,
+          target: parsed.displayTarget,
+        },
+        output: replyText,
+        success: execution.outcome === "completed",
+      },
+    });
+  } catch (error) {
+    const replyText =
+      error instanceof Error
+        ? `Compute 请求暂时没跑起来：${error.message}`
+        : "Compute 请求暂时没跑起来，请稍后重试。";
+    await params.ctx.reply(replyText);
+    await recordComputeReply({
+      context: conversationContext,
+      messageText: replyText,
+      capability: parsed.capability,
+      outcome: "compute_error",
+    });
+  }
+}
+
+function buildComputeReplyOptions(
+  result: Awaited<ReturnType<typeof executeAudienceTool>>,
+  representative: Awaited<ReturnType<typeof getRepresentativeRuntimeConfig>>,
+) {
+  if (result.outcome === "blocked" || result.outcome === "pending_approval") {
+    return {
+      reply_markup:
+        new InlineKeyboard()
+          .text(`Buy ${formatPlanName("deep_help")}`, "buy:deep_help")
+          .row()
+          .text("See all plans", "plans:show"),
+    };
+  }
+
+  if (result.outcome === "failed" && representative.pricing.some((plan) => plan.tier === "deep_help")) {
+    return {
+      reply_markup: new InlineKeyboard().text("See all plans", "plans:show"),
+    };
+  }
+
+  return {};
+}
+
+function formatComputeReply(params: {
+  representativeName: string;
+  representativeTagline: string;
+  parsed: NonNullable<ReturnType<typeof parseComputeRequest>>;
+  result: Awaited<ReturnType<typeof executeAudienceTool>>;
+}) {
+  const header = [params.representativeName, params.representativeTagline].join("\n\n");
+  const billingLine = formatComputeBilling(params.result);
+
+  if (params.result.outcome === "pending_approval") {
+    return [
+      header,
+      `这次 ${params.parsed.capability} 请求已经进入 owner 审批队列。`,
+      params.result.approvalRequest
+        ? `审批项：${params.result.approvalRequest.requestedActionSummary}\n风险：${params.result.approvalRequest.riskSummary}`
+        : "命令已被策略挡住，等待人工确认后才会继续执行。",
+      billingLine,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  if (params.result.outcome === "blocked") {
+    return [
+      header,
+      "这次 compute 请求被当前策略直接挡住了，没有进入执行。",
+      explainBlockedBudget(params.result),
+      billingLine,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  const artifactSummary =
+    params.result.artifacts.length > 0
+      ? params.result.artifacts
+          .map((artifact) => `${artifact.kind}: ${artifact.summary ?? artifact.objectKey}`)
+          .join("\n")
+      : "这次没有生成可展示的 artifact。";
+
+  if (params.result.outcome === "failed") {
+    return [
+      header,
+      `这次 ${params.parsed.capability} 已经执行，但返回了失败状态。`,
+      artifactSummary,
+      billingLine,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  return [
+    header,
+    `这次 ${params.parsed.capability} 已经在隔离 compute plane 里跑完。`,
+    artifactSummary,
+    billingLine,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function formatComputeBilling(result: Awaited<ReturnType<typeof executeAudienceTool>>) {
+  if (!result.billing) {
+    return null;
+  }
+
+  const fragments = [];
+  if (typeof result.billing.actualCredits === "number") {
+    fragments.push(`实际消耗 ${result.billing.actualCredits} credits`);
+  } else if (typeof result.billing.estimatedCredits === "number") {
+    fragments.push(`预计消耗 ${result.billing.estimatedCredits} credits`);
+  }
+  if (typeof result.billing.conversationBudgetRemainingCredits === "number") {
+    fragments.push(`当前会话剩余 ${result.billing.conversationBudgetRemainingCredits} credits`);
+  }
+  if (typeof result.billing.ownerBalanceCredits === "number") {
+    fragments.push(`owner wallet ${result.billing.ownerBalanceCredits}`);
+  }
+  if (typeof result.billing.sponsorPoolCredit === "number") {
+    fragments.push(`sponsor pool ${result.billing.sponsorPoolCredit}`);
+  }
+
+  return fragments.length ? fragments.join(" · ") : null;
+}
+
+function explainBlockedBudget(result: Awaited<ReturnType<typeof executeAudienceTool>>) {
+  if (typeof result.billing?.conversationBudgetRemainingCredits === "number") {
+    return `当前会话只有 ${result.billing.conversationBudgetRemainingCredits} compute credits，先解锁付费计划或等待 owner 补充预算后再试。`;
+  }
+
+  return "如果你要继续这类请求，可以先购买 Deep Help，或等待 owner 给予人工批准。";
 }
