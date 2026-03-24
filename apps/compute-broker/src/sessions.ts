@@ -5,6 +5,7 @@ import {
 } from "@delegate/compute-protocol";
 import { prisma } from "./prisma";
 import { computeBrokerConfig } from "./config";
+import { SessionError } from "./session-error";
 import {
   mapRequestedByToDb,
   mapRunnerTypeFromDb,
@@ -140,15 +141,6 @@ export async function terminateComputeSession(sessionId: string, reason?: string
   });
 
   return serializeSession(updated);
-}
-
-export class SessionError extends Error {
-  constructor(
-    readonly statusCode: number,
-    message: string,
-  ) {
-    super(message);
-  }
 }
 
 function sha256(value: string): string {

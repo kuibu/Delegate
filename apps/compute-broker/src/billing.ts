@@ -36,6 +36,8 @@ export function estimateCreditUsage(params: {
   const base =
     params.capability === "browser"
       ? 8
+      : params.capability === "mcp"
+        ? 6
       : params.capability === "write"
         ? 4
         : params.capability === "process"

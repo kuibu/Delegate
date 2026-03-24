@@ -100,6 +100,11 @@ enum CapabilityKind {
   WRITE
   PROCESS
   BROWSER
+  MCP
+}
+
+enum McpTransportKind {
+  STREAMABLE_HTTP
 }
 
 enum CapabilityPlanTier {
@@ -246,6 +251,7 @@ model Representative {
   computeAutoApproveBudgetCents Int    @default(0)
   computeArtifactRetentionDays Int     @default(14)
   computeNetworkMode ComputeNetworkMode @default(NO_NETWORK)
+  computeNetworkAllowlist String[]     @default([])
   computeFilesystemMode ComputeFilesystemMode @default(WORKSPACE_ONLY)
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
@@ -268,6 +274,7 @@ model Representative {
   pricingPlans      PricingPlan[]
   recallTraces      ConversationRecallTrace[]
   skillPackLinks    RepresentativeSkillPack[]
+  mcpBindings       RepresentativeMcpBinding[]
   chatSessions      ChatSession[]
 }
 
@@ -328,8 +335,32 @@ model RepresentativeSkillPack {
   updatedAt        DateTime        @updatedAt
   representative   Representative  @relation(fields: [representativeId], references: [id])
   skillPack        SkillPack       @relation(fields: [skillPackId], references: [id])
+  mcpBindings      RepresentativeMcpBinding[]
 
   @@unique([representativeId, skillPackId])
+}
+
+model RepresentativeMcpBinding {
+  id                           String                  @id @default(cuid())
+  representativeId             String
+  representativeSkillPackLinkId String?
+  slug                         String
+  displayName                  String
+  description                  String?
+  serverUrl                    String
+  transportKind                McpTransportKind        @default(STREAMABLE_HTTP)
+  allowedToolNames             Json
+  defaultToolName              String?
+  enabled                      Boolean                 @default(true)
+  approvalRequired             Boolean                 @default(true)
+  createdAt                    DateTime                @default(now())
+  updatedAt                    DateTime                @updatedAt
+  representative               Representative          @relation(fields: [representativeId], references: [id])
+  representativeSkillPackLink  RepresentativeSkillPack? @relation(fields: [representativeSkillPackLinkId], references: [id])
+  toolExecutions               ToolExecution[]
+
+  @@unique([representativeId, slug])
+  @@index([representativeId, enabled, createdAt])
 }
 
 model Contact {
@@ -509,6 +540,7 @@ model CapabilityPolicyProfile {
   maxCommandSeconds  Int                   @default(30)
   artifactRetentionDays Int                @default(14)
   networkMode        ComputeNetworkMode    @default(NO_NETWORK)
+  networkAllowlist   String[]              @default([])
   filesystemMode     ComputeFilesystemMode @default(WORKSPACE_ONLY)
   createdAt          DateTime              @default(now())
   updatedAt          DateTime              @updatedAt
@@ -576,10 +608,12 @@ model ComputeSession {
 model ToolExecution {
   id               String              @id @default(cuid())
   sessionId        String
+  mcpBindingId     String?
   capability       CapabilityKind
   status           ToolExecutionStatus @default(QUEUED)
   requestedCommand String?
   requestedPath    String?
+  requestPayload   Json?
   workingDirectory String?
   policyDecision   PolicyDecision?
   approvalRequestId String?
@@ -592,10 +626,12 @@ model ToolExecution {
   bytesWritten     Int?
   createdAt        DateTime            @default(now())
   session          ComputeSession      @relation(fields: [sessionId], references: [id])
+  mcpBinding       RepresentativeMcpBinding? @relation(fields: [mcpBindingId], references: [id])
   artifacts        Artifact[]
 
   @@index([sessionId, createdAt])
   @@index([status, createdAt])
+  @@index([mcpBindingId, createdAt])
 }
 
 model ApprovalRequest {

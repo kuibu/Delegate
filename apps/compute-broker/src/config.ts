@@ -9,6 +9,7 @@ const envSchema = z.object({
   COMPUTE_BROWSER_IMAGE: z.string().min(1).default("mcr.microsoft.com/playwright:v1.58.2-noble"),
   COMPUTE_BROWSER_PLAYWRIGHT_VERSION: z.string().min(1).default("1.58.2"),
   COMPUTE_BROWSER_MAX_COMMAND_SECONDS: z.coerce.number().int().positive().default(120),
+  COMPUTE_MCP_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
   COMPUTE_HOST_WORKSPACE_ROOT: z.string().min(1).default("/Users/a/repos/Delegate"),
   ARTIFACT_STORE_ENDPOINT: z.string().url().default("http://artifact-store:9000"),
   ARTIFACT_STORE_BUCKET: z.string().min(1).default("delegate-compute-artifacts"),
@@ -27,6 +28,7 @@ export const computeBrokerConfig = {
   browserImage: parsed.COMPUTE_BROWSER_IMAGE,
   browserPlaywrightVersion: parsed.COMPUTE_BROWSER_PLAYWRIGHT_VERSION,
   browserMaxCommandSeconds: parsed.COMPUTE_BROWSER_MAX_COMMAND_SECONDS,
+  mcpTimeoutMs: parsed.COMPUTE_MCP_TIMEOUT_MS,
   hostWorkspaceRoot: parsed.COMPUTE_HOST_WORKSPACE_ROOT,
   artifactStore: artifactStoreConfigSchema.parse({
     endpoint: parsed.ARTIFACT_STORE_ENDPOINT,

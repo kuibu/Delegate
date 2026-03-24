@@ -39,4 +39,20 @@ describe("buildDockerRunArgs", () => {
     expect(args).toContain("--workdir");
     expect(args).toContain("/tmp");
   });
+
+  it("does not silently grant full egress when the policy says allowlist", () => {
+    const args = buildDockerRunArgs({
+      image: "debian:bookworm-slim",
+      command: "node server.js",
+      hostWorkspaceRoot: "/Users/a/repos/Delegate",
+      maxCommandSeconds: 30,
+      networkMode: "allowlist",
+      filesystemMode: "workspace_only",
+      sessionId: "session_allowlist_1234",
+      executionId: "execution_allowlist_1234",
+    });
+
+    expect(args).toContain("--network");
+    expect(args).toContain("none");
+  });
 });

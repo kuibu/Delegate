@@ -15,6 +15,7 @@ describe("evaluateCapabilityPolicy", () => {
     maxCommandSeconds: 30,
     artifactRetentionDays: 14,
     networkMode: "no_network" as const,
+    networkAllowlist: [],
     filesystemMode: "workspace_only" as const,
     rules: [
       {

@@ -71,6 +71,34 @@ export async function persistExecutionArtifacts(params: {
   return artifacts;
 }
 
+export async function persistJsonArtifact(params: {
+  representativeId: string;
+  representativeSlug: string;
+  contactId?: string | null | undefined;
+  conversationId?: string | null | undefined;
+  sessionId: string;
+  executionId: string;
+  kind?: "JSON" | "TRACE";
+  value: unknown;
+  retentionDays: number;
+  summary?: string;
+}) {
+  const body = Buffer.from(JSON.stringify(params.value, null, 2), "utf8");
+  return persistBufferArtifact({
+    representativeId: params.representativeId,
+    representativeSlug: params.representativeSlug,
+    contactId: params.contactId,
+    conversationId: params.conversationId,
+    sessionId: params.sessionId,
+    executionId: params.executionId,
+    kind: params.kind ?? "JSON",
+    body,
+    mimeType: "application/json; charset=utf-8",
+    retentionDays: params.retentionDays,
+    ...(params.summary ? { summary: params.summary } : {}),
+  });
+}
+
 async function persistTextArtifact(params: {
   representativeId: string;
   representativeSlug: string;
@@ -82,16 +110,44 @@ async function persistTextArtifact(params: {
   content: string;
   retentionDays: number;
 }) {
+  const body = Buffer.from(params.content, "utf8");
+  return persistBufferArtifact({
+    representativeId: params.representativeId,
+    representativeSlug: params.representativeSlug,
+    contactId: params.contactId,
+    conversationId: params.conversationId,
+    sessionId: params.sessionId,
+    executionId: params.executionId,
+    kind: params.kind,
+    body,
+    mimeType: "text/plain; charset=utf-8",
+    retentionDays: params.retentionDays,
+    summary: summarizeArtifact(params.content),
+  });
+}
+
+async function persistBufferArtifact(params: {
+  representativeId: string;
+  representativeSlug: string;
+  contactId?: string | null | undefined;
+  conversationId?: string | null | undefined;
+  sessionId: string;
+  executionId: string;
+  kind: "STDOUT" | "STDERR" | "JSON" | "TRACE";
+  body: Buffer;
+  mimeType: string;
+  retentionDays: number;
+  summary?: string;
+}) {
   const createdAt = new Date();
   const artifactId = `artifact_${randomBytes(8).toString("hex")}`;
-  const body = Buffer.from(params.content, "utf8");
   const objectKey = buildArtifactObjectKey({
     representativeSlug: params.representativeSlug,
     contactId: params.contactId,
     conversationId: params.conversationId,
     sessionId: params.sessionId,
     executionId: params.executionId,
-    artifactKind: params.kind.toLowerCase() as "stdout" | "stderr",
+    artifactKind: params.kind.toLowerCase() as "stdout" | "stderr" | "json" | "trace",
     artifactId,
   });
 
@@ -101,8 +157,8 @@ async function persistTextArtifact(params: {
     new PutObjectCommand({
       Bucket: computeBrokerConfig.artifactStore.bucket,
       Key: objectKey,
-      Body: body,
-      ContentType: "text/plain; charset=utf-8",
+      Body: params.body,
+      ContentType: params.mimeType,
     }),
   );
 
@@ -117,11 +173,11 @@ async function persistTextArtifact(params: {
       kind: params.kind,
       bucket: computeBrokerConfig.artifactStore.bucket,
       objectKey,
-      mimeType: "text/plain; charset=utf-8",
-      sizeBytes: body.byteLength,
-      sha256: sha256(body),
+      mimeType: params.mimeType,
+      sizeBytes: params.body.byteLength,
+      sha256: sha256(params.body),
       retentionUntil: resolveArtifactRetentionUntil(createdAt, params.retentionDays),
-      summary: summarizeArtifact(params.content),
+      summary: params.summary?.trim() ? params.summary.trim() : null,
       createdAt,
     },
   });
@@ -137,7 +193,7 @@ async function persistTextArtifact(params: {
         executionId: params.executionId,
         kind: params.kind.toLowerCase(),
         objectKey,
-        sizeBytes: body.byteLength,
+        sizeBytes: params.body.byteLength,
       },
     },
   });

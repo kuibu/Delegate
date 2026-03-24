@@ -1102,7 +1102,6 @@ async function handleComputeRequest(params: {
         ...(parsed as ToolExecutionRequest),
         hasPaidEntitlement:
           parsed.hasPaidEntitlement ||
-          conversationContext.contactIsPaid ||
           conversationContext.usage.passUnlocked ||
           conversationContext.usage.deepHelpUnlocked,
       },

@@ -63,6 +63,46 @@ export function parseComputeRequest(input: string): ParsedComputeRequest | null 
     };
   }
 
+  if (normalized.toLowerCase().startsWith("mcp ")) {
+    const body = normalized.slice(4).trim();
+    const splitToken = body.includes(":::") ? ":::" : "\n";
+    const [headPart, ...rest] = body.split(splitToken);
+    const head = headPart?.trim();
+
+    if (!head) {
+      return null;
+    }
+
+    const [bindingSlug, toolName] = head.split(/\s+/, 2);
+    if (!bindingSlug) {
+      return null;
+    }
+
+    let toolArguments: Record<string, unknown> = {};
+    const argumentPayload = rest.join(splitToken).trim();
+    if (argumentPayload) {
+      try {
+        const parsedArguments = JSON.parse(argumentPayload);
+        if (!parsedArguments || typeof parsedArguments !== "object" || Array.isArray(parsedArguments)) {
+          return null;
+        }
+        toolArguments = parsedArguments as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    }
+
+    return {
+      capability: "mcp",
+      bindingSlug,
+      ...(toolName ? { toolName } : {}),
+      toolArguments,
+      estimatedCostCents: 12 + Math.ceil(JSON.stringify(toolArguments).length / 256),
+      hasPaidEntitlement: false,
+      displayTarget: toolName ? `${bindingSlug}:${toolName}` : bindingSlug,
+    };
+  }
+
   if (normalized.toLowerCase().startsWith("process ")) {
     const command = normalized.slice(8).trim();
     if (!command) {
@@ -81,6 +121,7 @@ export function formatComputeUsageExamples() {
     "/compute read README.md",
     "/compute write notes/demo.txt ::: hello from delegate",
     "/compute browser https://example.com",
+    '/compute mcp demo-weather lookup ::: {"city":"Shanghai"}',
   ].join("\n");
 }
 

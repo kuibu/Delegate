@@ -1,5 +1,11 @@
 import { Prisma } from "@prisma/client";
-import type { ArtifactDetailResponse, ResolveApprovalResponse } from "@delegate/compute-protocol";
+import {
+  upsertMcpBindingRequestSchema,
+  type ArtifactDetailResponse,
+  type McpBindingSnapshot,
+  type ResolveApprovalResponse,
+  type UpsertMcpBindingRequest,
+} from "@delegate/compute-protocol";
 
 import { readArtifactObject } from "./artifact-store";
 import { prisma } from "./prisma";
@@ -28,6 +34,7 @@ type RepresentativeIdentity = {
   computeAutoApproveBudgetCents: number;
   computeArtifactRetentionDays: number;
   computeNetworkMode: string;
+  computeNetworkAllowlist: string[];
   computeFilesystemMode: string;
   owner: {
     wallet: {
@@ -51,6 +58,27 @@ type RepresentativeIdentity = {
       priority: number;
     }>;
   }>;
+  mcpBindings: Array<{
+    id: string;
+    representativeId: string;
+    representativeSkillPackLinkId: string | null;
+    slug: string;
+    displayName: string;
+    description: string | null;
+    serverUrl: string;
+    transportKind: string;
+    allowedToolNames: Prisma.JsonValue;
+    defaultToolName: string | null;
+    enabled: boolean;
+    approvalRequired: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+    representativeSkillPackLink: {
+      skillPack: {
+        displayName: string;
+      };
+    } | null;
+  }>;
 };
 
 export type RepresentativeComputeSnapshot = {
@@ -64,6 +92,7 @@ export type RepresentativeComputeSnapshot = {
     autoApproveBudgetCents: number;
     artifactRetentionDays: number;
     networkMode: "no_network" | "allowlist" | "full";
+    networkAllowlist: string[];
     filesystemMode: "workspace_only" | "read_only_workspace" | "ephemeral_full";
     wallet: {
       balanceCredits: number;
@@ -78,6 +107,11 @@ export type RepresentativeComputeSnapshot = {
       ruleCount: number;
       highlights: string[];
     }>;
+    mcpBindings: Array<
+      McpBindingSnapshot & {
+        sourceSkillPack?: string;
+      }
+    >;
   };
   sessions: Array<{
     id: string;
@@ -158,6 +192,11 @@ export type RepresentativeComputeArtifactDetail = ArtifactDetailResponse & {
     displayName: string;
   };
 };
+
+export type UpsertRepresentativeMcpBindingInput = {
+  representativeSlug: string;
+  bindingId?: string;
+} & UpsertMcpBindingRequest;
 
 export type ResolveRepresentativeComputeApprovalInput = {
   representativeSlug: string;
@@ -393,6 +432,101 @@ export async function resolveRepresentativeComputeApproval(
   return brokerResponse as ResolveApprovalResponse;
 }
 
+export async function upsertRepresentativeMcpBinding(
+  input: UpsertRepresentativeMcpBindingInput,
+): Promise<McpBindingSnapshot> {
+  const representative = await getRepresentativeIdentity(input.representativeSlug);
+
+  if (!representative) {
+    throw new Error(`Representative "${input.representativeSlug}" not found.`);
+  }
+
+  const parsed = upsertMcpBindingRequestSchema.parse({
+    representativeSkillPackLinkId: input.representativeSkillPackLinkId,
+    slug: input.slug,
+    displayName: input.displayName,
+    description: input.description,
+    serverUrl: input.serverUrl,
+    transportKind: input.transportKind,
+    allowedToolNames: input.allowedToolNames,
+    defaultToolName: input.defaultToolName,
+    enabled: input.enabled,
+    approvalRequired: input.approvalRequired,
+  });
+
+  const linkId = parsed.representativeSkillPackLinkId ?? null;
+  if (linkId) {
+    const linkedSkillPack = await prisma.representativeSkillPack.findFirst({
+      where: {
+        id: linkId,
+        representativeId: representative.id,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!linkedSkillPack) {
+      throw new Error("Representative skill pack link not found for this binding.");
+    }
+  }
+
+  if (parsed.defaultToolName && !parsed.allowedToolNames.includes(parsed.defaultToolName)) {
+    throw new Error("The default MCP tool must be included in allowedToolNames.");
+  }
+
+  const existingBinding =
+    input.bindingId
+      ? await prisma.representativeMcpBinding.findFirst({
+          where: {
+            id: input.bindingId,
+            representativeId: representative.id,
+          },
+        })
+      : null;
+
+  if (input.bindingId && !existingBinding) {
+    throw new Error("MCP binding not found for this representative.");
+  }
+
+  const binding = input.bindingId
+    ? await prisma.representativeMcpBinding.update({
+        where: { id: input.bindingId },
+        data: {
+          representativeSkillPackLinkId: linkId,
+          slug: parsed.slug,
+          displayName: parsed.displayName,
+          description: parsed.description ?? null,
+          serverUrl: parsed.serverUrl,
+          transportKind: parsed.transportKind.toUpperCase() as "STREAMABLE_HTTP",
+          allowedToolNames: parsed.allowedToolNames,
+          defaultToolName: parsed.defaultToolName ?? null,
+          enabled: parsed.enabled,
+          approvalRequired: parsed.approvalRequired,
+        },
+      })
+    : await prisma.representativeMcpBinding.create({
+        data: {
+          representativeId: representative.id,
+          representativeSkillPackLinkId: linkId,
+          slug: parsed.slug,
+          displayName: parsed.displayName,
+          description: parsed.description ?? null,
+          serverUrl: parsed.serverUrl,
+          transportKind: parsed.transportKind.toUpperCase() as "STREAMABLE_HTTP",
+          allowedToolNames: parsed.allowedToolNames,
+          defaultToolName: parsed.defaultToolName ?? null,
+          enabled: parsed.enabled,
+          approvalRequired: parsed.approvalRequired,
+        },
+      });
+
+  return serializeMcpBindingRecord({
+    ...binding,
+    representativeSkillPackLink: null,
+  });
+}
+
 function serializeComputeSession(session: ComputeSessionRecord) {
   const latestExecution = session.toolExecutions[0];
 
@@ -442,6 +576,7 @@ async function getRepresentativeIdentity(
       computeAutoApproveBudgetCents: true,
       computeArtifactRetentionDays: true,
       computeNetworkMode: true,
+      computeNetworkAllowlist: true,
       computeFilesystemMode: true,
       owner: {
         select: {
@@ -474,6 +609,34 @@ async function getRepresentativeIdentity(
               channelCondition: true,
               requiredPlanTier: true,
               priority: true,
+            },
+          },
+        },
+      },
+      mcpBindings: {
+        orderBy: [{ createdAt: "asc" }],
+        select: {
+          id: true,
+          representativeId: true,
+          representativeSkillPackLinkId: true,
+          slug: true,
+          displayName: true,
+          description: true,
+          serverUrl: true,
+          transportKind: true,
+          allowedToolNames: true,
+          defaultToolName: true,
+          enabled: true,
+          approvalRequired: true,
+          createdAt: true,
+          updatedAt: true,
+          representativeSkillPackLink: {
+            select: {
+              skillPack: {
+                select: {
+                  displayName: true,
+                },
+              },
             },
           },
         },
@@ -518,6 +681,7 @@ function serializeRepresentativeIdentity(representative: RepresentativeIdentity)
       | "no_network"
       | "allowlist"
       | "full",
+    networkAllowlist: representative.computeNetworkAllowlist,
     filesystemMode: representative.computeFilesystemMode.toLowerCase() as
       | "workspace_only"
       | "read_only_workspace"
@@ -539,6 +703,31 @@ function serializeRepresentativeIdentity(representative: RepresentativeIdentity)
         return `${rule.capability.toLowerCase()} -> ${rule.decision.toLowerCase()}${channel}${plan}`;
       }),
     })),
+    mcpBindings: representative.mcpBindings.map((binding) => serializeMcpBindingRecord(binding)),
+  };
+}
+
+function serializeMcpBindingRecord(binding: RepresentativeIdentity["mcpBindings"][number]) {
+  return {
+    id: binding.id,
+    representativeId: binding.representativeId,
+    representativeSkillPackLinkId: binding.representativeSkillPackLinkId,
+    slug: binding.slug,
+    displayName: binding.displayName,
+    description: binding.description,
+    serverUrl: binding.serverUrl,
+    transportKind: binding.transportKind.toLowerCase() as "streamable_http",
+    allowedToolNames: Array.isArray(binding.allowedToolNames)
+      ? binding.allowedToolNames.filter((value): value is string => typeof value === "string")
+      : [],
+    defaultToolName: binding.defaultToolName,
+    enabled: binding.enabled,
+    approvalRequired: binding.approvalRequired,
+    createdAt: binding.createdAt.toISOString(),
+    updatedAt: binding.updatedAt.toISOString(),
+    ...(binding.representativeSkillPackLink?.skillPack.displayName
+      ? { sourceSkillPack: binding.representativeSkillPackLink.skillPack.displayName }
+      : {}),
   };
 }
 

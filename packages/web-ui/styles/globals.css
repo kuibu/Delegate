@@ -579,6 +579,12 @@ select {
   font: inherit;
 }
 
+.text-area {
+  min-width: 0;
+  min-height: 112px;
+  resize: vertical;
+}
+
 .text-input:focus {
   outline: 2px solid rgba(195, 91, 45, 0.22);
   outline-offset: 2px;
@@ -650,6 +656,16 @@ button.skill-row:hover {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.field-stack-wide {
+  grid-column: 1 / -1;
+}
+
+.field-hint {
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.5;
 }
 
 .field-span-full {
@@ -1980,6 +1996,66 @@ button.skill-row:hover {
   .dashboard-form-footer {
     justify-content: start;
   }
+
+  .dashboard-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dashboard-form-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
+.field-label {
+  color: var(--ink-soft);
+  display: flex;
+  flex-direction: column;
+  font-size: 0.76rem;
+  gap: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.field-label-wide {
+  grid-column: 1 / -1;
+}
+
+.field-input,
+.field-textarea {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(23, 37, 57, 0.12);
+  border-radius: 14px;
+  color: var(--ink-strong);
+  font: inherit;
+  padding: 12px 14px;
+  width: 100%;
+}
+
+.field-textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.field-input:focus,
+.field-textarea:focus {
+  border-color: rgba(162, 94, 34, 0.45);
+  box-shadow: 0 0 0 3px rgba(162, 94, 34, 0.12);
+  outline: none;
+}
+
+.field-toggle {
+  align-items: center;
+  color: var(--ink-soft);
+  display: inline-flex;
+  font-size: 0.82rem;
+  gap: 8px;
+}
+
+.field-toggle input {
+  accent-color: var(--signal-copper);
 }
 
 @media (prefers-reduced-motion: no-preference) {

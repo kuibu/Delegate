@@ -191,6 +191,12 @@ export async function PATCH(
                     ? (body.compute as { networkMode: "no_network" | "allowlist" | "full" })
                         .networkMode
                     : "no_network",
+                networkAllowlist: Array.isArray((body.compute as { networkAllowlist?: unknown }).networkAllowlist)
+                  ? (body.compute as { networkAllowlist: unknown[] }).networkAllowlist
+                      .filter((value): value is string => typeof value === "string")
+                      .map((value) => value.trim())
+                      .filter(Boolean)
+                  : [],
                 filesystemMode:
                   (body.compute as { filesystemMode?: string }).filesystemMode ===
                     "read_only_workspace" ||
@@ -214,6 +220,7 @@ export async function PATCH(
                 autoApproveBudgetCents: 0,
                 artifactRetentionDays: 14,
                 networkMode: "no_network",
+                networkAllowlist: [],
                 filesystemMode: "workspace_only",
               },
       },

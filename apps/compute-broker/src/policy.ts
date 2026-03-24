@@ -1,9 +1,11 @@
 import { evaluateCapabilityPolicyStack } from "@delegate/capability-policy";
 import { toolExecutionRequestSchema } from "@delegate/compute-protocol";
 
+import { deriveConversationComputeEntitlements } from "./entitlements";
+import { loadRepresentativeMcpBinding, resolveMcpToolName } from "./mcp-bindings";
 import { normalizeContainerPath } from "./path-utils";
 import { prisma } from "./prisma";
-import { SessionError } from "./sessions";
+import { SessionError } from "./session-error";
 import { serializeCapabilityProfile } from "./serializers";
 
 export async function loadSessionPolicyContext(sessionId: string) {
@@ -74,19 +76,33 @@ export async function evaluateExecutionRequest(sessionId: string, rawInput: unkn
       ? normalizeContainerPath(input.path)
       : input.path;
   const context = await loadSessionPolicyContext(sessionId);
-  const hasPaidEntitlement = input.hasPaidEntitlement || Boolean(context.session.contact?.isPaid);
-  const activePlanTier = context.session.conversation?.deepHelpUnlockedAt
-    ? "deep_help"
-    : context.session.conversation?.passUnlockedAt || hasPaidEntitlement
-      ? "pass"
+  const entitlements = deriveConversationComputeEntitlements({
+    conversation: context.session.conversation,
+    requestedPaidEntitlement: input.hasPaidEntitlement,
+  });
+  const mcpBinding =
+    input.capability === "mcp"
+      ? await loadRepresentativeMcpBinding({
+          representativeId: context.session.representativeId,
+          bindingId: input.bindingId,
+          bindingSlug: input.bindingSlug,
+        })
+      : null;
+  const mcpToolName =
+    input.capability === "mcp" && mcpBinding
+      ? resolveMcpToolName({
+          binding: mcpBinding,
+          requestedToolName: input.toolName,
+        }).toolName
       : undefined;
+  const bindingDomain = mcpBinding ? new URL(mcpBinding.serverUrl).hostname : undefined;
   const decision = evaluateCapabilityPolicyStack(
     [...context.managedProfiles, context.profile],
     {
       capability: input.capability,
-      command: input.command,
+      command: input.capability === "mcp" ? mcpToolName : input.command,
       path: normalizedPath,
-      domain: input.domain,
+      domain: input.capability === "mcp" ? bindingDomain : input.domain,
       ...(context.session.conversation?.channel
         ? {
             channel: context.session.conversation.channel.toLowerCase() as
@@ -96,15 +112,23 @@ export async function evaluateExecutionRequest(sessionId: string, rawInput: unkn
               | "channel_entry",
           }
         : {}),
-      ...(activePlanTier ? { activePlanTier } : {}),
+      ...(entitlements.activePlanTier ? { activePlanTier: entitlements.activePlanTier } : {}),
       estimatedCostCents: input.estimatedCostCents,
-      hasPaidEntitlement,
+      hasPaidEntitlement: entitlements.hasPaidEntitlement,
     },
   );
 
   return {
-    input: normalizedPath ? { ...input, path: normalizedPath } : input,
+    input: {
+      ...input,
+      ...(normalizedPath ? { path: normalizedPath } : {}),
+      ...(input.capability === "mcp" && mcpBinding ? { bindingId: mcpBinding.id } : {}),
+      ...(input.capability === "mcp" && bindingDomain ? { domain: bindingDomain } : {}),
+      ...(input.capability === "mcp" && mcpToolName ? { toolName: mcpToolName } : {}),
+    },
     context,
     decision,
+    entitlements,
+    mcpBinding,
   };
 }

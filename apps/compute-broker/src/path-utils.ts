@@ -1,6 +1,6 @@
 import { posix as pathPosix } from "node:path";
 
-import { SessionError } from "./sessions";
+import { SessionError } from "./session-error";
 
 export function normalizeContainerPath(rawPath: string) {
   const trimmed = rawPath.trim();

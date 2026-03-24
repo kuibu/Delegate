@@ -17,9 +17,9 @@ import {
 import {
   createComputeSession,
   getComputeSession,
-  SessionError,
   terminateComputeSession,
 } from "./sessions";
+import { SessionError } from "./session-error";
 
 const server = createServer(async (request, response) => {
   try {

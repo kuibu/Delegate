@@ -43,7 +43,7 @@ export function buildDockerRunArgs(input: DockerExecutionInput): string[] {
     "/tmp:rw,noexec,nosuid,size=64m",
   ];
 
-  if (input.networkMode === "no_network") {
+  if (input.networkMode === "no_network" || input.networkMode === "allowlist") {
     args.push("--network", "none");
   }
 

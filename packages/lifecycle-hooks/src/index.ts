@@ -60,6 +60,9 @@ export type ToolPreflightEvent = {
   requestedPath?: string;
   workingDirectory?: string;
   estimatedCredits?: number;
+  transport?: string;
+  bindingId?: string;
+  remoteUrl?: string;
 };
 
 export type ToolCompletedEvent = {
@@ -72,6 +75,9 @@ export type ToolCompletedEvent = {
   wallMs: number;
   artifactCount: number;
   actualCredits?: number;
+  transport?: string;
+  bindingId?: string;
+  remoteUrl?: string;
 };
 
 export type SessionEndedEvent = {

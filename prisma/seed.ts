@@ -162,6 +162,7 @@ export async function seedDatabase(client: PrismaClient = prisma): Promise<void>
         computeAutoApproveBudgetCents: 0,
         computeArtifactRetentionDays: 14,
         computeNetworkMode: ComputeNetworkMode.NO_NETWORK,
+        computeNetworkAllowlist: [],
         computeFilesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
       },
       update: {
@@ -189,6 +190,7 @@ export async function seedDatabase(client: PrismaClient = prisma): Promise<void>
         computeAutoApproveBudgetCents: 0,
         computeArtifactRetentionDays: 14,
         computeNetworkMode: ComputeNetworkMode.NO_NETWORK,
+        computeNetworkAllowlist: [],
         computeFilesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
       },
     });
@@ -804,6 +806,7 @@ async function upsertDefaultCapabilityPolicyProfile(
           maxCommandSeconds: 30,
           artifactRetentionDays: 14,
           networkMode: ComputeNetworkMode.NO_NETWORK,
+          networkAllowlist: [],
           filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
         },
       })
@@ -821,6 +824,7 @@ async function upsertDefaultCapabilityPolicyProfile(
           maxCommandSeconds: 30,
           artifactRetentionDays: 14,
           networkMode: ComputeNetworkMode.NO_NETWORK,
+          networkAllowlist: [],
           filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
         },
       });
@@ -898,6 +902,7 @@ async function upsertManagedCapabilityPolicyProfile(
       maxCommandSeconds: 30,
       artifactRetentionDays: 14,
       networkMode: ComputeNetworkMode.NO_NETWORK,
+      networkAllowlist: [],
       filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
     },
     create: {
@@ -914,6 +919,7 @@ async function upsertManagedCapabilityPolicyProfile(
       maxCommandSeconds: 30,
       artifactRetentionDays: 14,
       networkMode: ComputeNetworkMode.NO_NETWORK,
+      networkAllowlist: [],
       filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
     },
   });
@@ -945,6 +951,16 @@ async function upsertManagedCapabilityPolicyProfile(
         decision: "ASK",
         requiredPlanTier: CapabilityPlanTier.PASS,
         priority: 210,
+        requiresPaidPlan: true,
+        requiresHumanApproval: true,
+      },
+      {
+        id: `${profile.id}_mcp_paid`,
+        profileId: profile.id,
+        capability: "MCP",
+        decision: "ASK",
+        requiredPlanTier: CapabilityPlanTier.PASS,
+        priority: 208,
         requiresPaidPlan: true,
         requiresHumanApproval: true,
       },

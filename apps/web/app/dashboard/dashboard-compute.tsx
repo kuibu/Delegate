@@ -22,6 +22,7 @@ type ComputeSnapshot = {
     autoApproveBudgetCents: number;
     artifactRetentionDays: number;
     networkMode: "no_network" | "allowlist" | "full";
+    networkAllowlist: string[];
     filesystemMode: "workspace_only" | "read_only_workspace" | "ephemeral_full";
     wallet: {
       balanceCredits: number;
@@ -35,6 +36,23 @@ type ComputeSnapshot = {
       precedence: number;
       ruleCount: number;
       highlights: string[];
+    }>;
+    mcpBindings: Array<{
+      id: string;
+      representativeId: string;
+      representativeSkillPackLinkId?: string | null;
+      slug: string;
+      displayName: string;
+      description?: string | null;
+      serverUrl: string;
+      transportKind: "streamable_http";
+      allowedToolNames: string[];
+      defaultToolName?: string | null;
+      enabled: boolean;
+      approvalRequired: boolean;
+      createdAt: string;
+      updatedAt: string;
+      sourceSkillPack?: string;
     }>;
   };
   sessions: Array<{
@@ -121,6 +139,18 @@ type ComputeArtifactDetail = {
   truncated: boolean;
 };
 
+type McpBindingFormState = {
+  bindingId: string | null;
+  slug: string;
+  displayName: string;
+  description: string;
+  serverUrl: string;
+  allowedToolNames: string;
+  defaultToolName: string;
+  enabled: boolean;
+  approvalRequired: boolean;
+};
+
 export function DashboardCompute({
   representativeSlug,
   locale,
@@ -138,9 +168,14 @@ export function DashboardCompute({
   const [message, setMessage] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [mcpForm, setMcpForm] = useState<McpBindingFormState>(() => createEmptyMcpBindingForm());
 
   useEffect(() => {
     void refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+  }, [representativeSlug]);
+
+  useEffect(() => {
+    setMcpForm(createEmptyMcpBindingForm());
   }, [representativeSlug]);
 
   useEffect(() => {
@@ -251,7 +286,10 @@ export function DashboardCompute({
       {
         label: t.platformCards.networkMode,
         value: snapshot.representative.networkMode,
-        detail: t.platformCards.networkModeDetail,
+        detail:
+          snapshot.representative.networkMode === "allowlist"
+            ? t.platformCards.networkAllowlistDetail(snapshot.representative.networkAllowlist)
+            : t.platformCards.networkModeDetail,
       },
       {
         label: t.platformCards.filesystemMode,
@@ -308,6 +346,78 @@ export function DashboardCompute({
           setBusyKey(null);
         });
     });
+  }
+
+  async function handleSaveMcpBinding() {
+    if (!snapshot) {
+      return;
+    }
+
+    const allowedToolNames = mcpForm.allowedToolNames
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    setBusyKey(mcpForm.bindingId ? `mcp:update:${mcpForm.bindingId}` : "mcp:create");
+    setMessage(null);
+    setError(null);
+
+    startTransition(() => {
+      void (async () => {
+        const pathname = mcpForm.bindingId
+          ? `/api/dashboard/representatives/${representativeSlug}/compute/mcp/${mcpForm.bindingId}`
+          : `/api/dashboard/representatives/${representativeSlug}/compute/mcp`;
+        const response = await fetch(pathname, {
+          method: mcpForm.bindingId ? "PATCH" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            slug: mcpForm.slug,
+            displayName: mcpForm.displayName,
+            description: mcpForm.description,
+            serverUrl: mcpForm.serverUrl,
+            transportKind: "streamable_http",
+            allowedToolNames,
+            defaultToolName: mcpForm.defaultToolName,
+            enabled: mcpForm.enabled,
+            approvalRequired: mcpForm.approvalRequired,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(await extractError(response));
+        }
+
+        await refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+        setMcpForm(createEmptyMcpBindingForm());
+        setMessage(
+          mcpForm.bindingId ? t.messages.mcpUpdated : t.messages.mcpCreated,
+        );
+      })()
+        .catch((nextError: unknown) => {
+          setError(nextError instanceof Error ? nextError.message : t.messages.error);
+        })
+        .finally(() => {
+          setBusyKey(null);
+        });
+    });
+  }
+
+  function startEditMcpBinding(binding: ComputeSnapshot["representative"]["mcpBindings"][number]) {
+    setMcpForm({
+      bindingId: binding.id,
+      slug: binding.slug,
+      displayName: binding.displayName,
+      description: binding.description ?? "",
+      serverUrl: binding.serverUrl,
+      allowedToolNames: binding.allowedToolNames.join(", "),
+      defaultToolName: binding.defaultToolName ?? "",
+      enabled: binding.enabled,
+      approvalRequired: binding.approvalRequired,
+    });
+    setMessage(null);
+    setError(null);
   }
 
   if (!snapshot) {
@@ -383,6 +493,187 @@ export function DashboardCompute({
             ) : (
               <p className="muted">{t.noManagedPolicies}</p>
             )}
+          </div>
+        </DashboardSurface>
+
+        <DashboardSurface
+          eyebrow={t.mcpEyebrow}
+          meta={<span className="chip">{t.mcpChip(snapshot.representative.mcpBindings.length)}</span>}
+          title={t.mcpTitle}
+        >
+          <div className="row-list">
+            {snapshot.representative.mcpBindings.length ? (
+              snapshot.representative.mcpBindings.map((binding) => (
+                <div className="skill-row" key={binding.id}>
+                  <div>
+                    <strong>{binding.displayName}</strong>
+                    <p>{binding.serverUrl}</p>
+                    <div className="chip-row">
+                      <span className={binding.enabled ? "chip chip-safe" : "chip"}>
+                        {binding.enabled ? t.enabledChip : t.disabledChip}
+                      </span>
+                      <span className="chip">{binding.transportKind}</span>
+                      <span className="chip">{binding.slug}</span>
+                      {binding.defaultToolName ? <span className="chip">{binding.defaultToolName}</span> : null}
+                      {binding.sourceSkillPack ? <span className="chip">{binding.sourceSkillPack}</span> : null}
+                    </div>
+                    {binding.description ? <p className="footer-note">{binding.description}</p> : null}
+                    <p className="footer-note">
+                      {t.allowedTools(binding.allowedToolNames.join(", "))}
+                    </p>
+                    <p className="footer-note">
+                      {binding.approvalRequired ? t.mcpRequiresApproval : t.mcpNoApproval}
+                    </p>
+                  </div>
+
+                  <div className="button-row">
+                    <button
+                      className="button-secondary"
+                      onClick={() => startEditMcpBinding(binding)}
+                      type="button"
+                    >
+                      {t.editBinding}
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="muted">{t.noMcpBindings}</p>
+            )}
+
+            <div className="skill-row">
+              <div className="dashboard-form-grid">
+                <label className="field-label">
+                  <span>{t.mcpFields.slug}</span>
+                  <input
+                    className="field-input"
+                    onChange={(event) =>
+                      setMcpForm((current) => ({ ...current, slug: event.target.value }))
+                    }
+                    placeholder="weather"
+                    type="text"
+                    value={mcpForm.slug}
+                  />
+                </label>
+                <label className="field-label">
+                  <span>{t.mcpFields.displayName}</span>
+                  <input
+                    className="field-input"
+                    onChange={(event) =>
+                      setMcpForm((current) => ({ ...current, displayName: event.target.value }))
+                    }
+                    placeholder="Weather MCP"
+                    type="text"
+                    value={mcpForm.displayName}
+                  />
+                </label>
+                <label className="field-label">
+                  <span>{t.mcpFields.serverUrl}</span>
+                  <input
+                    className="field-input"
+                    onChange={(event) =>
+                      setMcpForm((current) => ({ ...current, serverUrl: event.target.value }))
+                    }
+                    placeholder="http://host.docker.internal:8787/mcp"
+                    type="url"
+                    value={mcpForm.serverUrl}
+                  />
+                </label>
+                <label className="field-label">
+                  <span>{t.mcpFields.allowedTools}</span>
+                  <input
+                    className="field-input"
+                    onChange={(event) =>
+                      setMcpForm((current) => ({
+                        ...current,
+                        allowedToolNames: event.target.value,
+                      }))
+                    }
+                    placeholder="lookup, forecast"
+                    type="text"
+                    value={mcpForm.allowedToolNames}
+                  />
+                </label>
+                <label className="field-label">
+                  <span>{t.mcpFields.defaultTool}</span>
+                  <input
+                    className="field-input"
+                    onChange={(event) =>
+                      setMcpForm((current) => ({
+                        ...current,
+                        defaultToolName: event.target.value,
+                      }))
+                    }
+                    placeholder="lookup"
+                    type="text"
+                    value={mcpForm.defaultToolName}
+                  />
+                </label>
+                <label className="field-label field-label-wide">
+                  <span>{t.mcpFields.description}</span>
+                  <textarea
+                    className="field-textarea"
+                    onChange={(event) =>
+                      setMcpForm((current) => ({
+                        ...current,
+                        description: event.target.value,
+                      }))
+                    }
+                    placeholder={t.mcpDescriptionPlaceholder}
+                    rows={3}
+                    value={mcpForm.description}
+                  />
+                </label>
+              </div>
+              <div className="chip-row">
+                <label className="field-toggle">
+                  <input
+                    checked={mcpForm.enabled}
+                    onChange={(event) =>
+                      setMcpForm((current) => ({ ...current, enabled: event.target.checked }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.mcpFields.enabled}</span>
+                </label>
+                <label className="field-toggle">
+                  <input
+                    checked={mcpForm.approvalRequired}
+                    onChange={(event) =>
+                      setMcpForm((current) => ({
+                        ...current,
+                        approvalRequired: event.target.checked,
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.mcpFields.approvalRequired}</span>
+                </label>
+              </div>
+              <div className="button-row">
+                <button
+                  className="button-primary"
+                  disabled={isPending || Boolean(busyKey?.startsWith("mcp:"))}
+                  onClick={() => void handleSaveMcpBinding()}
+                  type="button"
+                >
+                  {busyKey?.startsWith("mcp:")
+                    ? t.savingBinding
+                    : mcpForm.bindingId
+                      ? t.updateBinding
+                      : t.createBinding}
+                </button>
+                {mcpForm.bindingId ? (
+                  <button
+                    className="button-secondary"
+                    onClick={() => setMcpForm(createEmptyMcpBindingForm())}
+                    type="button"
+                  >
+                    {t.cancelBindingEdit}
+                  </button>
+                ) : null}
+              </div>
+            </div>
           </div>
         </DashboardSurface>
 
@@ -674,6 +965,20 @@ function formatBytes(value: number) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function createEmptyMcpBindingForm(): McpBindingFormState {
+  return {
+    bindingId: null,
+    slug: "",
+    displayName: "",
+    description: "",
+    serverUrl: "",
+    allowedToolNames: "",
+    defaultToolName: "",
+    enabled: true,
+    approvalRequired: true,
+  };
+}
+
 const copy = {
   zh: {
     panelEyebrow: "Compute Plane",
@@ -710,6 +1015,8 @@ const copy = {
       policyModeDetail: "没有命中具体规则时，默认如何处理。",
       networkMode: "Network mode",
       networkModeDetail: "session 默认走什么网络边界。",
+      networkAllowlistDetail: (value: string[]) =>
+        value.length ? `Allowlist · ${value.join(", ")}` : "Allowlist 还没有配置任何域名。",
       filesystemMode: "Filesystem mode",
       filesystemModeDetail: "容器默认可见的文件系统范围。",
       retention: "Retention",
@@ -720,6 +1027,29 @@ const copy = {
     managedPoliciesChip: (count: number) => `${count} overlays`,
     managedPolicyMeta: (precedence: number, rules: number) => `precedence ${precedence} · ${rules} rules`,
     noManagedPolicies: "No managed overlays loaded yet.",
+    mcpEyebrow: "MCP Bindings",
+    mcpTitle: "把远程 capability server 绑定成可审批、可追踪的代表能力",
+    mcpChip: (count: number) => `${count} bindings`,
+    noMcpBindings: "还没有 MCP binding。先把一个远程 capability server 绑进来，再让代表通过审批后的 compute 请求去调用它。",
+    allowedTools: (value: string) => `Allowed tools · ${value}`,
+    mcpRequiresApproval: "This binding still requires explicit approval before remote tool calls.",
+    mcpNoApproval: "This binding can run without an extra binding-level approval flag.",
+    editBinding: "编辑 binding",
+    createBinding: "创建 binding",
+    updateBinding: "更新 binding",
+    cancelBindingEdit: "取消编辑",
+    savingBinding: "保存中...",
+    mcpFields: {
+      slug: "Binding slug",
+      displayName: "Display name",
+      serverUrl: "Server URL",
+      allowedTools: "Allowed tools",
+      defaultTool: "Default tool",
+      description: "Description",
+      enabled: "Enabled",
+      approvalRequired: "Requires approval",
+    },
+    mcpDescriptionPlaceholder: "告诉 owner 这个 remote MCP server 是干什么的，以及适合哪些任务。",
     approvalsEyebrow: "Approval Queue",
     approvalsTitle: "先决定哪些请求值得放进 compute plane",
     pendingChip: (count: number) => `${count} pending`,
@@ -758,6 +1088,8 @@ const copy = {
     messages: {
       approved: "审批已通过，若命令可恢复执行，会继续在 compute plane 中跑完。",
       rejected: "审批已拒绝，相关 execution 已取消。",
+      mcpCreated: "新的 MCP binding 已保存。现在这个代表可以把远程 capability server 当成受控能力来调用。",
+      mcpUpdated: "MCP binding 已更新。",
       error: "处理审批失败。",
     },
   },
@@ -796,6 +1128,8 @@ const copy = {
       policyModeDetail: "How unmatched requests are handled by default.",
       networkMode: "Network mode",
       networkModeDetail: "The default network boundary for sessions.",
+      networkAllowlistDetail: (value: string[]) =>
+        value.length ? `Allowlist · ${value.join(", ")}` : "No hostnames configured for allowlist mode yet.",
       filesystemMode: "Filesystem mode",
       filesystemModeDetail: "The default filesystem surface exposed to the container.",
       retention: "Retention",
@@ -806,6 +1140,29 @@ const copy = {
     managedPoliciesChip: (count: number) => `${count} 个 overlay`,
     managedPolicyMeta: (precedence: number, rules: number) => `优先级 ${precedence} · ${rules} 条规则`,
     noManagedPolicies: "当前还没有托管 overlay。",
+    mcpEyebrow: "MCP Bindings",
+    mcpTitle: "Bind remote capability servers as governed representative tools",
+    mcpChip: (count: number) => `${count} bindings`,
+    noMcpBindings: "No MCP bindings yet. Attach a remote capability server here before routing approved work into it.",
+    allowedTools: (value: string) => `Allowed tools · ${value}`,
+    mcpRequiresApproval: "This binding still requires explicit approval before remote tool calls.",
+    mcpNoApproval: "This binding can run without an extra binding-level approval flag.",
+    editBinding: "Edit binding",
+    createBinding: "Create binding",
+    updateBinding: "Update binding",
+    cancelBindingEdit: "Cancel edit",
+    savingBinding: "Saving...",
+    mcpFields: {
+      slug: "Binding slug",
+      displayName: "Display name",
+      serverUrl: "Server URL",
+      allowedTools: "Allowed tools",
+      defaultTool: "Default tool",
+      description: "Description",
+      enabled: "Enabled",
+      approvalRequired: "Requires approval",
+    },
+    mcpDescriptionPlaceholder: "Tell the owner what this remote MCP server does and when this representative should use it.",
     approvalsEyebrow: "Approval Queue",
     approvalsTitle: "Decide which requests are worth letting into the compute plane",
     pendingChip: (count: number) => `${count} pending`,
@@ -844,6 +1201,8 @@ const copy = {
     messages: {
       approved: "Approval granted. If the execution could resume, it is now running inside the compute plane.",
       rejected: "Approval rejected. The linked execution has been canceled.",
+      mcpCreated: "A new MCP binding has been saved.",
+      mcpUpdated: "The MCP binding has been updated.",
       error: "Failed to resolve approval.",
     },
   },

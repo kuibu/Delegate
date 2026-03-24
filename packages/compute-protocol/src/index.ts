@@ -1,8 +1,16 @@
 import { z } from "zod";
 
-export const capabilityKindSchema = z.enum(["exec", "read", "write", "process", "browser"]);
+export const capabilityKindSchema = z.enum([
+  "exec",
+  "read",
+  "write",
+  "process",
+  "browser",
+  "mcp",
+]);
 export const capabilityPlanTierSchema = z.enum(["pass", "deep_help"]);
 export const policyDecisionSchema = z.enum(["allow", "ask", "deny"]);
+export const mcpTransportKindSchema = z.enum(["streamable_http"]);
 export const policyChannelSchema = z.enum([
   "private_chat",
   "group_mention",
@@ -45,6 +53,10 @@ export const computeFilesystemModeSchema = z.enum([
   "read_only_workspace",
   "ephemeral_full",
 ]);
+export const computeNetworkAllowlistSchema = z
+  .array(z.string().trim().min(1))
+  .max(50)
+  .default([]);
 export const computeExecutionOutcomeSchema = z.enum([
   "completed",
   "failed",
@@ -81,6 +93,7 @@ export const capabilityPolicyProfileSchema = z.object({
   maxCommandSeconds: z.number().int().positive(),
   artifactRetentionDays: z.number().int().positive(),
   networkMode: computeNetworkModeSchema,
+  networkAllowlist: computeNetworkAllowlistSchema,
   filesystemMode: computeFilesystemModeSchema,
   rules: z.array(capabilityPolicyRuleSchema).default([]),
 });
@@ -140,10 +153,86 @@ export const toolExecutionRequestSchema = z.object({
   path: z.string().min(1).optional(),
   domain: z.string().min(1).optional(),
   url: z.string().url().optional(),
+  bindingId: z.string().min(1).optional(),
+  bindingSlug: z.string().min(1).optional(),
+  toolName: z.string().min(1).optional(),
+  toolArguments: z.record(z.string(), z.unknown()).optional(),
   workingDirectory: z.string().min(1).optional(),
   estimatedCostCents: z.number().int().nonnegative().optional(),
   hasPaidEntitlement: z.boolean().default(false),
 });
+
+export const mcpBindingSnapshotSchema = z.object({
+  id: z.string(),
+  representativeId: z.string(),
+  representativeSkillPackLinkId: z.string().nullable().optional(),
+  slug: z.string(),
+  displayName: z.string(),
+  description: z.string().nullable().optional(),
+  serverUrl: z.string().url(),
+  transportKind: mcpTransportKindSchema,
+  allowedToolNames: z.array(z.string().min(1)),
+  defaultToolName: z.string().nullable().optional(),
+  enabled: z.boolean(),
+  approvalRequired: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+const mcpBindingFieldsSchema = z.object({
+  representativeSkillPackLinkId: z.string().min(1).optional(),
+  slug: z.string().trim().min(1),
+  displayName: z.string().trim().min(1),
+  description: z.string().trim().min(1).optional(),
+  serverUrl: z.string().url(),
+  transportKind: mcpTransportKindSchema.default("streamable_http"),
+  allowedToolNames: z.array(z.string().trim().min(1)).min(1),
+  defaultToolName: z.string().trim().min(1).optional(),
+  enabled: z.boolean().default(true),
+  approvalRequired: z.boolean().default(true),
+});
+
+function refineMcpBindingSchema<T extends z.ZodTypeAny>(schema: T) {
+  return schema.superRefine((value, ctx) => {
+    if (!value || typeof value !== "object") {
+      return;
+    }
+
+    const record = value as {
+      allowedToolNames?: string[];
+      defaultToolName?: string;
+    };
+    if (!Array.isArray(record.allowedToolNames)) {
+      return;
+    }
+
+    const deduped = new Set(record.allowedToolNames);
+    if (deduped.size !== record.allowedToolNames.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Allowed tool names must be unique.",
+        path: ["allowedToolNames"],
+      });
+    }
+
+    if (record.defaultToolName && !deduped.has(record.defaultToolName)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Default tool must also appear in allowed tool names.",
+        path: ["defaultToolName"],
+      });
+    }
+  });
+}
+
+export const upsertMcpBindingRequestSchema = refineMcpBindingSchema(mcpBindingFieldsSchema);
+
+export const updateMcpBindingRequestSchema = refineMcpBindingSchema(mcpBindingFieldsSchema.partial()).refine(
+  (value) => Object.keys(value).length > 0,
+  {
+    message: "At least one MCP binding field is required.",
+  },
+);
 
 export const approvalRequestSnapshotSchema = z.object({
   id: z.string(),
@@ -192,6 +281,7 @@ export const toolExecutionSnapshotSchema = z.object({
   requestedCommand: z.string().nullable(),
   requestedPath: z.string().nullable(),
   workingDirectory: z.string().nullable(),
+  mcpBindingId: z.string().nullable().optional(),
   policyDecision: policyDecisionSchema.nullable(),
   approvalRequestId: z.string().nullable(),
   startedAt: z.string().datetime().nullable(),
@@ -242,6 +332,14 @@ export const listApprovalsResponseSchema = z.object({
   approvals: z.array(approvalRequestSnapshotSchema),
 });
 
+export const listMcpBindingsResponseSchema = z.object({
+  representative: z.object({
+    slug: z.string(),
+    displayName: z.string(),
+  }),
+  bindings: z.array(mcpBindingSnapshotSchema),
+});
+
 export const brokerHealthSchema = z.object({
   status: z.literal("ok"),
   service: z.literal("compute-broker"),
@@ -258,6 +356,7 @@ export const artifactDetailResponseSchema = z.object({
 export type CapabilityKind = z.infer<typeof capabilityKindSchema>;
 export type CapabilityPlanTier = z.infer<typeof capabilityPlanTierSchema>;
 export type PolicyDecision = z.infer<typeof policyDecisionSchema>;
+export type McpTransportKind = z.infer<typeof mcpTransportKindSchema>;
 export type PolicyChannel = z.infer<typeof policyChannelSchema>;
 export type ComputeSessionStatus = z.infer<typeof computeSessionStatusSchema>;
 export type ToolExecutionStatus = z.infer<typeof toolExecutionStatusSchema>;
@@ -277,6 +376,9 @@ export type CreateComputeSessionResponse = z.infer<typeof createComputeSessionRe
 export type TerminateComputeSessionRequest = z.infer<typeof terminateComputeSessionRequestSchema>;
 export type ToolExecutionRequest = z.infer<typeof toolExecutionRequestSchema>;
 export type ToolExecutionSnapshot = z.infer<typeof toolExecutionSnapshotSchema>;
+export type McpBindingSnapshot = z.infer<typeof mcpBindingSnapshotSchema>;
+export type UpsertMcpBindingRequest = z.infer<typeof upsertMcpBindingRequestSchema>;
+export type UpdateMcpBindingRequest = z.infer<typeof updateMcpBindingRequestSchema>;
 export type ApprovalRequestSnapshot = z.infer<typeof approvalRequestSnapshotSchema>;
 export type ResolveApprovalRequest = z.infer<typeof resolveApprovalRequestSchema>;
 export type ResolveApprovalResponse = z.infer<typeof resolveApprovalResponseSchema>;
@@ -284,5 +386,6 @@ export type ArtifactSnapshot = z.infer<typeof artifactSnapshotSchema>;
 export type ExecuteToolResponse = z.infer<typeof executeToolResponseSchema>;
 export type ListArtifactsResponse = z.infer<typeof listArtifactsResponseSchema>;
 export type ListApprovalsResponse = z.infer<typeof listApprovalsResponseSchema>;
+export type ListMcpBindingsResponse = z.infer<typeof listMcpBindingsResponseSchema>;
 export type BrokerHealth = z.infer<typeof brokerHealthSchema>;
 export type ArtifactDetailResponse = z.infer<typeof artifactDetailResponseSchema>;

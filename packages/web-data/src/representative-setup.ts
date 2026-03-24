@@ -105,6 +105,7 @@ const representativeSetupUpdateSchema = z.object({
     autoApproveBudgetCents: z.number().int().min(0).max(100000),
     artifactRetentionDays: z.number().int().min(1).max(365),
     networkMode: computeNetworkModeSchema,
+    networkAllowlist: z.array(z.string().trim().min(1)).max(50),
     filesystemMode: computeFilesystemModeSchema,
   }),
 });
@@ -151,6 +152,7 @@ export type RepresentativeSetupSnapshot = Pick<
     autoApproveBudgetCents: number;
     artifactRetentionDays: number;
     networkMode: "no_network" | "allowlist" | "full";
+    networkAllowlist: string[];
     filesystemMode: "workspace_only" | "read_only_workspace" | "ephemeral_full";
   };
 };
@@ -176,6 +178,7 @@ const defaultComputeSetup: RepresentativeSetupSnapshot["compute"] = {
   autoApproveBudgetCents: 0,
   artifactRetentionDays: 14,
   networkMode: "no_network",
+  networkAllowlist: [],
   filesystemMode: "workspace_only",
 };
 
@@ -277,6 +280,7 @@ export async function createRepresentative(
           computeAutoApproveBudgetCents: template.compute.autoApproveBudgetCents,
           computeArtifactRetentionDays: template.compute.artifactRetentionDays,
           computeNetworkMode: mapComputeNetworkModeToDb(template.compute.networkMode),
+          computeNetworkAllowlist: sanitizeNetworkAllowlist(template.compute.networkAllowlist),
           computeFilesystemMode: mapComputeFilesystemModeToDb(template.compute.filesystemMode),
         },
       });
@@ -462,6 +466,7 @@ export async function updateRepresentativeSetup(params: {
           computeAutoApproveBudgetCents: input.compute.autoApproveBudgetCents,
           computeArtifactRetentionDays: input.compute.artifactRetentionDays,
           computeNetworkMode: mapComputeNetworkModeToDb(input.compute.networkMode),
+          computeNetworkAllowlist: sanitizeNetworkAllowlist(input.compute.networkAllowlist),
           computeFilesystemMode: mapComputeFilesystemModeToDb(input.compute.filesystemMode),
         },
       });
@@ -579,6 +584,7 @@ function serializeRepresentativeSetup(
       autoApproveBudgetCents: representative.computeAutoApproveBudgetCents,
       artifactRetentionDays: representative.computeArtifactRetentionDays,
       networkMode: mapComputeNetworkModeFromDb(representative.computeNetworkMode),
+      networkAllowlist: sanitizeNetworkAllowlist(representative.computeNetworkAllowlist),
       filesystemMode: mapComputeFilesystemModeFromDb(representative.computeFilesystemMode),
     },
   };
@@ -796,6 +802,7 @@ async function upsertDefaultCapabilityPolicyProfile(
           maxCommandSeconds: 30,
           artifactRetentionDays: compute.artifactRetentionDays,
           networkMode: mapComputeNetworkModeToDb(compute.networkMode),
+          networkAllowlist: sanitizeNetworkAllowlist(compute.networkAllowlist),
           filesystemMode: mapComputeFilesystemModeToDb(compute.filesystemMode),
         },
       })
@@ -813,6 +820,7 @@ async function upsertDefaultCapabilityPolicyProfile(
           maxCommandSeconds: 30,
           artifactRetentionDays: compute.artifactRetentionDays,
           networkMode: mapComputeNetworkModeToDb(compute.networkMode),
+          networkAllowlist: sanitizeNetworkAllowlist(compute.networkAllowlist),
           filesystemMode: mapComputeFilesystemModeToDb(compute.filesystemMode),
         },
       });
@@ -888,6 +896,7 @@ async function upsertManagedCapabilityPolicyProfile(
       maxCommandSeconds: 30,
       artifactRetentionDays: 14,
       networkMode: ComputeNetworkMode.NO_NETWORK,
+      networkAllowlist: [],
       filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
     },
     create: {
@@ -904,6 +913,7 @@ async function upsertManagedCapabilityPolicyProfile(
       maxCommandSeconds: 30,
       artifactRetentionDays: 14,
       networkMode: ComputeNetworkMode.NO_NETWORK,
+      networkAllowlist: [],
       filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
     },
   });
@@ -935,6 +945,16 @@ async function upsertManagedCapabilityPolicyProfile(
         decision: "ASK",
         requiredPlanTier: CapabilityPlanTier.PASS,
         priority: 210,
+        requiresPaidPlan: true,
+        requiresHumanApproval: true,
+      },
+      {
+        id: `${profile.id}_mcp_paid`,
+        profileId: profile.id,
+        capability: "MCP",
+        decision: "ASK",
+        requiredPlanTier: CapabilityPlanTier.PASS,
+        priority: 208,
         requiresPaidPlan: true,
         requiresHumanApproval: true,
       },
@@ -1161,6 +1181,31 @@ function mapComputeNetworkModeToDb(value: RepresentativeSetupSnapshot["compute"]
 
 function mapComputeNetworkModeFromDb(value: ComputeNetworkMode) {
   return value.toLowerCase() as RepresentativeSetupSnapshot["compute"]["networkMode"];
+}
+
+function sanitizeNetworkAllowlist(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+
+    const candidate = entry.trim().toLowerCase();
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+
+    seen.add(candidate);
+    normalized.push(candidate);
+  }
+
+  return normalized.slice(0, 50);
 }
 
 function mapComputeFilesystemModeToDb(

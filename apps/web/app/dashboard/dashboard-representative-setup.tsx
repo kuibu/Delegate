@@ -92,6 +92,7 @@ type RepresentativeSetupSnapshot = {
     autoApproveBudgetCents: number;
     artifactRetentionDays: number;
     networkMode: ComputeNetworkMode;
+    networkAllowlist: string[];
     filesystemMode: ComputeFilesystemMode;
   };
 };
@@ -225,6 +226,26 @@ function getComputeNetworkModeLabels(locale: Locale): Record<ComputeNetworkMode,
         allowlist: "allowlist",
         full: "full network",
       };
+}
+
+function formatNetworkAllowlistInput(value: string[]): string {
+  return value.join("\n");
+}
+
+function parseNetworkAllowlistInput(value: string): string[] {
+  const seen = new Set<string>();
+  const entries: string[] = [];
+
+  for (const rawLine of value.split(/\r?\n/)) {
+    const normalized = rawLine.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    entries.push(normalized);
+  }
+
+  return entries.slice(0, 50);
 }
 
 function getComputeFilesystemModeLabels(locale: Locale): Record<ComputeFilesystemMode, string> {
@@ -1257,6 +1278,27 @@ export function DashboardRepresentativeSetup({
                 </select>
               </label>
 
+              <label className="field-stack field-stack-wide">
+                <span>{t.networkAllowlist}</span>
+                <textarea
+                  className="text-area"
+                  disabled={draft.compute.networkMode !== "allowlist"}
+                  onChange={(event) =>
+                    updateDraft((value) => ({
+                      ...value,
+                      compute: {
+                        ...value.compute,
+                        networkAllowlist: parseNetworkAllowlistInput(event.target.value),
+                      },
+                    }))
+                  }
+                  placeholder={t.networkAllowlistPlaceholder}
+                  rows={4}
+                  value={formatNetworkAllowlistInput(draft.compute.networkAllowlist)}
+                />
+                <small className="field-hint">{t.networkAllowlistHint}</small>
+              </label>
+
               <label className="field-stack">
                 <span>{t.filesystemMode}</span>
                 <select
@@ -1629,6 +1671,9 @@ const setupCopy = {
     autoApproveBudget: "Auto-approve budget (USD cents)",
     artifactRetentionDays: "Artifact retention (days)",
     networkMode: "Network mode",
+    networkAllowlist: "Network allowlist",
+    networkAllowlistPlaceholder: "api.example.com\n*.trusted.tools",
+    networkAllowlistHint: "Only MCP-bound traffic can use allowlist mode today. Add one hostname per line.",
     filesystemMode: "Filesystem mode",
     memoryEyebrow: "OpenViking Memory",
     memoryTitle: "代表级公开记忆层：资源同步、recall、capture 和可观测性。",
@@ -1742,6 +1787,10 @@ const setupCopy = {
     autoApproveBudget: "Auto-approve budget (USD cents)",
     artifactRetentionDays: "Artifact retention (days)",
     networkMode: "Network mode",
+    networkAllowlist: "Network allowlist",
+    networkAllowlistPlaceholder: "api.example.com\n*.trusted.tools",
+    networkAllowlistHint:
+      "Allowlist mode currently applies to MCP-bound traffic. Enter one hostname per line.",
     filesystemMode: "Filesystem mode",
     memoryEyebrow: "OpenViking Memory",
     memoryTitle: "Representative-level public memory: sync, recall, capture, and observability.",

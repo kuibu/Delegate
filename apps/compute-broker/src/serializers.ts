@@ -3,8 +3,10 @@ import {
   artifactSnapshotSchema,
   capabilityPolicyProfileSchema,
   computeSessionSnapshotSchema,
+  mcpBindingSnapshotSchema,
   toolExecutionSnapshotSchema,
   type ComputeFilesystemMode,
+  type McpTransportKind,
   type ComputeNetworkMode,
 } from "@delegate/compute-protocol";
 
@@ -51,7 +53,11 @@ export function mapApprovalStatusFromDb(value: string) {
 }
 
 export function mapCapabilityFromDb(value: string) {
-  return value.toLowerCase() as "exec" | "read" | "write" | "process" | "browser";
+  return value.toLowerCase() as "exec" | "read" | "write" | "process" | "browser" | "mcp";
+}
+
+export function mapCapabilityToDb(value: "exec" | "read" | "write" | "process" | "browser" | "mcp") {
+  return value.toUpperCase() as "EXEC" | "READ" | "WRITE" | "PROCESS" | "BROWSER" | "MCP";
 }
 
 export function mapPolicyDecisionToDb(value: "allow" | "ask" | "deny") {
@@ -79,6 +85,10 @@ export function mapNetworkModeFromDb(value: string) {
 
 export function mapFilesystemModeFromDb(value: string) {
   return value.toLowerCase() as ComputeFilesystemMode;
+}
+
+export function mapMcpTransportKindFromDb(value: string) {
+  return value.toLowerCase() as McpTransportKind;
 }
 
 export function serializeSession(session: {
@@ -124,6 +134,7 @@ export function serializeSession(session: {
 export function serializeExecution(execution: {
   id: string;
   sessionId: string;
+  mcpBindingId: string | null;
   capability: string;
   status: string;
   requestedCommand: string | null;
@@ -148,6 +159,7 @@ export function serializeExecution(execution: {
     requestedCommand: execution.requestedCommand,
     requestedPath: execution.requestedPath,
     workingDirectory: execution.workingDirectory,
+    mcpBindingId: execution.mcpBindingId,
     policyDecision: execution.policyDecision
       ? mapPolicyDecisionFromDb(execution.policyDecision)
       : null,
@@ -160,6 +172,42 @@ export function serializeExecution(execution: {
     bytesRead: execution.bytesRead,
     bytesWritten: execution.bytesWritten,
     createdAt: execution.createdAt.toISOString(),
+  });
+}
+
+export function serializeMcpBinding(binding: {
+  id: string;
+  representativeId: string;
+  representativeSkillPackLinkId: string | null;
+  slug: string;
+  displayName: string;
+  description: string | null;
+  serverUrl: string;
+  transportKind: string;
+  allowedToolNames: unknown;
+  defaultToolName: string | null;
+  enabled: boolean;
+  approvalRequired: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return mcpBindingSnapshotSchema.parse({
+    id: binding.id,
+    representativeId: binding.representativeId,
+    representativeSkillPackLinkId: binding.representativeSkillPackLinkId,
+    slug: binding.slug,
+    displayName: binding.displayName,
+    description: binding.description,
+    serverUrl: binding.serverUrl,
+    transportKind: mapMcpTransportKindFromDb(binding.transportKind),
+    allowedToolNames: Array.isArray(binding.allowedToolNames)
+      ? binding.allowedToolNames.filter((value): value is string => typeof value === "string")
+      : [],
+    defaultToolName: binding.defaultToolName,
+    enabled: binding.enabled,
+    approvalRequired: binding.approvalRequired,
+    createdAt: binding.createdAt.toISOString(),
+    updatedAt: binding.updatedAt.toISOString(),
   });
 }
 
@@ -245,6 +293,7 @@ export function serializeCapabilityProfile(profile: {
   maxCommandSeconds: number;
   artifactRetentionDays: number;
   networkMode: string;
+  networkAllowlist: string[];
   filesystemMode: string;
   rules: Array<{
     id: string;
@@ -275,6 +324,7 @@ export function serializeCapabilityProfile(profile: {
     maxCommandSeconds: profile.maxCommandSeconds,
     artifactRetentionDays: profile.artifactRetentionDays,
     networkMode: mapNetworkModeFromDb(profile.networkMode),
+    networkAllowlist: profile.networkAllowlist,
     filesystemMode: mapFilesystemModeFromDb(profile.filesystemMode),
     rules: profile.rules.map((rule) => ({
       id: rule.id,

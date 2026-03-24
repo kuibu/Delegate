@@ -24,6 +24,9 @@ export const computeLifecycleHooks = createLifecycleHookBus(
                   decision: event.decision,
                   reason: event.reason,
                   estimatedCredits: event.estimatedCredits ?? null,
+                  transport: event.transport ?? null,
+                  bindingId: event.bindingId ?? null,
+                  remoteUrl: event.remoteUrl ?? null,
                 },
               },
             });
@@ -43,6 +46,9 @@ export const computeLifecycleHooks = createLifecycleHookBus(
                   wallMs: event.wallMs,
                   artifactCount: event.artifactCount,
                   actualCredits: event.actualCredits ?? null,
+                  transport: event.transport ?? null,
+                  bindingId: event.bindingId ?? null,
+                  remoteUrl: event.remoteUrl ?? null,
                 },
               },
             });

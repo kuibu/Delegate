@@ -19,21 +19,25 @@ import {
 } from "./billing";
 import { buildPlaywrightBrowseCommand } from "./browser";
 import { computeBrokerConfig } from "./config";
-import { persistExecutionArtifacts } from "./artifacts";
+import { persistExecutionArtifacts, persistJsonArtifact } from "./artifacts";
 import { computeLifecycleHooks } from "./lifecycle-hooks";
+import { loadRepresentativeMcpBinding, resolveMcpToolName } from "./mcp-bindings";
+import { callRemoteMcpTool } from "./mcp";
+import { extractHostname, isHostnameAllowed, normalizeNetworkAllowlist } from "./network-allowlist";
 import { normalizeContainerPath } from "./path-utils";
 import { prisma } from "./prisma";
 import { evaluateExecutionRequest, loadSessionPolicyContext } from "./policy";
 import { runDockerExecution } from "./runner";
 import {
   mapCapabilityFromDb,
+  mapCapabilityToDb,
   mapPolicyDecisionToDb,
   serializeApprovalRequest,
   serializeArtifact,
   serializeExecution,
   serializeSession,
 } from "./serializers";
-import { SessionError } from "./sessions";
+import { SessionError } from "./session-error";
 
 type PolicyExecutionContext = Awaited<ReturnType<typeof loadSessionPolicyContext>>;
 type NormalizedExecutionInput = {
@@ -43,6 +47,11 @@ type NormalizedExecutionInput = {
   path: string | undefined;
   domain: string | undefined;
   url: string | undefined;
+  bindingId: string | undefined;
+  bindingSlug: string | undefined;
+  toolName: string | undefined;
+  toolArguments: Record<string, unknown> | undefined;
+  approvalRequired: boolean;
   workingDirectory: string | undefined;
   estimatedCostCents: number | undefined;
   hasPaidEntitlement: boolean;
@@ -60,8 +69,8 @@ type ExecutionPlan = {
 };
 
 export async function executeTool(sessionId: string, rawInput: unknown) {
-  const { input, context, decision } = await evaluateExecutionRequest(sessionId, rawInput);
-  const normalized = normalizeExecutionInput(input);
+  const { input, context, decision, mcpBinding } = await evaluateExecutionRequest(sessionId, rawInput);
+  const normalized = normalizeExecutionInput(input, mcpBinding);
   const estimatedCredits = estimateCreditUsage({
     capability: normalized.capability,
     ...(typeof normalized.estimatedCostCents === "number"
@@ -93,9 +102,17 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
     ...(normalized.path ? { requestedPath: normalized.path } : {}),
     ...(normalized.workingDirectory ? { workingDirectory: normalized.workingDirectory } : {}),
     estimatedCredits,
+    ...(normalized.capability === "mcp"
+      ? {
+          transport: "mcp",
+          ...(normalized.bindingId ? { bindingId: normalized.bindingId } : {}),
+          ...(normalized.url ? { remoteUrl: normalized.url } : {}),
+        }
+      : {}),
   });
 
   if (effectiveDecision.decision === "deny") {
+    const requestPayload = buildExecutionRequestPayload(normalized);
     return blockExecution({
       session: context.session,
       capability: normalized.capability,
@@ -104,6 +121,8 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
       workingDirectory: normalized.workingDirectory,
       policyDecision: "deny",
       reason: effectiveDecision.reason,
+      ...(requestPayload ? { requestPayload } : {}),
+      mcpBindingId: normalized.bindingId,
       billing: {
         estimatedCredits,
         conversationBudgetRemainingCredits: budgetAvailability.conversationCredits,
@@ -114,19 +133,17 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
   }
 
   if (effectiveDecision.decision === "ask") {
+    const requestPayload = buildExecutionRequestPayload(normalized);
     const execution = await prisma.toolExecution.create({
       data: {
         sessionId,
-        capability: normalized.capability.toUpperCase() as
-          | "EXEC"
-          | "READ"
-          | "WRITE"
-          | "PROCESS"
-          | "BROWSER",
+        capability: mapCapabilityToDb(normalized.capability),
         status: "BLOCKED",
         requestedCommand: getPersistedCommand(normalized) ?? null,
         requestedPath: normalized.path ?? null,
+        ...(requestPayload ? { requestPayload } : {}),
         workingDirectory: normalized.workingDirectory ?? null,
+        mcpBindingId: normalized.bindingId ?? null,
         policyDecision: mapPolicyDecisionToDb("ask"),
       },
     });
@@ -387,21 +404,19 @@ async function runAllowedExecution(params: {
   existingExecutionId?: string;
 }) {
   const startedAt = new Date();
-  const executionPlan = buildExecutionPlan(params.context, params.input);
+  const executionDescriptor = describeExecution(params.context, params.input);
+  const requestPayload = buildExecutionRequestPayload(params.input);
   const execution = params.existingExecutionId
     ? await prisma.toolExecution.update({
         where: { id: params.existingExecutionId },
         data: {
           status: "RUNNING",
-          capability: executionPlan.capability.toUpperCase() as
-            | "EXEC"
-            | "READ"
-            | "WRITE"
-            | "PROCESS"
-            | "BROWSER",
-          requestedCommand: executionPlan.requestedCommand ?? null,
-          requestedPath: executionPlan.requestedPath ?? null,
-          workingDirectory: executionPlan.workingDirectory ?? null,
+          capability: mapCapabilityToDb(executionDescriptor.capability),
+          requestedCommand: executionDescriptor.requestedCommand ?? null,
+          requestedPath: executionDescriptor.requestedPath ?? null,
+          ...(requestPayload ? { requestPayload } : {}),
+          workingDirectory: executionDescriptor.workingDirectory ?? null,
+          mcpBindingId: params.input.bindingId ?? null,
           policyDecision: mapPolicyDecisionToDb("allow"),
           startedAt,
           finishedAt: null,
@@ -415,16 +430,13 @@ async function runAllowedExecution(params: {
     : await prisma.toolExecution.create({
         data: {
           sessionId: params.context.session.id,
-          capability: executionPlan.capability.toUpperCase() as
-            | "EXEC"
-            | "READ"
-            | "WRITE"
-            | "PROCESS"
-            | "BROWSER",
+          capability: mapCapabilityToDb(executionDescriptor.capability),
           status: "RUNNING",
-          requestedCommand: executionPlan.requestedCommand ?? null,
-          requestedPath: executionPlan.requestedPath ?? null,
-          workingDirectory: executionPlan.workingDirectory ?? null,
+          requestedCommand: executionDescriptor.requestedCommand ?? null,
+          requestedPath: executionDescriptor.requestedPath ?? null,
+          ...(requestPayload ? { requestPayload } : {}),
+          workingDirectory: executionDescriptor.workingDirectory ?? null,
+          mcpBindingId: params.input.bindingId ?? null,
           policyDecision: mapPolicyDecisionToDb("allow"),
           startedAt,
         },
@@ -440,44 +452,33 @@ async function runAllowedExecution(params: {
     },
   });
 
-  const runnerResult = await runDockerExecution({
-    image: executionPlan.runnerImage,
-    command: executionPlan.command,
-    hostWorkspaceRoot: computeBrokerConfig.hostWorkspaceRoot,
-    maxCommandSeconds:
-      executionPlan.capability === "browser"
-        ? Math.max(params.context.profile.maxCommandSeconds, computeBrokerConfig.browserMaxCommandSeconds)
-        : params.context.profile.maxCommandSeconds,
-    networkMode: executionPlan.networkMode,
-    filesystemMode: executionPlan.filesystemMode,
-    workingDirectory: executionPlan.workingDirectory,
-    sessionId: params.context.session.id,
-    executionId: execution.id,
-  });
+  const runtimeResult =
+    params.input.capability === "mcp"
+      ? await runMcpExecution({
+          context: params.context,
+          executionId: execution.id,
+          input: params.input,
+        })
+      : await runContainerExecution({
+          context: params.context,
+          executionId: execution.id,
+          input: params.input,
+        });
 
   const finishedAt = new Date();
-  const artifacts = await persistExecutionArtifacts({
-    representativeId: params.context.session.representativeId,
-    representativeSlug: params.context.session.representative.slug,
-    contactId: params.context.session.contactId ?? null,
-    conversationId: params.context.session.conversationId ?? null,
-    sessionId: params.context.session.id,
-    executionId: execution.id,
-    retentionDays: params.context.profile.artifactRetentionDays,
-    stdout: runnerResult.stdout,
-    stderr: runnerResult.stderr,
-  });
-
-  const totalArtifactBytes = artifacts.reduce((sum, artifact) => sum + artifact.sizeBytes, 0);
+  const totalArtifactBytes = runtimeResult.artifacts.reduce(
+    (sum, artifact) => sum + artifact.sizeBytes,
+    0,
+  );
   const updatedExecution = await prisma.toolExecution.update({
     where: { id: execution.id },
     data: {
-      status: runnerResult.exitCode === 0 ? "SUCCEEDED" : "FAILED",
+      status: runtimeResult.exitCode === 0 ? "SUCCEEDED" : "FAILED",
       finishedAt,
-      exitCode: runnerResult.exitCode,
-      wallMs: runnerResult.wallMs,
+      exitCode: runtimeResult.exitCode,
+      wallMs: runtimeResult.wallMs,
       cpuMs: null,
-      bytesRead: Buffer.byteLength(runnerResult.stdout, "utf8"),
+      bytesRead: runtimeResult.bytesRead,
       bytesWritten: totalArtifactBytes,
     },
   });
@@ -487,14 +488,15 @@ async function runAllowedExecution(params: {
     data: {
       status: "IDLE",
       lastHeartbeatAt: finishedAt,
-      failureReason: runnerResult.exitCode === 0 ? null : truncate(runnerResult.stderr, 240),
+      failureReason:
+        runtimeResult.exitCode === 0 ? null : truncate(runtimeResult.failureSummary ?? "", 240),
     },
   });
 
-  const computeCostCents = Math.max(1, Math.ceil(runnerResult.wallMs / 1000));
+  const computeCostCents = Math.max(1, Math.ceil(runtimeResult.wallMs / 1000));
   const storageCostCents = totalArtifactBytes > 0 ? Math.max(1, Math.ceil(totalArtifactBytes / 65536)) : 0;
   const computeCredits = estimateCreditUsage({
-    capability: executionPlan.capability,
+    capability: executionDescriptor.capability,
     estimatedCostCents: computeCostCents,
   });
   const storageCredits = totalArtifactBytes > 0 ? Math.ceil(totalArtifactBytes / 65536) : 0;
@@ -522,11 +524,18 @@ async function runAllowedExecution(params: {
     },
     sessionId: params.context.session.id,
     executionId: execution.id,
-    capability: executionPlan.capability,
-    exitCode: runnerResult.exitCode,
-    wallMs: runnerResult.wallMs,
-    artifactCount: artifacts.length,
+    capability: executionDescriptor.capability,
+    exitCode: runtimeResult.exitCode,
+    wallMs: runtimeResult.wallMs,
+    artifactCount: runtimeResult.artifacts.length,
     actualCredits: billing.actualCredits,
+    ...(runtimeResult.transport
+      ? {
+          transport: runtimeResult.transport,
+          ...(params.input.bindingId ? { bindingId: params.input.bindingId } : {}),
+          ...(runtimeResult.remoteUrl ? { remoteUrl: runtimeResult.remoteUrl } : {}),
+        }
+      : {}),
   });
 
   await prisma.eventAudit.create({
@@ -545,15 +554,137 @@ async function runAllowedExecution(params: {
   });
 
   return executeToolResponseSchema.parse({
-    outcome: runnerResult.exitCode === 0 ? "completed" : "failed",
+    outcome: runtimeResult.exitCode === 0 ? "completed" : "failed",
     session: serializeSession(updatedSession),
     execution: serializeExecution(updatedExecution),
-    artifacts: artifacts.map((artifact) => serializeArtifact(artifact)),
+    artifacts: runtimeResult.artifacts.map((artifact) => serializeArtifact(artifact)),
     billing: {
       estimatedCredits: params.estimatedCredits,
       ...billing,
     },
   });
+}
+
+function describeExecution(
+  context: PolicyExecutionContext,
+  input: NormalizedExecutionInput,
+) {
+  if (input.capability === "mcp") {
+    return {
+      capability: "mcp" as const,
+      requestedCommand: input.toolName,
+      requestedPath: input.bindingSlug ?? input.bindingId,
+      workingDirectory: undefined,
+    };
+  }
+
+  const plan = buildExecutionPlan(context, input);
+  return {
+    capability: plan.capability,
+    requestedCommand: plan.requestedCommand,
+    requestedPath: plan.requestedPath,
+    workingDirectory: plan.workingDirectory,
+  };
+}
+
+async function runContainerExecution(params: {
+  context: PolicyExecutionContext;
+  executionId: string;
+  input: NormalizedExecutionInput;
+}) {
+  const executionPlan = buildExecutionPlan(params.context, params.input);
+  const runnerResult = await runDockerExecution({
+    image: executionPlan.runnerImage,
+    command: executionPlan.command,
+    hostWorkspaceRoot: computeBrokerConfig.hostWorkspaceRoot,
+    maxCommandSeconds:
+      executionPlan.capability === "browser"
+        ? Math.max(params.context.profile.maxCommandSeconds, computeBrokerConfig.browserMaxCommandSeconds)
+        : params.context.profile.maxCommandSeconds,
+    networkMode: executionPlan.networkMode,
+    filesystemMode: executionPlan.filesystemMode,
+    workingDirectory: executionPlan.workingDirectory,
+    sessionId: params.context.session.id,
+    executionId: params.executionId,
+  });
+
+  const artifacts = await persistExecutionArtifacts({
+    representativeId: params.context.session.representativeId,
+    representativeSlug: params.context.session.representative.slug,
+    contactId: params.context.session.contactId ?? null,
+    conversationId: params.context.session.conversationId ?? null,
+    sessionId: params.context.session.id,
+    executionId: params.executionId,
+    retentionDays: params.context.profile.artifactRetentionDays,
+    stdout: runnerResult.stdout,
+    stderr: runnerResult.stderr,
+  });
+
+  return {
+    exitCode: runnerResult.exitCode,
+    wallMs: runnerResult.wallMs,
+    bytesRead: Buffer.byteLength(runnerResult.stdout, "utf8"),
+    artifacts,
+    failureSummary: runnerResult.stderr || runnerResult.stdout,
+    transport: "docker" as const,
+    remoteUrl: undefined,
+  };
+}
+
+async function runMcpExecution(params: {
+  context: PolicyExecutionContext;
+  executionId: string;
+  input: NormalizedExecutionInput;
+}) {
+  const binding = await loadRepresentativeMcpBinding({
+    representativeId: params.context.session.representativeId,
+    bindingId: params.input.bindingId,
+    bindingSlug: params.input.bindingSlug,
+  });
+  const resolved = resolveMcpToolName({
+    binding,
+    requestedToolName: params.input.toolName,
+  });
+  const startedAt = Date.now();
+  const toolResult = await callRemoteMcpTool({
+    binding,
+    requestedToolName: resolved.toolName,
+    toolArguments: params.input.toolArguments,
+  });
+  const payload = {
+    binding: {
+      id: binding.id,
+      slug: binding.slug,
+      displayName: binding.displayName,
+      serverUrl: binding.serverUrl,
+      toolName: toolResult.toolName,
+      allowedToolNames: toolResult.allowedToolNames,
+      availableToolNames: toolResult.availableToolNames,
+    },
+    arguments: params.input.toolArguments ?? {},
+    result: toolResult.result,
+  };
+  const artifact = await persistJsonArtifact({
+    representativeId: params.context.session.representativeId,
+    representativeSlug: params.context.session.representative.slug,
+    contactId: params.context.session.contactId ?? null,
+    conversationId: params.context.session.conversationId ?? null,
+    sessionId: params.context.session.id,
+    executionId: params.executionId,
+    retentionDays: params.context.profile.artifactRetentionDays,
+    value: payload,
+    summary: toolResult.summary,
+  });
+
+  return {
+    exitCode: 0,
+    wallMs: Date.now() - startedAt,
+    bytesRead: Buffer.byteLength(JSON.stringify(payload), "utf8"),
+    artifacts: [artifact],
+    failureSummary: undefined,
+    transport: "mcp" as const,
+    remoteUrl: binding.serverUrl,
+  };
 }
 
 async function touchSessionIdle(sessionId: string) {
@@ -592,16 +723,20 @@ async function blockExecution(params: {
   workingDirectory: string | undefined;
   policyDecision: "deny" | "ask";
   reason: string;
+  requestPayload?: string | undefined;
+  mcpBindingId?: string | undefined;
   billing?: ExecutionBillingSummary;
 }) {
   const execution = await prisma.toolExecution.create({
     data: {
       sessionId: params.session.id,
-      capability: params.capability.toUpperCase() as "EXEC" | "READ" | "WRITE" | "PROCESS" | "BROWSER",
+      capability: mapCapabilityToDb(params.capability),
       status: "BLOCKED",
       requestedCommand: params.requestedCommand ?? null,
       requestedPath: params.requestedPath ?? null,
+      ...(params.requestPayload ? { requestPayload: params.requestPayload } : {}),
       workingDirectory: params.workingDirectory ?? null,
+      mcpBindingId: params.mcpBindingId ?? null,
       policyDecision: mapPolicyDecisionToDb(params.policyDecision),
     },
   });
@@ -661,6 +796,38 @@ function resolveEffectiveDecision(params: {
     };
   }
 
+  if (params.input.capability === "browser" && params.context.profile.networkMode === "allowlist") {
+    return {
+      decision: "deny" as const,
+      reason: "browser_allowlist_not_supported_yet",
+    };
+  }
+
+  if (params.input.capability === "mcp" && params.context.profile.networkMode === "no_network") {
+    return {
+      decision: "deny" as const,
+      reason: "mcp_requires_network",
+    };
+  }
+
+  if (params.input.capability === "mcp" && params.context.profile.networkMode === "allowlist") {
+    const allowlist = normalizeNetworkAllowlist(params.context.profile.networkAllowlist);
+    if (!allowlist.length) {
+      return {
+        decision: "deny" as const,
+        reason: "network_allowlist_empty",
+      };
+    }
+
+    const hostname = params.input.url ? extractHostname(params.input.url) : null;
+    if (!hostname || !isHostnameAllowed(hostname, allowlist)) {
+      return {
+        decision: "deny" as const,
+        reason: "domain_not_in_network_allowlist",
+      };
+    }
+  }
+
   if (
     params.input.capability === "write" &&
     params.context.profile.filesystemMode === "read_only_workspace"
@@ -683,6 +850,17 @@ function resolveEffectiveDecision(params: {
     };
   }
 
+  if (
+    params.input.capability === "mcp" &&
+    params.input.approvalRequired &&
+    params.decision.decision === "allow"
+  ) {
+    return {
+      decision: "ask" as const,
+      reason: "mcp_binding_requires_approval",
+    };
+  }
+
   if (params.estimatedCredits > params.totalAvailableCredits) {
     return {
       decision: "deny" as const,
@@ -693,7 +871,15 @@ function resolveEffectiveDecision(params: {
   return params.decision;
 }
 
-function normalizeExecutionInput(input: ToolExecutionRequest): NormalizedExecutionInput {
+function normalizeExecutionInput(
+  input: ToolExecutionRequest,
+  mcpBinding?: {
+    id: string;
+    slug: string;
+    serverUrl: string;
+    approvalRequired: boolean;
+  } | null,
+): NormalizedExecutionInput {
   switch (input.capability) {
     case "read": {
       if (!input.path) {
@@ -706,6 +892,11 @@ function normalizeExecutionInput(input: ToolExecutionRequest): NormalizedExecuti
         path: input.path,
         domain: undefined,
         url: undefined,
+        bindingId: undefined,
+        bindingSlug: undefined,
+        toolName: undefined,
+        toolArguments: undefined,
+        approvalRequired: false,
         workingDirectory: input.workingDirectory,
         estimatedCostCents: input.estimatedCostCents,
         hasPaidEntitlement: input.hasPaidEntitlement,
@@ -726,6 +917,11 @@ function normalizeExecutionInput(input: ToolExecutionRequest): NormalizedExecuti
         content,
         domain: undefined,
         url: undefined,
+        bindingId: undefined,
+        bindingSlug: undefined,
+        toolName: undefined,
+        toolArguments: undefined,
+        approvalRequired: false,
         workingDirectory: input.workingDirectory,
         estimatedCostCents: input.estimatedCostCents,
         hasPaidEntitlement: input.hasPaidEntitlement,
@@ -744,6 +940,42 @@ function normalizeExecutionInput(input: ToolExecutionRequest): NormalizedExecuti
         path: undefined,
         url: parsed.toString(),
         domain: input.domain ?? parsed.hostname,
+        bindingId: undefined,
+        bindingSlug: undefined,
+        toolName: undefined,
+        toolArguments: undefined,
+        approvalRequired: false,
+        workingDirectory: undefined,
+        estimatedCostCents: input.estimatedCostCents,
+        hasPaidEntitlement: input.hasPaidEntitlement,
+      };
+    }
+    case "mcp": {
+      if (!mcpBinding && !input.bindingId && !input.bindingSlug) {
+        throw new SessionError(400, "mcp_binding_reference_required");
+      }
+
+      const bindingId = mcpBinding?.id ?? input.bindingId;
+      const bindingSlug = mcpBinding?.slug ?? input.bindingSlug;
+      const serverUrl = mcpBinding?.serverUrl;
+      const toolName = input.toolName ?? input.command;
+
+      if (!bindingId && !bindingSlug) {
+        throw new SessionError(400, "mcp_binding_reference_required");
+      }
+
+      return {
+        capability: "mcp",
+        command: toolName,
+        content: undefined,
+        path: bindingSlug,
+        domain: input.domain,
+        url: serverUrl,
+        bindingId,
+        bindingSlug,
+        toolName,
+        toolArguments: input.toolArguments,
+        approvalRequired: mcpBinding?.approvalRequired ?? true,
         workingDirectory: undefined,
         estimatedCostCents: input.estimatedCostCents,
         hasPaidEntitlement: input.hasPaidEntitlement,
@@ -762,6 +994,11 @@ function normalizeExecutionInput(input: ToolExecutionRequest): NormalizedExecuti
         path: input.path,
         domain: input.domain,
         url: undefined,
+        bindingId: undefined,
+        bindingSlug: undefined,
+        toolName: undefined,
+        toolArguments: undefined,
+        approvalRequired: false,
         workingDirectory: input.workingDirectory,
         estimatedCostCents: input.estimatedCostCents,
         hasPaidEntitlement: input.hasPaidEntitlement,
@@ -772,8 +1009,10 @@ function normalizeExecutionInput(input: ToolExecutionRequest): NormalizedExecuti
 
 function reconstructExecutionInput(execution: {
   capability: string;
+  mcpBindingId: string | null;
   requestedCommand: string | null;
   requestedPath: string | null;
+  requestPayload: unknown;
   workingDirectory: string | null;
 }) {
   const capability = mapCapabilityFromDb(execution.capability);
@@ -819,6 +1058,33 @@ function reconstructExecutionInput(execution: {
     });
   }
 
+  if (capability === "mcp") {
+    const payload =
+      typeof execution.requestPayload === "string"
+        ? safeParseExecutionPayload(execution.requestPayload)
+        : execution.requestPayload && typeof execution.requestPayload === "object"
+          ? (execution.requestPayload as Record<string, unknown>)
+          : null;
+    const bindingId =
+      typeof payload?.bindingId === "string" ? payload.bindingId : execution.mcpBindingId ?? undefined;
+    const bindingSlug = typeof payload?.bindingSlug === "string" ? payload.bindingSlug : undefined;
+    const toolName =
+      typeof payload?.toolName === "string" ? payload.toolName : execution.requestedCommand ?? undefined;
+    const toolArguments =
+      payload?.toolArguments && typeof payload.toolArguments === "object"
+        ? (payload.toolArguments as Record<string, unknown>)
+        : undefined;
+
+    return normalizeExecutionInput({
+      capability,
+      bindingId,
+      bindingSlug,
+      toolName,
+      toolArguments,
+      hasPaidEntitlement: true,
+    });
+  }
+
   if (!execution.requestedCommand) {
     throw new SessionError(409, "approved_execution_missing_command");
   }
@@ -834,6 +1100,15 @@ function reconstructExecutionInput(execution: {
     estimatedCostCents: undefined,
     hasPaidEntitlement: true,
   });
+}
+
+function safeParseExecutionPayload(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildExecutionPlan(
@@ -874,10 +1149,11 @@ function buildExecutionPlan(
           url: input.url!,
           playwrightVersion: computeBrokerConfig.browserPlaywrightVersion,
         }),
-        networkMode:
-          context.profile.networkMode === "no_network" ? "full" : context.profile.networkMode,
+        networkMode: context.profile.networkMode,
         filesystemMode: "ephemeral_full",
       };
+    case "mcp":
+      throw new SessionError(500, "mcp_execution_plan_not_supported");
     case "process":
       return {
         capability: "process",
@@ -910,6 +1186,8 @@ function getPersistedCommand(input: NormalizedExecutionInput) {
       return input.content;
     case "browser":
       return input.url;
+    case "mcp":
+      return input.toolName;
     case "read":
       return input.path;
     case "process":
@@ -919,10 +1197,25 @@ function getPersistedCommand(input: NormalizedExecutionInput) {
   }
 }
 
+function buildExecutionRequestPayload(input: NormalizedExecutionInput) {
+  if (input.capability !== "mcp") {
+    return undefined;
+  }
+
+  return JSON.stringify({
+    ...(input.bindingId ? { bindingId: input.bindingId } : {}),
+    ...(input.bindingSlug ? { bindingSlug: input.bindingSlug } : {}),
+    ...(input.toolName ? { toolName: input.toolName } : {}),
+    toolArguments: input.toolArguments ?? {},
+  });
+}
+
 function buildRiskSummary(reason: string): string {
   switch (reason) {
     case "human_approval_required":
       return "This request matched a rule that requires explicit owner approval.";
+    case "mcp_binding_requires_approval":
+      return "This MCP binding is configured to require owner approval before any remote tool call.";
     case "cost_above_rule_limit":
     case "auto_approve_budget_exceeded":
       return "The estimated execution cost is above the current auto-approval ceiling.";
@@ -932,6 +1225,8 @@ function buildRiskSummary(reason: string): string {
       return "The command uses shell control operators and must be reviewed before execution.";
     case "browser_requires_network":
       return "Browser automation requires a network-enabled policy profile.";
+    case "mcp_requires_network":
+      return "Remote MCP tools require a network-enabled policy profile.";
     case "filesystem_read_only":
       return "This representative is currently running with a read-only filesystem policy.";
     case "insufficient_compute_budget":
@@ -949,6 +1244,8 @@ function summarizeAction(input: NormalizedExecutionInput) {
       return `Write to "${truncate(input.path ?? "", 120)}".`;
     case "browser":
       return `Browse "${truncate(input.url ?? "", 120)}" in the isolated Playwright lane.`;
+    case "mcp":
+      return `Call MCP tool "${truncate(input.toolName ?? "", 120)}" via "${truncate(input.bindingSlug ?? input.bindingId ?? "", 120)}".`;
     case "process":
       return `Run process "${truncate(input.command ?? "", 120)}"${input.workingDirectory ? ` in ${input.workingDirectory}` : ""}.`;
     case "exec":

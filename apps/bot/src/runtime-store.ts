@@ -69,6 +69,7 @@ export type ConversationContextRecord = {
     autoApproveBudgetCents: number;
     artifactRetentionDays: number;
     networkMode: "no_network" | "allowlist" | "full";
+    networkAllowlist: string[];
     filesystemMode: "workspace_only" | "read_only_workspace" | "ephemeral_full";
     conversationBudgetRemainingCredits?: number;
   };
@@ -209,6 +210,7 @@ export async function getConversationContext(
       autoApproveBudgetCents: representative.computeAutoApproveBudgetCents,
       artifactRetentionDays: representative.computeArtifactRetentionDays,
       networkMode: mapComputeNetworkModeFromDb(representative.computeNetworkMode),
+      networkAllowlist: representative.computeNetworkAllowlist,
       filesystemMode: mapComputeFilesystemModeFromDb(representative.computeFilesystemMode),
       ...(typeof conversation.computeBudgetRemainingCredits === "number"
         ? {
