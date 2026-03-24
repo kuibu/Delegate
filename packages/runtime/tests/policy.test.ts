@@ -2,10 +2,14 @@ import { demoRepresentative } from "@delegate/domain";
 import { describe, expect, it } from "vitest";
 
 import {
+  advanceStructuredCollector,
+  beginStructuredCollector,
   createConversationPlan,
   evaluateActionGate,
+  formatStructuredCollectorPrompt,
   resolveTelegramGroupHandling,
   renderReplyPreview,
+  shouldStartStructuredCollector,
 } from "../src/index";
 
 describe("action gate", () => {
@@ -144,5 +148,68 @@ describe("telegram group gating", () => {
 
     expect(result.shouldHandle).toBe(false);
     expect(result.reason).toBe("ignored");
+  });
+});
+
+describe("structured collectors", () => {
+  it("starts a quote collector for pricing requests", () => {
+    const plan = createConversationPlan({
+      text: "想聊一下报价，预算和合作方式怎么安排？",
+      channel: "private_chat",
+      representative: demoRepresentative,
+      usage: {
+        freeRepliesUsed: 0,
+        passUnlocked: false,
+        deepHelpUnlocked: false,
+      },
+    });
+
+    expect(shouldStartStructuredCollector(plan)).toBe(true);
+
+    const collector = beginStructuredCollector({
+      plan,
+      channel: "private_chat",
+    });
+
+    expect(collector.kind).toBe("quote");
+    expect(formatStructuredCollectorPrompt(collector)).toContain("第 1/5 步");
+    expect(formatStructuredCollectorPrompt(collector)).toContain("身份");
+  });
+
+  it("walks a scheduling collector to completion", () => {
+    const plan = createConversationPlan({
+      text: "能约个时间聊聊吗？",
+      channel: "private_chat",
+      representative: demoRepresentative,
+      usage: {
+        freeRepliesUsed: 0,
+        passUnlocked: false,
+        deepHelpUnlocked: false,
+      },
+    });
+
+    let collector = beginStructuredCollector({
+      plan,
+      channel: "private_chat",
+    });
+
+    const answers = [
+      "30 分钟合作讨论",
+      "确认试点范围和下一步",
+      "Asia/Shanghai",
+      "周三下午或周四上午都可以",
+      "可以先走付费咨询",
+    ];
+
+    for (const answer of answers.slice(0, -1)) {
+      const advanced = advanceStructuredCollector(collector, answer);
+      expect(advanced.completed).toBe(false);
+      collector = advanced.state!;
+    }
+
+    const completed = advanceStructuredCollector(collector, answers[answers.length - 1]!);
+    expect(completed.completed).toBe(true);
+    expect(completed.state?.answers.timeWindows).toContain("周三下午");
+    expect(completed.state?.answers.paidContext).toContain("付费咨询");
   });
 });

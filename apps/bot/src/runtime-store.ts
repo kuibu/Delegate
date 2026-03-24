@@ -1,5 +1,16 @@
 import type { PlanTier } from "@delegate/domain";
-import type { ConversationPlan, ConversationUsage } from "@delegate/runtime";
+import type {
+  ConversationPlan,
+  ConversationUsage,
+  StructuredCollectorState,
+} from "@delegate/runtime";
+import {
+  buildStructuredCollectorHandoffSummary,
+  buildStructuredCollectorOwnerAction,
+  calculateStructuredCollectorPriority,
+  formatStructuredCollectorSummary,
+  readStructuredCollectorState,
+} from "@delegate/runtime";
 import {
   AudienceRole,
   Channel,
@@ -7,6 +18,7 @@ import {
   EventType,
   HandoffStatus,
   InvoiceStatus,
+  Prisma,
   PricingPlanType,
 } from "@prisma/client";
 
@@ -25,7 +37,9 @@ export type ConversationContextRecord = {
   representativeSlug: string;
   contactId: string;
   conversationId: string;
+  contactIsPaid: boolean;
   usage: ConversationUsage;
+  collectorState: StructuredCollectorState | null;
   plans: {
     free?: StoredPlan;
     pass?: StoredPlan;
@@ -121,11 +135,13 @@ export async function getConversationContext(
     representativeSlug: representative.slug,
     contactId: contact.id,
     conversationId: conversation.id,
+    contactIsPaid: contact.isPaid,
     usage: {
       freeRepliesUsed: conversation.freeRepliesUsed,
       passUnlocked: Boolean(conversation.passUnlockedAt),
       deepHelpUnlocked: Boolean(conversation.deepHelpUnlockedAt),
     },
+    collectorState: readStructuredCollectorState(conversation.collectorState),
     plans: representative.pricingPlans.reduce<ConversationContextRecord["plans"]>((acc, plan) => {
       acc[mapPricingPlanTypeFromDb(plan.type)] = {
         id: plan.id,
@@ -138,6 +154,99 @@ export async function getConversationContext(
       return acc;
     }, {}),
   };
+}
+
+export async function getActiveRepresentativeSlugForChat(
+  telegramChatId: number | string,
+): Promise<string | null> {
+  const session = await prisma.chatSession.findUnique({
+    where: {
+      telegramChatId: String(telegramChatId),
+    },
+    include: {
+      representative: {
+        select: {
+          slug: true,
+        },
+      },
+    },
+  });
+
+  return session?.representative.slug ?? null;
+}
+
+export async function setActiveRepresentativeForChat(params: {
+  telegramChatId: number | string;
+  telegramUserId: number;
+  representativeSlug: string;
+}): Promise<string> {
+  const representative = await prisma.representative.findUnique({
+    where: { slug: params.representativeSlug },
+    select: { id: true, slug: true },
+  });
+
+  if (!representative) {
+    throw new Error(`Representative "${params.representativeSlug}" not found.`);
+  }
+
+  await prisma.chatSession.upsert({
+    where: {
+      telegramChatId: String(params.telegramChatId),
+    },
+    create: {
+      telegramChatId: String(params.telegramChatId),
+      telegramUserId: String(params.telegramUserId),
+      representativeId: representative.id,
+    },
+    update: {
+      telegramUserId: String(params.telegramUserId),
+      representativeId: representative.id,
+    },
+  });
+
+  return representative.slug;
+}
+
+export async function setStructuredCollectorState(params: {
+  context: ConversationContextRecord;
+  collectorState: StructuredCollectorState;
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.conversation.update({
+      where: { id: params.context.conversationId },
+      data: {
+        collectorState: params.collectorState,
+        state: "COLLECTING",
+      },
+    });
+
+    await tx.eventAudit.create({
+      data: {
+        representativeId: params.context.representativeId,
+        contactId: params.context.contactId,
+        conversationId: params.context.conversationId,
+        type: EventType.INTAKE_STARTED,
+        payload: {
+          collectorKind: params.collectorState.kind,
+          intent: params.collectorState.intent,
+          stepIndex: params.collectorState.stepIndex,
+        },
+      },
+    });
+  });
+}
+
+export async function updateStructuredCollectorState(params: {
+  context: ConversationContextRecord;
+  collectorState: StructuredCollectorState;
+}): Promise<void> {
+  await prisma.conversation.update({
+    where: { id: params.context.conversationId },
+    data: {
+      collectorState: params.collectorState,
+      state: "COLLECTING",
+    },
+  });
 }
 
 export async function recordInboundTurn(params: {
@@ -306,6 +415,149 @@ export async function maybeCreateHandoffRequest(params: {
     return {
       id: handoff.id,
       status: handoff.status,
+    };
+  });
+}
+
+export async function clearStructuredCollectorState(context: ConversationContextRecord): Promise<void> {
+  await prisma.conversation.update({
+    where: { id: context.conversationId },
+    data: {
+      collectorState: Prisma.JsonNull,
+      state: "ACTIVE",
+    },
+  });
+}
+
+export async function submitStructuredCollector(params: {
+  context: ConversationContextRecord;
+  collectorState: StructuredCollectorState;
+}): Promise<{
+  handoffId: string;
+  summary: string;
+  recommendedOwnerAction: string;
+  priority: number;
+}> {
+  const summary = buildStructuredCollectorHandoffSummary(params.collectorState);
+  const recommendedOwnerAction = buildStructuredCollectorOwnerAction(params.collectorState);
+  const priority = calculateStructuredCollectorPriority(
+    params.collectorState,
+    params.context.contactIsPaid,
+  );
+
+  return prisma.$transaction(async (tx) => {
+    const intake = await tx.intakeSubmission.create({
+      data: {
+        representativeId: params.context.representativeId,
+        contactId: params.context.contactId,
+        conversationId: params.context.conversationId,
+        requestType: params.collectorState.intent,
+        payload: {
+          collectorKind: params.collectorState.kind,
+          sourceChannel: params.collectorState.sourceChannel,
+          suggestedPlan: params.collectorState.suggestedPlan ?? null,
+          startedAt: params.collectorState.startedAt,
+          completedAt: new Date().toISOString(),
+          answers: params.collectorState.answers,
+          summary: formatStructuredCollectorSummary(params.collectorState),
+        },
+        priorityScore: priority,
+        recommendedNextStep:
+          params.collectorState.kind === "scheduling"
+            ? "owner_schedule_review"
+            : "owner_quote_review",
+      },
+    });
+
+    const existing = await tx.handoffRequest.findFirst({
+      where: {
+        representativeId: params.context.representativeId,
+        contactId: params.context.contactId,
+        conversationId: params.context.conversationId,
+        reason: params.collectorState.intent,
+        status: {
+          in: [HandoffStatus.OPEN, HandoffStatus.REVIEWING],
+        },
+      },
+      orderBy: [{ createdAt: "desc" }],
+    });
+
+    const handoff = existing
+      ? await tx.handoffRequest.update({
+          where: { id: existing.id },
+          data: {
+            intakeSubmissionId: intake.id,
+            summary: summary || existing.summary,
+            recommendedPriority: priority,
+            recommendedOwnerAction,
+          },
+        })
+      : await tx.handoffRequest.create({
+          data: {
+            representativeId: params.context.representativeId,
+            contactId: params.context.contactId,
+            conversationId: params.context.conversationId,
+            intakeSubmissionId: intake.id,
+            reason: params.collectorState.intent,
+            summary: summary || "Structured intake completed.",
+            recommendedPriority: priority,
+            recommendedOwnerAction,
+            status: HandoffStatus.OPEN,
+          },
+        });
+
+    await tx.contact.update({
+      where: { id: params.context.contactId },
+      data: {
+        stage: ContactStage.WAITING_ON_OWNER,
+      },
+    });
+
+    await tx.conversation.update({
+      where: { id: params.context.conversationId },
+      data: {
+        collectorState: Prisma.JsonNull,
+        state: "ACTIVE",
+      },
+    });
+
+    await tx.eventAudit.create({
+      data: {
+        representativeId: params.context.representativeId,
+        contactId: params.context.contactId,
+        conversationId: params.context.conversationId,
+        type: EventType.INTAKE_SUBMITTED,
+        payload: {
+          intakeSubmissionId: intake.id,
+          handoffId: handoff.id,
+          collectorKind: params.collectorState.kind,
+          summary,
+          priority,
+        },
+      },
+    });
+
+    if (!existing) {
+      await tx.eventAudit.create({
+        data: {
+          representativeId: params.context.representativeId,
+          contactId: params.context.contactId,
+          conversationId: params.context.conversationId,
+          type: EventType.HANDOFF_REQUESTED,
+          payload: {
+            handoffId: handoff.id,
+            priority,
+            intent: params.collectorState.intent,
+          },
+        },
+      });
+    }
+
+    return {
+      handoffId: handoff.id,
+      summary: summary || "Structured intake completed.",
+      recommendedOwnerAction,
+      priority,
     };
   });
 }

@@ -3,23 +3,36 @@ import "dotenv/config";
 import { demoRepresentative, type PlanTier } from "@delegate/domain";
 import { Channel } from "@prisma/client";
 import {
+  advanceStructuredCollector,
+  beginStructuredCollector,
   createConversationPlan,
+  formatStructuredCollectorPrompt,
+  formatStructuredCollectorSummary,
   renderReplyPreview,
   resolveTelegramGroupHandling,
+  shouldStartStructuredCollector,
   type ConversationPlan,
+  type StructuredCollectorState,
 } from "@delegate/runtime";
 import { Bot, InlineKeyboard } from "grammy";
 
 import {
+  clearStructuredCollectorState,
   confirmInvoicePayment,
   createPlanInvoice,
+  getActiveRepresentativeSlugForChat,
   getConversationContext,
   markInvoiceDeliveryFailed,
   maybeCreateHandoffRequest,
   recordInboundTurn,
   recordOutboundReply,
+  setActiveRepresentativeForChat,
+  setStructuredCollectorState,
+  submitStructuredCollector,
+  updateStructuredCollectorState,
   validatePendingInvoice,
 } from "./runtime-store";
+import { getRepresentativeRuntimeConfig } from "./representative-config";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -39,25 +52,50 @@ await bot.api.setMyCommands([
 ]);
 
 bot.command("start", async (ctx) => {
-  const payload = ctx.match?.trim() || process.env.DEMO_REP_SLUG || demoRepresentative.slug;
-  const purchaseTier = parseStartPurchasePayload(payload);
+  if (!ctx.from) {
+    await ctx.reply("当前无法识别你的 Telegram 身份，请稍后重试。");
+    return;
+  }
 
-  if (purchaseTier && ctx.chat.type === "private") {
-    await sendPlanInvoice(ctx, purchaseTier);
+  const defaultRepresentativeSlug = process.env.DEMO_REP_SLUG || demoRepresentative.slug;
+  const payload = ctx.match?.trim();
+  const startPayload = parseStartPayload(payload, defaultRepresentativeSlug);
+  let activeRepresentativeSlug = startPayload.representativeSlug;
+
+  if (ctx.chat.type === "private") {
+    try {
+      activeRepresentativeSlug = await setActiveRepresentativeForChat({
+        telegramChatId: ctx.chat.id,
+        telegramUserId: ctx.from.id,
+        representativeSlug: startPayload.representativeSlug,
+      });
+    } catch (error) {
+      console.warn("Unable to switch representative session:", error);
+      activeRepresentativeSlug = defaultRepresentativeSlug;
+    }
+  }
+
+  const representative = await getRepresentativeRuntimeConfig(activeRepresentativeSlug);
+
+  if (startPayload.purchaseTier && ctx.chat.type === "private") {
+    await ctx.reply(
+      `当前入口已切换到 ${representative.name}，正在为你打开 ${formatPlanName(startPayload.purchaseTier)}。`,
+    );
+    await sendPlanInvoice(ctx, startPayload.purchaseTier, activeRepresentativeSlug);
     return;
   }
 
   const payloadNote =
-    payload === demoRepresentative.slug
-      ? "你进入的是默认 Founder Representative 演示入口。"
-      : `已收到 deep link 参数：${payload}`;
+    payload && activeRepresentativeSlug !== defaultRepresentativeSlug
+      ? `当前正在和 ${representative.name} 对话。这个会话会继续沿用该代表的公开知识与收费规则。`
+      : "你进入的是默认 Founder Representative 演示入口。";
 
   await ctx.reply(
     [
-      demoRepresentative.name,
-      demoRepresentative.tagline,
+      representative.name,
+      representative.tagline,
       payloadNote,
-      `免费规则：前 ${demoRepresentative.contract.freeReplyLimit} 条回复适合基础问答与资料领取。`,
+      `免费规则：前 ${representative.contract.freeReplyLimit} 条回复适合基础问答与资料领取。`,
       "我可以回答 FAQ、发资料、收集合作与报价信息，并在必要时发起人工转接。",
       "你也可以随时用 /plans 或 /buy pass 来触发 Telegram Stars 续用。",
     ].join("\n\n"),
@@ -68,7 +106,12 @@ bot.command("start", async (ctx) => {
 });
 
 bot.command("plans", async (ctx) => {
-  await sendPlansMessage(ctx);
+  const representativeSlug = await resolveRepresentativeSlugForChat(
+    ctx.chat.type,
+    ctx.chat.id,
+  );
+  const representative = await getRepresentativeRuntimeConfig(representativeSlug);
+  await sendPlansMessage(ctx, representative);
 });
 
 bot.command("buy", async (ctx) => {
@@ -114,7 +157,12 @@ bot.callbackQuery(/^buy:(pass|deep_help|sponsor)$/i, async (ctx) => {
 
 bot.callbackQuery("plans:show", async (ctx) => {
   await ctx.answerCallbackQuery();
-  await sendPlansMessage(ctx);
+  const representativeSlug = await resolveRepresentativeSlugForChat(
+    ctx.chat?.type ?? "private",
+    ctx.chat?.id ?? ctx.from.id,
+  );
+  const representative = await getRepresentativeRuntimeConfig(representativeSlug);
+  await sendPlansMessage(ctx, representative);
 });
 
 bot.on("pre_checkout_query", async (ctx) => {
@@ -172,10 +220,15 @@ bot.on("message:text", async (ctx) => {
   const mentionsBot =
     typeof me.username === "string" &&
     rawText.toLowerCase().includes(`@${me.username.toLowerCase()}`);
+  const representativeSlug = await resolveRepresentativeSlugForChat(
+    ctx.chat.type,
+    ctx.chat.id,
+  );
+  const representative = await getRepresentativeRuntimeConfig(representativeSlug);
 
   const groupHandling = resolveTelegramGroupHandling({
     chatType: ctx.chat.type,
-    activation: demoRepresentative.groupActivation,
+    activation: representative.groupActivation,
     wasMentioned: mentionsBot,
     isReplyToRepresentative: isReplyToBot,
   });
@@ -185,8 +238,10 @@ bot.on("message:text", async (ctx) => {
   }
 
   const text = stripBotMention(rawText, me.username);
-  const representativeSlug = process.env.DEMO_REP_SLUG || demoRepresentative.slug;
   const channel = mapMessageToChannel(ctx.chat.type, isReplyToBot);
+  const runtimeChannel =
+    isPrivate ? "private_chat" : isReplyToBot ? "group_reply" : "group_mention";
+  const normalizedText = text.length > 0 ? text : rawText;
 
   let conversationContext:
     | Awaited<ReturnType<typeof getConversationContext>>
@@ -205,9 +260,9 @@ bot.on("message:text", async (ctx) => {
   }
 
   const plan = createConversationPlan({
-    text: text.length > 0 ? text : rawText,
-    channel: isPrivate ? "private_chat" : isReplyToBot ? "group_reply" : "group_mention",
-    representative: demoRepresentative,
+    text: normalizedText,
+    channel: runtimeChannel,
+    representative,
     usage:
       conversationContext?.usage ?? {
         freeRepliesUsed: 0,
@@ -216,24 +271,144 @@ bot.on("message:text", async (ctx) => {
       },
   });
 
+  if (conversationContext?.collectorState) {
+    const collectorPlan = buildCollectorConversationPlan(conversationContext.collectorState);
+
+    await recordInboundTurn({
+      context: conversationContext,
+      plan: collectorPlan,
+      text: normalizedText,
+    });
+
+    if (isCollectorCancelMessage(normalizedText)) {
+      await clearStructuredCollectorState(conversationContext);
+
+      const replyText = [
+        representative.name,
+        representative.tagline,
+        "已停止当前结构化采集。你可以重新描述需求，我会判断是继续 FAQ、重新开始报价采集，还是转人工。",
+      ].join("\n\n");
+
+      await ctx.reply(replyText);
+      await recordOutboundReply({
+        context: conversationContext,
+        plan: collectorPlan,
+        messageText: replyText,
+      });
+      return;
+    }
+
+    const advanced = advanceStructuredCollector(
+      conversationContext.collectorState,
+      normalizedText,
+    );
+
+    if (!advanced.state) {
+      await clearStructuredCollectorState(conversationContext);
+      await ctx.reply("当前 intake 状态不可恢复，我已经先结束这轮采集。请重新描述你的需求。");
+      return;
+    }
+
+    if (!advanced.completed) {
+      await updateStructuredCollectorState({
+        context: conversationContext,
+        collectorState: advanced.state,
+      });
+
+      const replyText = [
+        representative.name,
+        representative.tagline,
+        formatStructuredCollectorPrompt(advanced.state),
+      ].join("\n\n");
+
+      await ctx.reply(replyText, buildPlanReplyOptions(collectorPlan));
+      await recordOutboundReply({
+        context: conversationContext,
+        plan: collectorPlan,
+        messageText: replyText,
+      });
+      return;
+    }
+
+    const submitted = await submitStructuredCollector({
+      context: conversationContext,
+      collectorState: advanced.state,
+    });
+
+    const completionNote =
+      advanced.state.kind === "scheduling"
+        ? "预约意向已经整理完成。"
+        : "报价 / 合作背景已经整理完成。";
+    const paidFollowup =
+      !conversationContext.contactIsPaid && advanced.state.suggestedPlan
+        ? `如果你希望我继续保留更长上下文并优先推进，可以继续解锁 ${formatPlanName(advanced.state.suggestedPlan)}。`
+        : "接下来主人会基于这份结构化摘要判断是否亲自接手。";
+    const replyText = [
+      representative.name,
+      representative.tagline,
+      completionNote,
+      formatStructuredCollectorSummary(advanced.state),
+      `已创建 owner inbox 收件项：${submitted.handoffId}`,
+      submitted.recommendedOwnerAction,
+      paidFollowup,
+    ].join("\n\n");
+
+    await ctx.reply(replyText, buildPlanReplyOptions(collectorPlan));
+    await recordOutboundReply({
+      context: conversationContext,
+      plan: collectorPlan,
+      messageText: replyText,
+    });
+    return;
+  }
+
   if (conversationContext) {
     await recordInboundTurn({
       context: conversationContext,
       plan,
-      text: text.length > 0 ? text : rawText,
+      text: normalizedText,
     });
+  }
+
+  if (conversationContext && shouldStartStructuredCollector(plan)) {
+    const collector = beginStructuredCollector({
+      plan,
+      channel: runtimeChannel,
+    });
+
+    await setStructuredCollectorState({
+      context: conversationContext,
+      collectorState: collector,
+    });
+
+    const replyText = [
+      representative.name,
+      representative.tagline,
+      formatStructuredCollectorPrompt(collector),
+      "如果你想中途结束，直接发送 取消 即可。",
+    ].join("\n\n");
+
+    const replyMarkup = buildPlanKeyboardForConversation(plan);
+    await ctx.reply(replyText, replyMarkup ? { reply_markup: replyMarkup } : {});
+
+    await recordOutboundReply({
+      context: conversationContext,
+      plan,
+      messageText: replyText,
+    });
+    return;
   }
 
   const handoff = conversationContext
     ? await maybeCreateHandoffRequest({
         context: conversationContext,
         plan,
-        text: text.length > 0 ? text : rawText,
+        text: normalizedText,
       })
     : null;
 
   const replyText = [
-    renderReplyPreview(demoRepresentative, plan),
+    renderReplyPreview(representative, plan),
     handoff ? `已创建 owner inbox 收件项：${handoff.id}` : null,
   ]
     .filter(Boolean)
@@ -258,9 +433,9 @@ bot.catch((error) => {
 console.log(`Starting Delegate bot as @${me.username ?? "unknown"}...`);
 await bot.start();
 
-async function sendPlansMessage(ctx: any) {
+async function sendPlansMessage(ctx: any, representative: Awaited<ReturnType<typeof getRepresentativeRuntimeConfig>>) {
   await ctx.reply(
-    demoRepresentative.pricing
+    representative.pricing
       .map(
         (plan) =>
           `${plan.name} · ${plan.stars} Stars\n${plan.summary}\nIncluded replies: ${plan.includedReplies}`,
@@ -272,13 +447,19 @@ async function sendPlansMessage(ctx: any) {
   );
 }
 
-async function sendPlanInvoice(ctx: any, tier: PlanTier) {
+async function sendPlanInvoice(ctx: any, tier: PlanTier, preferredRepresentativeSlug?: string) {
   let invoice:
     | Awaited<ReturnType<typeof createPlanInvoice>>
     | undefined;
 
   try {
-    const context = await getConversationContext(process.env.DEMO_REP_SLUG || demoRepresentative.slug, {
+    const representativeSlug =
+      preferredRepresentativeSlug ??
+      (await resolveRepresentativeSlugForChat(
+        ctx.chat?.type ?? "private",
+        ctx.chat?.id ?? ctx.from.id,
+      ));
+    const context = await getConversationContext(representativeSlug, {
       telegramUserId: ctx.from.id,
       ...(ctx.from.username ? { username: ctx.from.username } : {}),
       ...buildDisplayName(ctx.from.first_name, ctx.from.last_name),
@@ -298,7 +479,7 @@ async function sendPlanInvoice(ctx: any, tier: PlanTier) {
       "XTR",
       [{ label: invoice.title, amount: invoice.starsAmount }],
       {
-        start_parameter: `buy-${tier.replace("_", "-")}`,
+        start_parameter: buildStartPayloadForPurchase(representativeSlug, tier),
         protect_content: true,
       },
     );
@@ -350,6 +531,11 @@ function buildPlanKeyboardForConversation(plan: ConversationPlan): InlineKeyboar
   return undefined;
 }
 
+function buildPlanReplyOptions(plan: ConversationPlan) {
+  const replyMarkup = buildPlanKeyboardForConversation(plan);
+  return replyMarkup ? { reply_markup: replyMarkup } : {};
+}
+
 function buildInvoiceDescription(tier: PlanTier): string {
   switch (tier) {
     case "deep_help":
@@ -389,13 +575,48 @@ function parseTierToken(value: string | undefined): PlanTier | null {
   return null;
 }
 
-function parseStartPurchasePayload(payload: string): PlanTier | null {
-  const normalized = payload.trim().toLowerCase();
-  if (!normalized.startsWith("buy-")) {
-    return null;
+function parseStartPayload(
+  payload: string | undefined,
+  defaultRepresentativeSlug: string,
+): {
+  representativeSlug: string;
+  purchaseTier?: PlanTier;
+} {
+  if (!payload) {
+    return {
+      representativeSlug: defaultRepresentativeSlug,
+    };
   }
 
-  return parseTierToken(normalized.slice(4));
+  const normalized = payload.trim().toLowerCase();
+
+  if (normalized.startsWith("rep_")) {
+    return {
+      representativeSlug: normalized.slice(4) || defaultRepresentativeSlug,
+    };
+  }
+
+  if (normalized.startsWith("buy_")) {
+    const [representativeSlug, tierToken] = normalized.slice(4).split("__");
+    const purchaseTier = parseTierToken(tierToken);
+
+    return {
+      representativeSlug: representativeSlug || defaultRepresentativeSlug,
+      ...(purchaseTier ? { purchaseTier } : {}),
+    };
+  }
+
+  if (normalized.startsWith("buy-")) {
+    const purchaseTier = parseTierToken(normalized.slice(4));
+    return {
+      representativeSlug: defaultRepresentativeSlug,
+      ...(purchaseTier ? { purchaseTier } : {}),
+    };
+  }
+
+  return {
+    representativeSlug: normalized,
+  };
 }
 
 function mapMessageToChannel(chatType: string, isReplyToBot: boolean): Channel {
@@ -412,4 +633,48 @@ function buildDisplayName(
 ): { displayName?: string } {
   const value = [firstName, lastName].filter(Boolean).join(" ").trim();
   return value ? { displayName: value } : {};
+}
+
+function buildCollectorConversationPlan(
+  collectorState: StructuredCollectorState,
+): ConversationPlan {
+  return {
+    intent: collectorState.intent,
+    audienceRole: "lead",
+    action:
+      collectorState.kind === "scheduling"
+        ? "collect_scheduling_request"
+        : "collect_quote_request",
+    nextStep: "collect_intake",
+    ...(collectorState.suggestedPlan ? { suggestedPlan: collectorState.suggestedPlan } : {}),
+    reasons: ["Active structured collector in progress."],
+    responseOutline: [formatStructuredCollectorPrompt(collectorState)],
+  };
+}
+
+function isCollectorCancelMessage(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return normalized === "取消" || normalized === "cancel" || normalized === "stop";
+}
+
+async function resolveRepresentativeSlugForChat(
+  chatType: string,
+  chatId: number | string,
+): Promise<string> {
+  const defaultRepresentativeSlug = process.env.DEMO_REP_SLUG || demoRepresentative.slug;
+
+  if (chatType !== "private") {
+    return defaultRepresentativeSlug;
+  }
+
+  try {
+    return (await getActiveRepresentativeSlugForChat(chatId)) ?? defaultRepresentativeSlug;
+  } catch (error) {
+    console.warn("Unable to read representative session:", error);
+    return defaultRepresentativeSlug;
+  }
+}
+
+function buildStartPayloadForPurchase(representativeSlug: string, tier: PlanTier): string {
+  return `buy_${representativeSlug}__${tier}`;
 }

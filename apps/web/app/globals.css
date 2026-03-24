@@ -433,13 +433,106 @@ a {
   border-top: 1px solid var(--line);
 }
 
+.setup-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.setup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.compact-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-span-full {
+  grid-column: 1 / -1;
+}
+
+.textarea-input {
+  resize: vertical;
+  min-height: 112px;
+}
+
+.setup-section-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  align-items: start;
+}
+
+.toggle-grid,
+.checkbox-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.checkbox-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.toggle-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.pricing-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.knowledge-editor-card {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.setup-subsection + .setup-subsection {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.directory-list {
+  display: grid;
+  gap: 16px;
+}
+
+.directory-card {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.8);
+}
+
+.directory-card-active {
+  border-color: rgba(13, 148, 136, 0.32);
+  background: rgba(240, 253, 250, 0.95);
+}
+
 @media (max-width: 980px) {
   .hero,
   .profile-grid,
   .table-grid,
   .card-grid,
   .card-grid.two-up,
-  .plan-grid {
+  .plan-grid,
+  .setup-grid,
+  .pricing-editor-grid,
+  .checkbox-grid {
     grid-template-columns: 1fr;
   }
 
@@ -448,7 +541,8 @@ a {
   .section-heading,
   .dashboard-summary,
   .skill-row,
-  .search-form {
+  .search-form,
+  .setup-section-header {
     align-items: start;
     flex-direction: column;
   }

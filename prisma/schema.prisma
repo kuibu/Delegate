@@ -116,8 +116,13 @@ model Representative {
   groupModeEnabled  Boolean           @default(false)
   groupActivation   GroupActivation   @default(REPLY_OR_MENTION)
   humanInLoop       Boolean           @default(true)
+  languages         Json
   freeReplyLimit    Int               @default(4)
+  freeScope         Json
+  paywalledIntents  Json
+  handoffWindowHours Int              @default(24)
   freeMonthlyCredit Int               @default(100)
+  handoffPrompt     String
   allowedSkills     Json
   actionGate        Json
   createdAt         DateTime          @default(now())
@@ -132,6 +137,7 @@ model Representative {
   knowledgePack     KnowledgePack?
   pricingPlans      PricingPlan[]
   skillPackLinks    RepresentativeSkillPack[]
+  chatSessions      ChatSession[]
 }
 
 model KnowledgePack {
@@ -225,6 +231,7 @@ model Conversation {
   telegramChatId   String
   channel          Channel
   state            String            @default("ACTIVE")
+  collectorState   Json?
   freeRepliesUsed  Int               @default(0)
   passUnlockedAt   DateTime?
   deepHelpUnlockedAt DateTime?
@@ -240,6 +247,16 @@ model Conversation {
   invoices         Invoice[]
 
   @@unique([representativeId, telegramChatId, contactId])
+}
+
+model ChatSession {
+  id               String         @id @default(cuid())
+  telegramChatId   String         @unique
+  telegramUserId   String
+  representativeId String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  representative   Representative @relation(fields: [representativeId], references: [id])
 }
 
 model ConversationTurn {

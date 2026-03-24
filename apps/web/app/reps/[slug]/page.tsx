@@ -1,9 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { demoRepresentative } from "@delegate/domain";
+import type { PlanTier, Representative } from "@delegate/domain";
 
-const skillLabels: Record<(typeof demoRepresentative.skills)[number], string> = {
+import { getRepresentativeSetupSnapshot } from "../../../lib/representative-setup";
+import { getRepresentativeSkillPackSnapshot } from "../../../lib/representative-skill-packs";
+
+type RepresentativeSkill = Representative["skills"][number];
+
+const skillLabels: Record<RepresentativeSkill, string> = {
   faq_reply: "FAQ 回复",
   lead_qualify: "合作意向初筛",
   intake_collect: "需求采集",
@@ -43,10 +48,19 @@ export default async function RepresentativePage({
 }) {
   const { slug } = await params;
   const telegramBotUsername = process.env.TELEGRAM_BOT_USERNAME?.replace(/^@/, "");
+  const [setupSnapshot, skillPackSnapshot] = await Promise.all([
+    getRepresentativeSetupSnapshot(slug),
+    getRepresentativeSkillPackSnapshot(slug),
+  ]);
 
-  if (slug !== demoRepresentative.slug) {
+  if (!setupSnapshot || !skillPackSnapshot) {
     notFound();
   }
+
+  const representative = {
+    ...setupSnapshot,
+    skillPacks: skillPackSnapshot.skillPacks,
+  };
 
   return (
     <main className="shell">
@@ -54,7 +68,7 @@ export default async function RepresentativePage({
         <div className="brand">
           <div className="brand-mark">R</div>
           <div>
-            <strong>{demoRepresentative.name}</strong>
+            <strong>{representative.name}</strong>
             <div className="muted">Public-facing representative profile</div>
           </div>
         </div>
@@ -63,7 +77,7 @@ export default async function RepresentativePage({
           <Link className="nav-link" href="/">
             Home
           </Link>
-          <Link className="nav-link" href="/dashboard">
+          <Link className="nav-link" href={`/dashboard?rep=${representative.slug}`}>
             Dashboard
           </Link>
         </nav>
@@ -72,12 +86,12 @@ export default async function RepresentativePage({
       <section className="page-header">
         <div>
           <p className="eyebrow">Representative Profile</p>
-          <h1>{demoRepresentative.name}</h1>
-          <p className="section-copy">{demoRepresentative.tagline}</p>
+          <h1>{representative.name}</h1>
+          <p className="section-copy">{representative.tagline}</p>
         </div>
 
         <div className="chip-row">
-          {demoRepresentative.languages.map((language) => (
+          {representative.languages.map((language) => (
             <span className="chip" key={language}>
               {language}
             </span>
@@ -88,8 +102,8 @@ export default async function RepresentativePage({
       <section className="profile-grid">
         <article className="panel">
           <p className="panel-title">Who this representative works for</p>
-          <h3>{demoRepresentative.ownerName}</h3>
-          <p>{demoRepresentative.knowledgePack.identitySummary}</p>
+          <h3>{representative.ownerName}</h3>
+          <p>{representative.knowledgePack.identitySummary}</p>
 
           <div className="chip-row">
             <span className="chip chip-safe">公开知识运行时</span>
@@ -101,7 +115,7 @@ export default async function RepresentativePage({
         <article className="panel">
           <p className="panel-title">What it can do</p>
           <div className="chip-row">
-            {demoRepresentative.skills.map((skill) => (
+            {representative.skills.map((skill) => (
               <span className="chip" key={skill}>
                 {skillLabels[skill]}
               </span>
@@ -109,11 +123,11 @@ export default async function RepresentativePage({
           </div>
 
           <p className="footer-note">
-            免费规则：前 {demoRepresentative.contract.freeReplyLimit} 条回复适合基础问答与资料领取；更深的合作判断、
+            免费规则：前 {representative.contract.freeReplyLimit} 条回复适合基础问答与资料领取；更深的合作判断、
             报价采集和预约意向会引导到付费续用或人工转接。
           </p>
           <p className="footer-note">
-            群组激活策略：{groupActivationLabels[demoRepresentative.groupActivation]}。
+            群组激活策略：{groupActivationLabels[representative.groupActivation]}。
           </p>
         </article>
       </section>
@@ -162,7 +176,7 @@ export default async function RepresentativePage({
         </div>
 
         <div className="card-grid two-up">
-          {demoRepresentative.skillPacks.map((skillPack) => (
+          {representative.skillPacks.map((skillPack) => (
             <article className="panel list-card" key={skillPack.id}>
               <span className="kicker">
                 {skillPack.source === "clawhub" ? "ClawHub" : "Built-in"} · {skillPack.installStatus}
@@ -206,7 +220,7 @@ export default async function RepresentativePage({
           <article className="panel list-card">
             <h3>FAQ</h3>
             <ul className="list">
-              {demoRepresentative.knowledgePack.faq.map((item) => (
+              {representative.knowledgePack.faq.map((item) => (
                 <li className="list-item" key={item.id}>
                   <strong>{item.title}</strong>
                   <p>{item.summary}</p>
@@ -218,7 +232,7 @@ export default async function RepresentativePage({
           <article className="panel list-card">
             <h3>Materials</h3>
             <ul className="list">
-              {demoRepresentative.knowledgePack.materials.map((item) => (
+              {representative.knowledgePack.materials.map((item) => (
                 <li className="list-item" key={item.id}>
                   <strong>{item.title}</strong>
                   <p>{item.summary}</p>
@@ -230,7 +244,7 @@ export default async function RepresentativePage({
           <article className="panel list-card">
             <h3>Policies</h3>
             <ul className="list">
-              {demoRepresentative.knowledgePack.policies.map((item) => (
+              {representative.knowledgePack.policies.map((item) => (
                 <li className="list-item" key={item.id}>
                   <strong>{item.title}</strong>
                   <p>{item.summary}</p>
@@ -251,7 +265,7 @@ export default async function RepresentativePage({
         </div>
 
         <div className="plan-grid">
-          {demoRepresentative.pricing.map((plan) => (
+          {representative.pricing.map((plan) => (
             <article className="plan-card" key={plan.tier}>
               <h3>{plan.name}</h3>
               <span className="price">{plan.stars} Stars</span>
@@ -266,7 +280,7 @@ export default async function RepresentativePage({
                 <div className="button-row">
                   <a
                     className={plan.tier === "free" ? "button-secondary" : "button-primary"}
-                    href={buildTelegramPlanLink(telegramBotUsername, plan.tier)}
+                    href={buildTelegramPlanLink(telegramBotUsername, representative.slug, plan.tier)}
                     rel="noreferrer"
                     target="_blank"
                   >
@@ -282,17 +296,21 @@ export default async function RepresentativePage({
       <section className="section">
         <article className="panel">
           <p className="panel-title">Human handoff copy</p>
-          <p>{demoRepresentative.handoffPrompt}</p>
+          <p>{representative.handoffPrompt}</p>
         </article>
       </section>
     </main>
   );
 }
 
-function buildTelegramPlanLink(botUsername: string, tier: (typeof demoRepresentative.pricing)[number]["tier"]): string {
+function buildTelegramPlanLink(
+  botUsername: string,
+  representativeSlug: string,
+  tier: PlanTier,
+): string {
   if (tier === "free") {
-    return `https://t.me/${botUsername}?start=${demoRepresentative.slug}`;
+    return `https://t.me/${botUsername}?start=rep_${representativeSlug}`;
   }
 
-  return `https://t.me/${botUsername}?start=buy-${tier.replace(/_/g, "-")}`;
+  return `https://t.me/${botUsername}?start=buy_${representativeSlug}__${tier}`;
 }
