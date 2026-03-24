@@ -45,6 +45,7 @@ export default async function DashboardPage({
     "http://localhost:3002",
   );
   const tabs = t.tabs;
+  const activeTab = tabs.find((tab) => tab.id === activeView) ?? tabs[0]!;
 
   return (
     <main className="dashboard-shell localized-shell" data-locale={locale} lang={locale === "zh" ? "zh-CN" : "en"}>
@@ -107,7 +108,7 @@ export default async function DashboardPage({
 
         <div className="dashboard-topbar-context">
           <span className="chip">{activeSlug}</span>
-          <span className="chip chip-safe">{tabs.find((tab) => tab.id === activeView)?.label}</span>
+          <span className="chip chip-safe">{activeTab.label}</span>
           <span className="chip">{t.telegramOnlyLabel}</span>
           <span className="chip">{t.runtimeLabel}</span>
         </div>
@@ -126,15 +127,31 @@ export default async function DashboardPage({
 
         <section className="dashboard-main">
           <div className="dashboard-stage">
-            <div>
-              <p className="eyebrow">{t.workspaceEyebrow}</p>
-              <h1>{t.workspaceTitle}</h1>
-              <p className="dashboard-stage-copy">{t.workspaceCopy}</p>
+            <div className="dashboard-stage-main">
+              <div className="dashboard-stage-route">
+                <p className="eyebrow">{t.workspaceEyebrow}</p>
+                <span className="chip">{activeTab.eyebrow}</span>
+              </div>
+              <h1>{activeTab.stageTitle}</h1>
+              <p className="dashboard-stage-copy">{activeTab.stageCopy}</p>
             </div>
 
-            <div className="dashboard-stage-meta">
-              <span className="chip">{tabs.find((tab) => tab.id === activeView)?.eyebrow}</span>
-              <span className="chip chip-safe">{t.stageMetaLabel}</span>
+            <div className="dashboard-stage-stats" aria-label={t.stageStatsAriaLabel}>
+              <article className="dashboard-stage-stat">
+                <span>{t.currentWorkspaceLabel}</span>
+                <strong>{activeSlug}</strong>
+                <p>{t.currentWorkspaceDetail}</p>
+              </article>
+              <article className="dashboard-stage-stat">
+                <span>{t.currentLaneLabel}</span>
+                <strong>{activeTab.label}</strong>
+                <p>{activeTab.blurb}</p>
+              </article>
+              <article className="dashboard-stage-stat">
+                <span>{t.routingLabel}</span>
+                <strong>{t.telegramOnlyLabel}</strong>
+                <p>{t.routingDetail}</p>
+              </article>
             </div>
           </div>
 
@@ -175,6 +192,8 @@ const dashboardCopy: Record<
       eyebrow: string;
       blurb: string;
       shortLabel: string;
+      stageTitle: string;
+      stageCopy: string;
     }>;
     languageAriaLabel: string;
     language: { zh: string; en: string };
@@ -183,9 +202,12 @@ const dashboardCopy: Record<
     telegramOnlyLabel: string;
     runtimeLabel: string;
     workspaceEyebrow: string;
-    workspaceTitle: string;
-    workspaceCopy: string;
-    stageMetaLabel: string;
+    currentWorkspaceLabel: string;
+    currentWorkspaceDetail: string;
+    currentLaneLabel: string;
+    routingLabel: string;
+    routingDetail: string;
+    stageStatsAriaLabel: string;
   }
 > = {
   zh: {
@@ -199,6 +221,8 @@ const dashboardCopy: Record<
         eyebrow: "高频",
         blurb: "先看 owner inbox、付款和今天的信号。",
         shortLabel: "概览",
+        stageTitle: "先处理队列、付款和升级请求，再决定要不要亲自接手。",
+        stageCopy: "概览页应该像运营驾驶舱，先帮你判断今天哪里值得看、哪里该回、哪些请求已经接近成交。",
       },
       {
         id: "setup",
@@ -206,6 +230,8 @@ const dashboardCopy: Record<
         eyebrow: "发布",
         blurb: "身份、契约、价格与公开知识。",
         shortLabel: "代表",
+        stageTitle: "把公开身份、会话契约和知识包编辑成能直接发布的代表入口。",
+        stageCopy: "这一页不是宣传页文案，而是 bot 与公开页共同读取的发布配置。保存之后，公开入口和运行时应该同时更新。",
       },
       {
         id: "skills",
@@ -213,6 +239,8 @@ const dashboardCopy: Record<
         eyebrow: "扩展",
         blurb: "来自内建与 ClawHub 的安全技能包。",
         shortLabel: "技能",
+        stageTitle: "只安装能提升转化、又不打破 trust boundary 的技能包。",
+        stageCopy: "技能页应该帮助你判断哪些能力值得启用，而不是把代表重新变回一个可随意执行代码的 agent。",
       },
       {
         id: "memory",
@@ -220,6 +248,8 @@ const dashboardCopy: Record<
         eyebrow: "进阶",
         blurb: "OpenViking sync、recall provenance 与记忆治理。",
         shortLabel: "记忆",
+        stageTitle: "把 recall、commit 和记忆预览收进可治理的控制台，而不是藏在后端日志里。",
+        stageCopy: "记忆页服务的是治理，不是炫技。这里要看得清是否在同步、召回了什么、有没有越界，以及哪里该回退到确定性流程。",
       },
     ],
     languageAriaLabel: "语言切换",
@@ -228,10 +258,13 @@ const dashboardCopy: Record<
     publicRepresentativeLabel: "公开代表页",
     telegramOnlyLabel: "仅 Telegram",
     runtimeLabel: "Trust-first runtime",
-    workspaceEyebrow: "Owner workspace",
-    workspaceTitle: "先看高频运营，再进入配置，最后再治理进阶记忆层。",
-    workspaceCopy: "控制面板按真实使用顺序分成 tab，不再把所有模块堆成一条长页面。",
-    stageMetaLabel: "Public delegation interface",
+    workspaceEyebrow: "当前工作区",
+    currentWorkspaceLabel: "工作区",
+    currentWorkspaceDetail: "左侧 rail 只负责切换代表，右侧保持当前任务上下文。",
+    currentLaneLabel: "当前操作",
+    routingLabel: "入口范围",
+    routingDetail: "本版只覆盖 Telegram 私聊、群组 mention / reply 与 deep link。",
+    stageStatsAriaLabel: "当前工作区摘要",
   },
   en: {
     brandTitle: "Owner Dashboard",
@@ -244,6 +277,8 @@ const dashboardCopy: Record<
         eyebrow: "High frequency",
         blurb: "Owner inbox, payment flow, and daily signal first.",
         shortLabel: "Overview",
+        stageTitle: "Triage the queue, paid unlocks, and escalation requests before anything else.",
+        stageCopy: "Overview should feel like an operator desk: what needs attention today, what is converting, and what is worth the owner's time right now.",
       },
       {
         id: "setup",
@@ -251,6 +286,8 @@ const dashboardCopy: Record<
         eyebrow: "Launch",
         blurb: "Profile, contract, pricing, and public knowledge.",
         shortLabel: "Representative",
+        stageTitle: "Publish the representative identity, conversation contract, and public knowledge as one launch surface.",
+        stageCopy: "This is not marketing copy. It is the shared configuration that powers both the public page and the Telegram runtime.",
       },
       {
         id: "skills",
@@ -258,6 +295,8 @@ const dashboardCopy: Record<
         eyebrow: "Expansion",
         blurb: "Bounded packs from builtin and ClawHub sources.",
         shortLabel: "Skills",
+        stageTitle: "Enable only the skill packs that improve conversion without widening the runtime trust boundary.",
+        stageCopy: "The skill lane should help an owner make controlled capability decisions, not turn the representative back into an open-ended tool runner.",
       },
       {
         id: "memory",
@@ -265,6 +304,8 @@ const dashboardCopy: Record<
         eyebrow: "Advanced",
         blurb: "OpenViking sync, recall provenance, and memory governance.",
         shortLabel: "Memory",
+        stageTitle: "Keep recall, commit, and memory previews inside an operable governance console.",
+        stageCopy: "This lane is for control, not magic. Owners should see what is syncing, what was recalled, and where the system should fall back to deterministic behavior.",
       },
     ],
     languageAriaLabel: "Language switcher",
@@ -273,9 +314,12 @@ const dashboardCopy: Record<
     publicRepresentativeLabel: "Public Representative",
     telegramOnlyLabel: "Telegram only",
     runtimeLabel: "Trust-first runtime",
-    workspaceEyebrow: "Owner workspace",
-    workspaceTitle: "Operate first, configure second, and govern advanced memory last.",
-    workspaceCopy: "The dashboard is organized by actual working order instead of one long scrolling settings wall.",
-    stageMetaLabel: "Public delegation interface",
+    workspaceEyebrow: "Current workspace",
+    currentWorkspaceLabel: "Workspace",
+    currentWorkspaceDetail: "The left rail only switches representatives. The right pane keeps the active task context intact.",
+    currentLaneLabel: "Current lane",
+    routingLabel: "Channel scope",
+    routingDetail: "This release only covers Telegram private chat, mention / reply flows, and shareable deep links.",
+    stageStatsAriaLabel: "Current workspace summary",
   },
 };
