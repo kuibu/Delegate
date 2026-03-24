@@ -46,6 +46,18 @@ export type ConversationContextRecord = {
     deep_help?: StoredPlan;
     sponsor?: StoredPlan;
   };
+  openviking: {
+    enabled: boolean;
+    agentId?: string;
+    autoRecall: boolean;
+    autoCapture: boolean;
+    captureMode: string;
+    recallLimit: number;
+    recallScoreThreshold: number;
+    targetUri?: string;
+    sessionId?: string;
+    sessionKey?: string;
+  };
 };
 
 type StoredPlan = {
@@ -153,6 +165,20 @@ export async function getConversationContext(
       };
       return acc;
     }, {}),
+    openviking: {
+      enabled: representative.openvikingEnabled,
+      ...(representative.openvikingAgentId ? { agentId: representative.openvikingAgentId } : {}),
+      autoRecall: representative.openvikingAutoRecall,
+      autoCapture: representative.openvikingAutoCapture,
+      captureMode: representative.openvikingCaptureMode,
+      recallLimit: representative.openvikingRecallLimit,
+      recallScoreThreshold: representative.openvikingRecallScoreThreshold,
+      ...(representative.openvikingTargetUri
+        ? { targetUri: representative.openvikingTargetUri }
+        : {}),
+      ...(conversation.openvikingSessionId ? { sessionId: conversation.openvikingSessionId } : {}),
+      ...(conversation.openvikingSessionKey ? { sessionKey: conversation.openvikingSessionKey } : {}),
+    },
   };
 }
 
@@ -429,6 +455,106 @@ export async function clearStructuredCollectorState(context: ConversationContext
   });
 }
 
+export async function setConversationOpenVikingSession(params: {
+  conversationId: string;
+  sessionId: string;
+  sessionKey: string;
+}): Promise<void> {
+  await prisma.conversation.update({
+    where: { id: params.conversationId },
+    data: {
+      openvikingSessionId: params.sessionId,
+      openvikingSessionKey: params.sessionKey,
+    },
+  });
+}
+
+export async function recordOpenVikingRecallTrace(params: {
+  representativeId: string;
+  contactId: string;
+  conversationId: string;
+  queryText: string;
+  recalledUri: string;
+  contextType: string;
+  layer: string;
+  score: number;
+}): Promise<void> {
+  await prisma.conversationRecallTrace.create({
+    data: {
+      representativeId: params.representativeId,
+      contactId: params.contactId,
+      conversationId: params.conversationId,
+      queryText: params.queryText,
+      recalledUri: params.recalledUri,
+      contextType: params.contextType,
+      layer: params.layer,
+      score: params.score,
+    },
+  });
+}
+
+export async function recordOpenVikingCommitTrace(params: {
+  representativeId: string;
+  contactId: string;
+  conversationId: string;
+  sessionId: string;
+  sessionKey?: string;
+  reason: string;
+  status: "succeeded" | "failed";
+  memoriesExtracted?: number;
+  archived?: boolean;
+  error?: string;
+}): Promise<void> {
+  await prisma.conversationCommitTrace.create({
+    data: {
+      representativeId: params.representativeId,
+      contactId: params.contactId,
+      conversationId: params.conversationId,
+      sessionId: params.sessionId,
+      sessionKey: params.sessionKey ?? null,
+      reason: params.reason,
+      status: params.status,
+      memoriesExtracted: params.memoriesExtracted ?? null,
+      archived: params.archived ?? null,
+      error: params.error ?? null,
+    },
+  });
+}
+
+export async function upsertOpenVikingMemoryRecord(params: {
+  representativeId: string;
+  representativeSlug: string;
+  contactId?: string;
+  uri: string;
+  contextType: string;
+  scope: string;
+  category: string;
+  summary: string;
+  sourceKind: string;
+}): Promise<void> {
+  await prisma.openVikingMemoryRecord.upsert({
+    where: { uri: params.uri },
+    create: {
+      representativeId: params.representativeId,
+      contactId: params.contactId ?? null,
+      uri: params.uri,
+      contextType: params.contextType,
+      scope: params.scope,
+      category: params.category,
+      summary: params.summary,
+      sourceKind: params.sourceKind,
+    },
+    update: {
+      contactId: params.contactId ?? null,
+      contextType: params.contextType,
+      scope: params.scope,
+      category: params.category,
+      summary: params.summary,
+      sourceKind: params.sourceKind,
+    },
+  });
+}
+
 export async function submitStructuredCollector(params: {
   context: ConversationContextRecord;
   collectorState: StructuredCollectorState;
@@ -659,6 +785,10 @@ export async function confirmInvoicePayment(
   planName: string;
   starsAmount: number;
   representativeSlug: string;
+  representativeId: string;
+  contactId: string;
+  conversationId?: string;
+  planType: PlanTier;
 }> {
   return prisma.$transaction(async (tx) => {
     const invoice = await tx.invoice.findUnique({
@@ -687,6 +817,10 @@ export async function confirmInvoicePayment(
         planName: invoice.title,
         starsAmount: invoice.starsAmount,
         representativeSlug: invoice.representative.slug,
+        representativeId: invoice.representativeId,
+        contactId: invoice.contactId,
+        ...(invoice.conversationId ? { conversationId: invoice.conversationId } : {}),
+        planType: mapPricingPlanTypeFromDb(invoice.planType),
       };
     }
 
@@ -778,6 +912,10 @@ export async function confirmInvoicePayment(
       planName: invoice.title,
       starsAmount: invoice.starsAmount,
       representativeSlug: invoice.representative.slug,
+      representativeId: invoice.representativeId,
+      contactId: invoice.contactId,
+      ...(invoice.conversationId ? { conversationId: invoice.conversationId } : {}),
+      planType: mapPricingPlanTypeFromDb(invoice.planType),
     };
   });
 }

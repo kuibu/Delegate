@@ -15,6 +15,11 @@ import {
   type Representative,
 } from "@delegate/domain";
 import {
+  buildOpenVikingAgentId,
+  buildRepresentativeResourceRootUri,
+  resolveOpenVikingEnv,
+} from "@delegate/openviking";
+import {
   GroupActivation,
   PricingPlanType,
   SkillPackSource,
@@ -23,6 +28,7 @@ import {
 import { z } from "zod";
 
 import { prisma } from "./prisma";
+import { maybeSyncRepresentativeOpenVikingResources } from "./openviking";
 
 const representativeSetupInclude = {
   owner: true,
@@ -176,6 +182,7 @@ export async function createRepresentative(
   }
 
   try {
+    const openVikingEnv = resolveOpenVikingEnv();
     const created = await prisma.$transaction(async (tx) => {
       const now = new Date();
       const owner = await tx.owner.create({
@@ -214,6 +221,14 @@ export async function createRepresentative(
           handoffPrompt: template.handoffPrompt,
           allowedSkills: template.skills,
           actionGate: template.actionGate,
+          openvikingEnabled: false,
+          openvikingAgentId: buildOpenVikingAgentId(slug, openVikingEnv),
+          openvikingAutoRecall: openVikingEnv.autoRecallDefault,
+          openvikingAutoCapture: openVikingEnv.autoCaptureDefault,
+          openvikingCaptureMode: openVikingEnv.captureModeDefault,
+          openvikingRecallLimit: 6,
+          openvikingRecallScoreThreshold: 0.01,
+          openvikingTargetUri: buildRepresentativeResourceRootUri(slug),
         },
       });
 
@@ -303,7 +318,12 @@ export async function createRepresentative(
       return createdRepresentative;
     });
 
-    return serializeRepresentativeSetup(created);
+    const snapshot = serializeRepresentativeSetup(created);
+    await maybeSyncRepresentativeOpenVikingResources({
+      representativeSlug: snapshot.slug,
+      trigger: "create",
+    });
+    return snapshot;
   } catch (error) {
     if (isPrismaUnavailableError(error)) {
       throw new Error("Creating representatives requires a reachable Postgres instance.");
@@ -432,7 +452,12 @@ export async function updateRepresentativeSetup(params: {
       return refreshed;
     });
 
-    return serializeRepresentativeSetup(updated);
+    const snapshot = serializeRepresentativeSetup(updated);
+    await maybeSyncRepresentativeOpenVikingResources({
+      representativeSlug: snapshot.slug,
+      trigger: "setup_update",
+    });
+    return snapshot;
   } catch (error) {
     if (shouldUseDemoFallback(error, params.representativeSlug)) {
       return updateDemoFallbackRepresentativeSetup(input);

@@ -125,17 +125,33 @@ model Representative {
   handoffPrompt     String
   allowedSkills     Json
   actionGate        Json
+  openvikingEnabled Boolean           @default(false)
+  openvikingAgentId String?
+  openvikingAutoRecall Boolean        @default(true)
+  openvikingAutoCapture Boolean       @default(true)
+  openvikingCaptureMode String        @default("semantic")
+  openvikingRecallLimit Int           @default(6)
+  openvikingRecallScoreThreshold Float @default(0.01)
+  openvikingTargetUri String?
+  openvikingLastSyncAt DateTime?
+  openvikingLastSyncStatus String?
+  openvikingLastSyncError String?
+  openvikingLastSyncItemCount Int?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
   owner             Owner             @relation(fields: [ownerId], references: [id])
   conversations     Conversation[]
+  contextSyncJobs   RepresentativeContextSync[]
   contacts          Contact[]
+  commitTraces      ConversationCommitTrace[]
   events            EventAudit[]
   handoffRequests   HandoffRequest[]
   intakeSubmissions IntakeSubmission[]
   invoices          Invoice[]
   knowledgePack     KnowledgePack?
+  memoryRecords     OpenVikingMemoryRecord[]
   pricingPlans      PricingPlan[]
+  recallTraces      ConversationRecallTrace[]
   skillPackLinks    RepresentativeSkillPack[]
   chatSessions      ChatSession[]
 }
@@ -215,11 +231,14 @@ model Contact {
   updatedAt        DateTime          @updatedAt
   lastSeenAt       DateTime          @default(now())
   representative   Representative    @relation(fields: [representativeId], references: [id])
+  commitTraces     ConversationCommitTrace[]
   conversations    Conversation[]
   events           EventAudit[]
   handoffRequests  HandoffRequest[]
   intakeSubmissions IntakeSubmission[]
   invoices         Invoice[]
+  memoryRecords    OpenVikingMemoryRecord[]
+  recallTraces     ConversationRecallTrace[]
 
   @@unique([representativeId, telegramUserId])
 }
@@ -235,11 +254,15 @@ model Conversation {
   freeRepliesUsed  Int               @default(0)
   passUnlockedAt   DateTime?
   deepHelpUnlockedAt DateTime?
+  openvikingSessionId String?        @unique
+  openvikingSessionKey String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   lastMessageAt    DateTime          @default(now())
+  commitTraces     ConversationCommitTrace[]
   representative   Representative    @relation(fields: [representativeId], references: [id])
   contact          Contact           @relation(fields: [contactId], references: [id])
+  recallTraces     ConversationRecallTrace[]
   turns            ConversationTurn[]
   events           EventAudit[]
   handoffRequests  HandoffRequest[]
@@ -342,4 +365,77 @@ model EventAudit {
   representative   Representative  @relation(fields: [representativeId], references: [id])
   contact          Contact?        @relation(fields: [contactId], references: [id])
   conversation     Conversation?   @relation(fields: [conversationId], references: [id])
+}
+
+model RepresentativeContextSync {
+  id               String          @id @default(cuid())
+  representativeId String
+  status           String
+  itemCount        Int             @default(0)
+  error            String?
+  startedAt        DateTime
+  finishedAt       DateTime?
+  createdAt        DateTime        @default(now())
+  representative   Representative  @relation(fields: [representativeId], references: [id])
+
+  @@index([representativeId, createdAt])
+}
+
+model ConversationRecallTrace {
+  id               String          @id @default(cuid())
+  representativeId String
+  conversationId   String?
+  contactId        String?
+  queryText        String
+  recalledUri      String
+  contextType      String
+  layer            String
+  score            Float
+  createdAt        DateTime        @default(now())
+  representative   Representative  @relation(fields: [representativeId], references: [id])
+  conversation     Conversation?   @relation(fields: [conversationId], references: [id])
+  contact          Contact?        @relation(fields: [contactId], references: [id])
+
+  @@index([representativeId, createdAt])
+  @@index([conversationId, createdAt])
+}
+
+model ConversationCommitTrace {
+  id               String          @id @default(cuid())
+  representativeId String
+  conversationId   String?
+  contactId        String?
+  sessionId        String
+  sessionKey       String?
+  reason           String
+  status           String
+  memoriesExtracted Int?
+  archived         Boolean?
+  error            String?
+  createdAt        DateTime        @default(now())
+  representative   Representative  @relation(fields: [representativeId], references: [id])
+  conversation     Conversation?   @relation(fields: [conversationId], references: [id])
+  contact          Contact?        @relation(fields: [contactId], references: [id])
+
+  @@index([representativeId, createdAt])
+  @@index([conversationId, createdAt])
+}
+
+model OpenVikingMemoryRecord {
+  id               String          @id @default(cuid())
+  representativeId String
+  contactId        String?
+  uri              String          @unique
+  contextType      String
+  scope            String
+  category         String
+  summary          String
+  sourceKind       String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  representative   Representative  @relation(fields: [representativeId], references: [id])
+  contact          Contact?        @relation(fields: [contactId], references: [id])
+
+  @@index([representativeId, createdAt])
+  @@index([representativeId, contactId, createdAt])
 }

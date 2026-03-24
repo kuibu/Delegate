@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@delegate/registry": "workspace:*",
+    "@delegate/openviking": "workspace:*",
     "@prisma/client": "^6.19.2",
     "@delegate/domain": "workspace:*",
     "next": "^16.2.1",

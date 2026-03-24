@@ -16,9 +16,11 @@ type RepresentativeDirectoryItem = {
 
 export function DashboardRepresentativeDirectory({
   activeSlug,
+  activeView,
   initialRepresentatives,
 }: {
   activeSlug: string;
+  activeView: "overview" | "setup" | "skills" | "memory";
   initialRepresentatives: RepresentativeDirectoryItem[];
 }) {
   const router = useRouter();
@@ -82,7 +84,7 @@ export function DashboardRepresentativeDirectory({
         setSlug("");
         setTagline("");
         setMessage(`Representative ${created.name} created.`);
-        router.push(`/dashboard?rep=${created.slug}`);
+        router.push(`/dashboard?rep=${created.slug}&view=setup`);
         router.refresh();
       })().catch((nextError: unknown) => {
         setError(
@@ -95,119 +97,116 @@ export function DashboardRepresentativeDirectory({
   }
 
   return (
-    <section className="section">
-      <div className="section-heading">
+    <section className="dashboard-rail-stack">
+      <div className="dashboard-rail-header">
         <div>
-          <p className="eyebrow">Representative Directory</p>
-          <h2>先创建代表，再进入配置与运营</h2>
+          <p className="eyebrow">Workspace</p>
+          <h2>代表、切换、发布</h2>
         </div>
-        <p className="section-copy">
-          这里的目标是 15 分钟内发布一个 Telegram Founder Representative，而不是继续围着 demo 配置打转。
-        </p>
+        <p className="section-copy">左侧只负责选择工作区，右侧才是当前任务页。</p>
       </div>
 
       {message ? <div className="status-banner status-success">{message}</div> : null}
       {error ? <div className="status-banner status-error">{error}</div> : null}
 
-      <div className="card-grid two-up">
-        <article className="table-card">
-          <div className="setup-section-header">
-            <div>
-              <h3>Create representative</h3>
-              <p>创建后会自动带上 Founder 模板、四档定价、公开边界和基础 skill packs。</p>
-            </div>
-            <span className="chip">Telegram only</span>
+      <article className="dashboard-rail-card">
+        <div className="setup-section-header">
+          <div>
+            <h3>Create representative</h3>
+            <p>创建后直接进入 setup，不用在超长页面里重新找入口。</p>
           </div>
+          <span className="chip">Telegram only</span>
+        </div>
 
-          <form className="setup-stack" onSubmit={handleSubmit}>
-            <div className="compact-grid">
-              <label className="field-stack">
-                <span>Owner name</span>
-                <input
-                  className="text-input"
-                  onChange={(event) => setOwnerName(event.target.value)}
-                  placeholder="Lin"
-                  value={ownerName}
-                />
-              </label>
+        <form className="setup-stack" onSubmit={handleSubmit}>
+          <label className="field-stack">
+            <span>Owner name</span>
+            <input
+              className="text-input"
+              onChange={(event) => setOwnerName(event.target.value)}
+              placeholder="Lin"
+              value={ownerName}
+            />
+          </label>
 
-              <label className="field-stack">
-                <span>Representative name</span>
-                <input
-                  className="text-input"
-                  onChange={(event) => setRepresentativeName(event.target.value)}
-                  placeholder="Lin 的 Telegram 对外代表"
-                  value={representativeName}
-                />
-              </label>
+          <label className="field-stack">
+            <span>Representative name</span>
+            <input
+              className="text-input"
+              onChange={(event) => setRepresentativeName(event.target.value)}
+              placeholder="Lin 的 Telegram 对外代表"
+              value={representativeName}
+            />
+          </label>
 
-              <label className="field-stack">
-                <span>Slug</span>
-                <input
-                  className="text-input"
-                  onChange={(event) => setSlug(event.target.value)}
-                  placeholder="lin-founder-rep"
-                  value={slug}
-                />
-              </label>
+          <label className="field-stack">
+            <span>Slug</span>
+            <input
+              className="text-input"
+              onChange={(event) => setSlug(event.target.value)}
+              placeholder="lin-founder-rep"
+              value={slug}
+            />
+          </label>
 
-              <label className="field-stack">
-                <span>Tagline</span>
-                <input
-                  className="text-input"
-                  onChange={(event) => setTagline(event.target.value)}
-                  placeholder="用公开知识回答问题、筛选合作线索、收集需求，并在需要时转真人。"
-                  value={tagline}
-                />
-              </label>
-            </div>
+          <label className="field-stack">
+            <span>Tagline</span>
+            <input
+              className="text-input"
+              onChange={(event) => setTagline(event.target.value)}
+              placeholder="用公开知识回答问题、筛选合作线索、收集需求，并在需要时转真人。"
+              value={tagline}
+            />
+          </label>
 
-            <div className="button-row">
-              <button className="button-primary" disabled={isPending} type="submit">
-                {isPending ? "Creating..." : "Create representative"}
-              </button>
-            </div>
-          </form>
-        </article>
-
-        <article className="table-card">
-          <div className="setup-section-header">
-            <div>
-              <h3>Published representatives</h3>
-              <p>选择一个代表继续编辑 setup、owner inbox、skill packs 和公开资料页。</p>
-            </div>
-            <span className="chip">{representatives.length} reps</span>
+          <div className="button-row button-row-stretch">
+            <button className="button-primary button-block" disabled={isPending} type="submit">
+              {isPending ? "Creating..." : "Create and open setup"}
+            </button>
           </div>
+        </form>
+      </article>
 
-          <div className="directory-list">
-            {representatives.map((representative) => {
-              const isActive = representative.slug === activeSlug;
-
-              return (
-                <article
-                  className={isActive ? "directory-card directory-card-active" : "directory-card"}
-                  key={representative.id}
-                >
-                  <div>
-                    <p className="panel-title">{representative.ownerName}</p>
-                    <h3>{representative.name}</h3>
-                    <p>{representative.tagline}</p>
-                  </div>
-
-                  <div className="button-row">
-                    <Link className={isActive ? "button-primary" : "button-secondary"} href={`/dashboard?rep=${representative.slug}`}>
-                      {isActive ? "Editing" : "Open dashboard"}
-                    </Link>
-                    <Link className="button-secondary" href={`/reps/${representative.slug}`}>
-                      Public page
-                    </Link>
-                  </div>
-                </article>
-              );
-            })}
+      <article className="dashboard-rail-card">
+        <div className="setup-section-header">
+          <div>
+            <h3>Published representatives</h3>
+            <p>切换代表时保留当前 tab，不打断当前工作流。</p>
           </div>
-        </article>
-      </div>
+          <span className="chip">{representatives.length} reps</span>
+        </div>
+
+        <div className="directory-list">
+          {representatives.map((representative) => {
+            const isActive = representative.slug === activeSlug;
+
+            return (
+              <article
+                className={isActive ? "directory-card directory-card-active" : "directory-card"}
+                key={representative.id}
+              >
+                <div>
+                  <p className="panel-title">{representative.ownerName}</p>
+                  <h3>{representative.name}</h3>
+                  <p>{representative.tagline}</p>
+                </div>
+
+                <div className="button-row button-row-stretch">
+                  <Link
+                    className={isActive ? "button-primary button-block" : "button-secondary button-block"}
+                    href={`/dashboard?rep=${representative.slug}&view=${activeView}`}
+                  >
+                    {isActive ? "Current workspace" : "Open workspace"}
+                  </Link>
+                  <Link className="button-secondary button-block" href={`/reps/${representative.slug}`}>
+                    Public page
+                  </Link>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </article>
     </section>
   );
 }

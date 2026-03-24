@@ -33,6 +33,12 @@ import {
   validatePendingInvoice,
 } from "./runtime-store";
 import { getRepresentativeRuntimeConfig } from "./representative-config";
+import {
+  captureTurnToOpenViking,
+  recallOpenVikingContext,
+  storeCollectorMemory,
+  storePaymentMemory,
+} from "./openviking-runtime";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -193,12 +199,40 @@ bot.on("message:successful_payment", async (ctx) => {
         : {}),
     });
 
-    await ctx.reply(
-      [
-        `已确认 ${confirmed.planName} 付款，收到 ${confirmed.starsAmount} Stars。`,
-        "你的会话深度已经解锁；如果需要我继续做需求采集、报价梳理或升级转人工，直接继续发消息就可以。",
-      ].join("\n\n"),
-    );
+    const replyText = [
+      `已确认 ${confirmed.planName} 付款，收到 ${confirmed.starsAmount} Stars。`,
+      "你的会话深度已经解锁；如果需要我继续做需求采集、报价梳理或升级转人工，直接继续发消息就可以。",
+    ].join("\n\n");
+
+    await ctx.reply(replyText);
+
+    const context = await getConversationContext(confirmed.representativeSlug, {
+      telegramUserId: ctx.from.id,
+      ...(ctx.from.username ? { username: ctx.from.username } : {}),
+      ...buildDisplayName(ctx.from.first_name, ctx.from.last_name),
+      chatId: ctx.chat.id,
+      channel: Channel.PRIVATE_CHAT,
+    });
+
+    await storePaymentMemory({
+      context,
+      planName: confirmed.planName,
+      starsAmount: confirmed.starsAmount,
+    });
+    await captureTurnToOpenViking({
+      context,
+      chatId: ctx.chat.id,
+      userText: `Payment confirmed for ${confirmed.planName}.`,
+      assistantText: replyText,
+      recalled: [],
+      reason: "payment_confirmed",
+      usedSkill: {
+        uri: "delegate://skills/payment-confirmation",
+        input: { planType: confirmed.planType },
+        output: replyText,
+        success: true,
+      },
+    });
   } catch (error) {
     await ctx.reply(
       error instanceof Error
@@ -271,6 +305,15 @@ bot.on("message:text", async (ctx) => {
       },
   });
 
+  const recalled = conversationContext
+    ? await recallOpenVikingContext({
+        context: conversationContext,
+        chatId: ctx.chat.id,
+        queryText: normalizedText,
+        includeL2: plan.intent === "materials",
+      })
+    : [];
+
   if (conversationContext?.collectorState) {
     const collectorPlan = buildCollectorConversationPlan(conversationContext.collectorState);
 
@@ -287,13 +330,23 @@ bot.on("message:text", async (ctx) => {
         representative.name,
         representative.tagline,
         "已停止当前结构化采集。你可以重新描述需求，我会判断是继续 FAQ、重新开始报价采集，还是转人工。",
-      ].join("\n\n");
+      ]
+        .filter(Boolean)
+        .join("\n\n");
 
       await ctx.reply(replyText);
       await recordOutboundReply({
         context: conversationContext,
         plan: collectorPlan,
         messageText: replyText,
+      });
+      await captureTurnToOpenViking({
+        context: conversationContext,
+        chatId: ctx.chat.id,
+        userText: normalizedText,
+        assistantText: replyText,
+        recalled,
+        reason: "collector_cancelled",
       });
       return;
     }
@@ -319,13 +372,32 @@ bot.on("message:text", async (ctx) => {
         representative.name,
         representative.tagline,
         formatStructuredCollectorPrompt(advanced.state),
-      ].join("\n\n");
+      ]
+        .filter(Boolean)
+        .join("\n\n");
 
       await ctx.reply(replyText, buildPlanReplyOptions(collectorPlan));
       await recordOutboundReply({
         context: conversationContext,
         plan: collectorPlan,
         messageText: replyText,
+      });
+      await captureTurnToOpenViking({
+        context: conversationContext,
+        chatId: ctx.chat.id,
+        userText: normalizedText,
+        assistantText: replyText,
+        recalled,
+        reason: "collector_step",
+        usedSkill: {
+          uri: "delegate://skills/structured-collector",
+          input: {
+            kind: advanced.state.kind,
+            stepIndex: advanced.state.stepIndex,
+          },
+          output: replyText,
+          success: true,
+        },
       });
       return;
     }
@@ -351,13 +423,37 @@ bot.on("message:text", async (ctx) => {
       `已创建 owner inbox 收件项：${submitted.handoffId}`,
       submitted.recommendedOwnerAction,
       paidFollowup,
-    ].join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
     await ctx.reply(replyText, buildPlanReplyOptions(collectorPlan));
     await recordOutboundReply({
       context: conversationContext,
       plan: collectorPlan,
       messageText: replyText,
+    });
+    await storeCollectorMemory({
+      context: conversationContext,
+      collectorState: advanced.state,
+      summary: submitted.summary,
+    });
+    await captureTurnToOpenViking({
+      context: conversationContext,
+      chatId: ctx.chat.id,
+      userText: normalizedText,
+      assistantText: replyText,
+      recalled,
+      reason: advanced.state.kind === "scheduling" ? "scheduling_collector_completed" : "quote_collector_completed",
+      usedSkill: {
+        uri: "delegate://skills/structured-collector",
+        input: {
+          kind: advanced.state.kind,
+          answers: advanced.state.answers,
+        },
+        output: submitted.summary,
+        success: true,
+      },
     });
     return;
   }
@@ -386,7 +482,9 @@ bot.on("message:text", async (ctx) => {
       representative.tagline,
       formatStructuredCollectorPrompt(collector),
       "如果你想中途结束，直接发送 取消 即可。",
-    ].join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
     const replyMarkup = buildPlanKeyboardForConversation(plan);
     await ctx.reply(replyText, replyMarkup ? { reply_markup: replyMarkup } : {});
@@ -395,6 +493,23 @@ bot.on("message:text", async (ctx) => {
       context: conversationContext,
       plan,
       messageText: replyText,
+    });
+    await captureTurnToOpenViking({
+      context: conversationContext,
+      chatId: ctx.chat.id,
+      userText: normalizedText,
+      assistantText: replyText,
+      recalled,
+      reason: "collector_started",
+      usedSkill: {
+        uri: "delegate://skills/structured-collector",
+        input: {
+          kind: collector.kind,
+          intent: collector.intent,
+        },
+        output: replyText,
+        success: true,
+      },
     });
     return;
   }
@@ -422,6 +537,14 @@ bot.on("message:text", async (ctx) => {
       context: conversationContext,
       plan,
       messageText: replyText,
+    });
+    await captureTurnToOpenViking({
+      context: conversationContext,
+      chatId: ctx.chat.id,
+      userText: normalizedText,
+      assistantText: replyText,
+      recalled,
+      reason: normalizeOpenVikingReason(plan.nextStep),
     });
   }
 });
@@ -677,4 +800,20 @@ async function resolveRepresentativeSlugForChat(
 
 function buildStartPayloadForPurchase(representativeSlug: string, tier: PlanTier): string {
   return `buy_${representativeSlug}__${tier}`;
+}
+
+function normalizeOpenVikingReason(nextStep: ConversationPlan["nextStep"]): string {
+  switch (nextStep) {
+    case "handoff":
+      return "handoff_requested";
+    case "ask_owner":
+      return "ask_owner";
+    case "offer_paid_unlock":
+      return "offer_paid_unlock";
+    case "collect_intake":
+      return "collect_intake";
+    case "answer":
+    default:
+      return "answer_turn";
+  }
 }

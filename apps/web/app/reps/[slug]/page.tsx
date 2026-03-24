@@ -3,6 +3,12 @@ import { notFound } from "next/navigation";
 
 import type { PlanTier, Representative } from "@delegate/domain";
 
+import {
+  DashboardPanelFrame,
+  DashboardSignalStrip,
+  DashboardSurface,
+  DashboardSurfaceGrid,
+} from "../../ui/control-plane";
 import { getRepresentativeSetupSnapshot } from "../../../lib/representative-setup";
 import { getRepresentativeSkillPackSnapshot } from "../../../lib/representative-skill-packs";
 
@@ -41,6 +47,15 @@ const groupActivationLabels = {
   always: "始终响应",
 } as const;
 
+const representativeMenu = [
+  { href: "#overview", label: "Overview" },
+  { href: "#trust", label: "Trust" },
+  { href: "#skills", label: "Skills" },
+  { href: "#knowledge", label: "Knowledge" },
+  { href: "#plans", label: "Plans" },
+  { href: "#handoff", label: "Handoff" },
+] as const;
+
 export default async function RepresentativePage({
   params,
 }: {
@@ -61,89 +76,120 @@ export default async function RepresentativePage({
     ...setupSnapshot,
     skillPacks: skillPackSnapshot.skillPacks,
   };
+  const enabledSkillPacks = representative.skillPacks.filter((skillPack) => skillPack.enabled);
+  const totalKnowledgeItems =
+    representative.knowledgePack.faq.length +
+    representative.knowledgePack.materials.length +
+    representative.knowledgePack.policies.length;
 
   return (
-    <main className="shell">
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark">R</div>
+    <main className="dashboard-shell representative-shell">
+      <header className="representative-topbar">
+        <div className="dashboard-brand">
+          <div className="dashboard-brand-mark">R</div>
           <div>
             <strong>{representative.name}</strong>
-            <div className="muted">Public-facing representative profile</div>
+            <div className="muted">Trust-first public representative profile</div>
           </div>
         </div>
 
-        <nav className="nav-links">
-          <Link className="nav-link" href="/">
+        <nav aria-label="Representative sections" className="representative-menu-tabs">
+          {representativeMenu.map((item) => (
+            <a className="dashboard-menu-tab" href={item.href} key={item.href}>
+              {item.label}
+            </a>
+          ))}
+        </nav>
+
+        <div className="dashboard-nav-links">
+          <Link className="dashboard-nav-link" href="/">
             Home
           </Link>
-          <Link className="nav-link" href={`/dashboard?rep=${representative.slug}`}>
+          <Link className="dashboard-nav-link" href={`/dashboard?rep=${representative.slug}&view=overview`}>
             Dashboard
           </Link>
-        </nav>
+        </div>
       </header>
 
-      <section className="page-header">
+      <section className="dashboard-stage representative-stage" id="overview">
         <div>
           <p className="eyebrow">Representative Profile</p>
           <h1>{representative.name}</h1>
-          <p className="section-copy">{representative.tagline}</p>
-        </div>
-
-        <div className="chip-row">
-          {representative.languages.map((language) => (
-            <span className="chip" key={language}>
-              {language}
-            </span>
-          ))}
-        </div>
-      </section>
-
-      <section className="profile-grid">
-        <article className="panel">
-          <p className="panel-title">Who this representative works for</p>
-          <h3>{representative.ownerName}</h3>
-          <p>{representative.knowledgePack.identitySummary}</p>
-
+          <p className="dashboard-stage-copy">{representative.tagline}</p>
           <div className="chip-row">
-            <span className="chip chip-safe">公开知识运行时</span>
-            <span className="chip chip-safe">AI + 人工升级转接</span>
-            <span className="chip chip-danger">无私有记忆接入</span>
-          </div>
-        </article>
-
-        <article className="panel">
-          <p className="panel-title">What it can do</p>
-          <div className="chip-row">
-            {representative.skills.map((skill) => (
-              <span className="chip" key={skill}>
-                {skillLabels[skill]}
+            {representative.languages.map((language) => (
+              <span className="chip" key={language}>
+                {language}
               </span>
             ))}
+            <span className="chip chip-safe">{groupActivationLabels[representative.groupActivation]}</span>
+            <span className="chip">{representative.humanInLoop ? "ai + human" : "ai only"}</span>
           </div>
-
-          <p className="footer-note">
-            免费规则：前 {representative.contract.freeReplyLimit} 条回复适合基础问答与资料领取；更深的合作判断、
-            报价采集和预约意向会引导到付费续用或人工转接。
-          </p>
-          <p className="footer-note">
-            群组激活策略：{groupActivationLabels[representative.groupActivation]}。
-          </p>
-        </article>
-      </section>
-
-      <section className="section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Trust Interface</p>
-            <h2>用户一进来就该看到边界</h2>
-          </div>
-          <p className="section-copy">公开能力、拒绝范围、升级路径和计费方式都不应该藏在对话里。</p>
         </div>
 
-        <div className="card-grid two-up">
-          <article className="panel list-card">
-            <h3>Allowed</h3>
+        <div className="representative-stage-aside">
+          <article className="dashboard-highlight-card dashboard-highlight-card-primary">
+            <p className="panel-title">Who this representative works for</p>
+            <h3>{representative.ownerName}</h3>
+            <p>{representative.knowledgePack.identitySummary}</p>
+            <p className="footer-note">
+              This representative may remember prior public-safe interactions within this representative only. It does not access the owner&apos;s private workspace, private files, or private accounts.
+            </p>
+          </article>
+
+          <div className="button-row representative-stage-links">
+            {telegramBotUsername ? (
+              <a
+                className="button-primary"
+                href={buildTelegramPlanLink(telegramBotUsername, representative.slug, "free")}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Ask in Telegram
+              </a>
+            ) : null}
+            <Link className="button-secondary" href={`/dashboard?rep=${representative.slug}&view=setup`}>
+              View control plane
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <DashboardSignalStrip
+        cards={[
+          {
+            label: "Free replies",
+            value: `${representative.contract.freeReplyLimit}`,
+            detail: "首次接触阶段能被代表独立接住的免费深度。",
+            tone: "accent",
+          },
+          {
+            label: "Enabled skills",
+            value: `${representative.skills.length}`,
+            detail: "当前公开声明并可被用户理解的能力条数。",
+            tone: "safe",
+          },
+          {
+            label: "Knowledge items",
+            value: `${totalKnowledgeItems}`,
+            detail: "FAQ、资料和政策构成的公开知识包。",
+          },
+          {
+            label: "Skill packs",
+            value: `${enabledSkillPacks.length}`,
+            detail: "已启用且进入代表运行时的 skill pack 数量。",
+          },
+        ]}
+      />
+
+      <DashboardPanelFrame
+        eyebrow="Trust Interface"
+        id="trust"
+        summary="公开能力、拒绝范围、升级路径和计费方式都不应该藏在对话里。"
+        title="用户一进来就该先看到边界和契约"
+      >
+        <DashboardSurfaceGrid columns={3}>
+          <DashboardSurface eyebrow="Allowed" title="代表会做什么" tone="accent">
             <ul className="list">
               {allowList.map((item) => (
                 <li className="list-item" key={item}>
@@ -151,10 +197,9 @@ export default async function RepresentativePage({
                 </li>
               ))}
             </ul>
-          </article>
+          </DashboardSurface>
 
-          <article className="panel list-card">
-            <h3>Not Allowed</h3>
+          <DashboardSurface eyebrow="Not allowed" title="代表明确不会做什么">
             <ul className="list">
               {denyList.map((item) => (
                 <li className="list-item" key={item}>
@@ -162,63 +207,87 @@ export default async function RepresentativePage({
                 </li>
               ))}
             </ul>
-          </article>
-        </div>
-      </section>
+          </DashboardSurface>
 
-      <section className="section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Skill Sources</p>
-            <h2>技能包可以有来源，但不能有越权</h2>
-          </div>
-          <p className="section-copy">参考 OpenClaw 的 ClawHub 习惯后，这里区分了 builtin 与 registry-backed skill packs。</p>
-        </div>
+          <DashboardSurface eyebrow="Conversation contract" title="免费、升级和转接规则">
+            <p className="section-copy">
+              免费规则：前 {representative.contract.freeReplyLimit} 条回复适合基础问答与资料领取；更深的合作判断、报价采集和预约意向会引导到付费续用或人工转接。
+            </p>
+            <div className="chip-row">
+              <span className="chip chip-safe">{groupActivationLabels[representative.groupActivation]}</span>
+              <span className="chip">{representative.publicMode ? "public runtime" : "private draft"}</span>
+              <span className="chip">{representative.humanInLoop ? "handoff ready" : "ai only"}</span>
+            </div>
+            <p className="footer-note">
+              记忆边界：只会记住这个代表范围内的公开安全互动，不会读取主人的私有工作区、私有文件或私有账号。
+            </p>
+          </DashboardSurface>
+        </DashboardSurfaceGrid>
+      </DashboardPanelFrame>
 
-        <div className="card-grid two-up">
-          {representative.skillPacks.map((skillPack) => (
-            <article className="panel list-card" key={skillPack.id}>
-              <span className="kicker">
-                {skillPack.source === "clawhub" ? "ClawHub" : "Built-in"} · {skillPack.installStatus}
-              </span>
-              <h3>{skillPack.displayName}</h3>
-              <p>{skillPack.summary}</p>
-              <div className="chip-row">
-                {skillPack.version ? <span className="chip">v{skillPack.version}</span> : null}
-                {skillPack.ownerHandle ? <span className="chip">@{skillPack.ownerHandle}</span> : null}
-                {skillPack.verificationTier ? (
-                  <span className="chip chip-safe">{skillPack.verificationTier}</span>
-                ) : null}
-              </div>
-              <ul className="list">
-                {skillPack.capabilityTags.map((tag) => (
-                  <li className="list-item" key={tag}>
-                    {tag}
-                  </li>
-                ))}
-              </ul>
-              <p className="footer-note">
-                {skillPack.executesCode
-                  ? "This pack executes code and would require extra review."
-                  : "This pack is currently modeled as declarative/non-privileged for public runtime safety."}
-              </p>
-            </article>
-          ))}
-        </div>
-      </section>
+      <DashboardPanelFrame
+        eyebrow="Skill Sources"
+        id="skills"
+        summary="参考 OpenClaw 的 ClawHub 习惯后，这里把 builtin 与 registry-backed skill packs 分开，并强调越权永远不被允许。"
+        title="技能包可以有来源，但不能有越权"
+      >
+        <DashboardSurfaceGrid>
+          <DashboardSurface
+            eyebrow="Declared skills"
+            meta={<span className="chip chip-safe">{representative.skills.length} skills</span>}
+            title="公开代表会如何接住外部请求"
+            tone="accent"
+          >
+            <div className="chip-row">
+              {representative.skills.map((skill) => (
+                <span className="chip" key={skill}>
+                  {skillLabels[skill]}
+                </span>
+              ))}
+            </div>
+          </DashboardSurface>
 
-      <section className="section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Knowledge Pack</p>
-            <h2>公开知识包先于自由发挥</h2>
-          </div>
-          <p className="section-copy">代表先从结构化知识里拿答案，再决定下一步是继续回答、收集 intake 还是升级转接。</p>
-        </div>
+          <DashboardSurface
+            eyebrow="Skill packs"
+            meta={<span className="chip">{representative.skillPacks.length} tracked</span>}
+            title="已安装来源与能力标签"
+          >
+            <div className="row-list">
+              {representative.skillPacks.map((skillPack) => (
+                <div className="skill-row" key={skillPack.id}>
+                  <div>
+                    <strong>{skillPack.displayName}</strong>
+                    <p>{skillPack.summary}</p>
+                    <div className="chip-row">
+                      <span className="chip">
+                        {skillPack.source === "clawhub" ? "ClawHub" : "Built-in"}
+                      </span>
+                      <span className="chip">{skillPack.installStatus}</span>
+                      {skillPack.verificationTier ? (
+                        <span className="chip chip-safe">{skillPack.verificationTier}</span>
+                      ) : null}
+                    </div>
+                    <p className="footer-note">
+                      {skillPack.executesCode
+                        ? "This pack executes code and would require extra review."
+                        : "This pack is currently modeled as declarative/non-privileged for public runtime safety."}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </DashboardSurface>
+        </DashboardSurfaceGrid>
+      </DashboardPanelFrame>
 
-        <div className="card-grid">
-          <article className="panel list-card">
-            <h3>FAQ</h3>
+      <DashboardPanelFrame
+        eyebrow="Knowledge Pack"
+        id="knowledge"
+        summary="代表先从结构化知识里拿答案，再决定下一步是继续回答、收集 intake 还是升级转接。"
+        title="公开知识包先于自由发挥"
+      >
+        <DashboardSurfaceGrid columns={3}>
+          <DashboardSurface eyebrow="FAQ" title="高频标准答案" tone="accent">
             <ul className="list">
               {representative.knowledgePack.faq.map((item) => (
                 <li className="list-item" key={item.id}>
@@ -227,10 +296,9 @@ export default async function RepresentativePage({
                 </li>
               ))}
             </ul>
-          </article>
+          </DashboardSurface>
 
-          <article className="panel list-card">
-            <h3>Materials</h3>
+          <DashboardSurface eyebrow="Materials" title="可直接投递的公开材料">
             <ul className="list">
               {representative.knowledgePack.materials.map((item) => (
                 <li className="list-item" key={item.id}>
@@ -239,10 +307,9 @@ export default async function RepresentativePage({
                 </li>
               ))}
             </ul>
-          </article>
+          </DashboardSurface>
 
-          <article className="panel list-card">
-            <h3>Policies</h3>
+          <DashboardSurface eyebrow="Policies" title="合作边界与响应规则">
             <ul className="list">
               {representative.knowledgePack.policies.map((item) => (
                 <li className="list-item" key={item.id}>
@@ -251,23 +318,29 @@ export default async function RepresentativePage({
                 </li>
               ))}
             </ul>
-          </article>
-        </div>
-      </section>
+          </DashboardSurface>
+        </DashboardSurfaceGrid>
+      </DashboardPanelFrame>
 
-      <section className="section">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Plans</p>
-            <h2>四档访问深度，而不是 token 定价</h2>
-          </div>
-          <p className="section-copy">用户不该理解原始模型成本，只需要理解还能继续聊多深、能做哪些动作。</p>
-        </div>
-
-        <div className="plan-grid">
+      <DashboardPanelFrame
+        eyebrow="Plans"
+        id="plans"
+        summary="用户不该理解原始模型成本，只需要理解还能继续聊多深、能做哪些动作。"
+        title="四档访问深度，而不是 token 定价"
+      >
+        <DashboardSurfaceGrid>
           {representative.pricing.map((plan) => (
-            <article className="plan-card" key={plan.tier}>
-              <h3>{plan.name}</h3>
+            <DashboardSurface
+              eyebrow="Access layer"
+              key={plan.tier}
+              meta={
+                <span className={plan.includesPriorityHandoff ? "chip chip-safe" : "chip"}>
+                  {plan.tier}
+                </span>
+              }
+              title={plan.name}
+              tone={plan.tier === "deep_help" ? "accent" : "default"}
+            >
               <span className="price">{plan.stars} Stars</span>
               <p>{plan.summary}</p>
               <div className="chip-row">
@@ -288,17 +361,44 @@ export default async function RepresentativePage({
                   </a>
                 </div>
               ) : null}
-            </article>
+            </DashboardSurface>
           ))}
-        </div>
-      </section>
+        </DashboardSurfaceGrid>
+      </DashboardPanelFrame>
 
-      <section className="section">
-        <article className="panel">
-          <p className="panel-title">Human handoff copy</p>
-          <p>{representative.handoffPrompt}</p>
-        </article>
-      </section>
+      <DashboardPanelFrame
+        eyebrow="Human Handoff"
+        id="handoff"
+        summary="当公开代表接近边界时，转接不该是一句拒答，而应该是一条明确可预期的升级路径。"
+        title="主人最终接手的是高价值收件项，不是原始噪音"
+      >
+        <DashboardSurfaceGrid>
+          <DashboardSurface eyebrow="Handoff copy" title="对外升级说明" tone="accent">
+            <p>{representative.handoffPrompt}</p>
+          </DashboardSurface>
+
+          <DashboardSurface eyebrow="Entry points" title="继续对话的公开入口">
+            <p className="section-copy">
+              优先入口仍然是 Telegram 私聊；在群组场景下，代表只会按 {groupActivationLabels[representative.groupActivation]} 的策略保守响应。
+            </p>
+            <div className="button-row">
+              {telegramBotUsername ? (
+                <a
+                  className="button-primary"
+                  href={buildTelegramPlanLink(telegramBotUsername, representative.slug, "free")}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  Open representative
+                </a>
+              ) : null}
+              <Link className="button-secondary" href={`/dashboard?rep=${representative.slug}&view=memory`}>
+                Inspect memory policy
+              </Link>
+            </div>
+          </DashboardSurface>
+        </DashboardSurfaceGrid>
+      </DashboardPanelFrame>
     </main>
   );
 }

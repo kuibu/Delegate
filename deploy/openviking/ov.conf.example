@@ -1,0 +1,55 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 1933,
+    "root_api_key": ${OPENVIKING_ROOT_API_KEY_JSON},
+    "cors_origins": ["*"]
+  },
+  "storage": {
+    "workspace": "/app/data",
+    "vectordb": {
+      "name": "context",
+      "backend": "local",
+      "project": "default"
+    },
+    "agfs": {
+      "backend": "local",
+      "port": 1833,
+      "log_level": "warn",
+      "timeout": 10,
+      "retry_times": 3
+    }
+  },
+  "embedding": {
+    "dense": {
+      "provider": "${OPENVIKING_PROVIDER}",
+      "model": "${OPENVIKING_EMBEDDING_MODEL}",
+      "api_key": "${MODEL_API_KEY}",
+      "api_base": "${MODEL_API_BASE}",
+      "dimension": ${OPENVIKING_EMBEDDING_DIMENSION}
+    }
+  },
+  "vlm": {
+    "provider": "${OPENVIKING_PROVIDER}",
+    "model": "${OPENVIKING_VLM_MODEL}",
+    "api_key": "${MODEL_API_KEY}",
+    "api_base": "${MODEL_API_BASE}",
+    "temperature": 0.0,
+    "max_retries": 2,
+    "thinking": false
+  },
+  "auto_generate_l0": true,
+  "auto_generate_l1": true,
+  "default_search_mode": "thinking",
+  "default_search_limit": 3,
+  "enable_memory_decay": true,
+  "memory_decay_check_interval": 3600,
+  "log": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "output": "stdout",
+    "rotation": true,
+    "rotation_days": 3,
+    "rotation_interval": "midnight"
+  }
+}

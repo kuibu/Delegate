@@ -6,6 +6,10 @@ import {
   Prisma,
 } from "@prisma/client";
 
+import {
+  getRepresentativeOpenVikingOverviewMetrics,
+  maybeStoreHandoffPatternFromStatusChange,
+} from "./openviking";
 import { prisma } from "./prisma";
 
 export type DashboardOverviewSnapshot = {
@@ -24,6 +28,11 @@ export type DashboardOverviewSnapshot = {
     sponsorPoolCredit: number;
     balanceCredits: number;
   };
+  openVikingMetrics: Array<{
+    label: string;
+    value: string;
+    detail: string;
+  }>;
   handoffRequests: Array<{
     id: string;
     who: string;
@@ -98,32 +107,36 @@ export async function getDashboardOverviewSnapshot(
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
-    const [todayConversationCount, openHandoffCount, paidInvoiceCount] = await prisma.$transaction([
-      prisma.conversation.count({
-        where: {
-          representativeId: representative.id,
-          createdAt: {
-            gte: startOfToday,
-          },
-        },
-      }),
-      prisma.handoffRequest.count({
-        where: {
-          representativeId: representative.id,
-          status: {
-            in: [HandoffStatus.OPEN, HandoffStatus.REVIEWING],
-          },
-        },
-      }),
-      prisma.invoice.count({
-        where: {
-          representativeId: representative.id,
-          status: {
-            in: [InvoiceStatus.PAID, InvoiceStatus.FULFILLED],
-          },
-        },
-      }),
-    ]);
+    const [[todayConversationCount, openHandoffCount, paidInvoiceCount], openVikingMetrics] =
+      await Promise.all([
+        prisma.$transaction([
+          prisma.conversation.count({
+            where: {
+              representativeId: representative.id,
+              createdAt: {
+                gte: startOfToday,
+              },
+            },
+          }),
+          prisma.handoffRequest.count({
+            where: {
+              representativeId: representative.id,
+              status: {
+                in: [HandoffStatus.OPEN, HandoffStatus.REVIEWING],
+              },
+            },
+          }),
+          prisma.invoice.count({
+            where: {
+              representativeId: representative.id,
+              status: {
+                in: [InvoiceStatus.PAID, InvoiceStatus.FULFILLED],
+              },
+            },
+          }),
+        ]),
+        getRepresentativeOpenVikingOverviewMetrics(representative.slug),
+      ]);
 
     const wallet = representative.owner.wallet;
     const paidBreakdown = buildPaidBreakdown(representative.invoices);
@@ -138,7 +151,8 @@ export async function getDashboardOverviewSnapshot(
         {
           label: "今日新会话",
           value: String(todayConversationCount),
-          detail: todayConversationCount > 0 ? "已进入真实会话表统计" : "今天还没有新的 inbound 会话",
+          detail:
+            todayConversationCount > 0 ? "已进入真实会话表统计" : "今天还没有新的 inbound 会话",
         },
         {
           label: "已确认付费",
@@ -166,6 +180,40 @@ export async function getDashboardOverviewSnapshot(
         sponsorPoolCredit: wallet?.sponsorPoolCredit ?? 0,
         balanceCredits: wallet?.balanceCredits ?? 0,
       },
+      openVikingMetrics: openVikingMetrics
+        ? [
+            {
+              label: "OpenViking resources",
+              value: String(openVikingMetrics.resourcesSynced),
+              detail: "最近一次成功同步的公开资源数",
+            },
+            {
+              label: "Memories today",
+              value: String(openVikingMetrics.memoriesCapturedToday),
+              detail: "今天写入的公开安全记忆摘要",
+            },
+            {
+              label: "Commits today",
+              value: String(openVikingMetrics.sessionsCommittedToday),
+              detail: "今天完成的 OpenViking session commit 次数",
+            },
+            {
+              label: "Recalls today",
+              value: String(openVikingMetrics.recallsUsedToday),
+              detail: "今天真正注入回复链路的 recall 次数",
+            },
+            {
+              label: "Sync failures",
+              value: String(openVikingMetrics.syncFailures),
+              detail: "累计失败的 sync job 数量",
+            },
+            {
+              label: "Health",
+              value: openVikingMetrics.lastHealthCheckResult,
+              detail: "最近一次 OpenViking health check 结果",
+            },
+          ]
+        : [],
       handoffRequests: representative.handoffRequests.map((handoff) => ({
         id: handoff.id,
         who: handoff.contact.displayName ?? handoff.contact.username ?? handoff.contact.telegramUserId,
@@ -233,6 +281,12 @@ export async function setHandoffRequestStatus(params: {
       },
     });
 
+    await maybeStoreHandoffPatternFromStatusChange({
+      representativeSlug: params.representativeSlug,
+      handoffId: updated.id,
+      nextStatus: params.status,
+    });
+
     return {
       id: updated.id,
       who: updated.contact.displayName ?? updated.contact.username ?? updated.contact.telegramUserId,
@@ -274,6 +328,14 @@ function getOrCreateDemoFallbackOverviewSnapshot(): DashboardOverviewSnapshot {
         sponsorPoolCredit: 1200,
         balanceCredits: 240,
       },
+      openVikingMetrics: [
+        { label: "OpenViking resources", value: "5", detail: "最近一次公开知识同步写入了 5 份资源" },
+        { label: "Memories today", value: "3", detail: "今天写入了 3 条公开安全记忆摘要" },
+        { label: "Commits today", value: "4", detail: "今天完成了 4 次 session commit" },
+        { label: "Recalls today", value: "9", detail: "今天有 9 次 recall 被注入回复链路" },
+        { label: "Sync failures", value: "0", detail: "当前 demo 没有失败的 sync job" },
+        { label: "Health", value: "healthy", detail: "OpenViking demo health check 正常" },
+      ],
       handoffRequests: [
         {
           id: "demo-handoff-acme",
@@ -372,6 +434,7 @@ function cloneDashboardOverviewSnapshot(
     representative: { ...snapshot.representative },
     metrics: snapshot.metrics.map((metric) => ({ ...metric })),
     wallet: { ...snapshot.wallet },
+    openVikingMetrics: snapshot.openVikingMetrics.map((metric) => ({ ...metric })),
     handoffRequests: snapshot.handoffRequests.map((request) => ({ ...request })),
     recentInvoices: snapshot.recentInvoices.map((invoice) => ({ ...invoice })),
   };

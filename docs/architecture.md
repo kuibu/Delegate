@@ -41,10 +41,12 @@ That single decision drives the whole system:
 flowchart TD
     TG["Telegram Gateway Layer"] --> RT["Representative Runtime Layer"]
     RT --> KG["Public Knowledge + Skill Layer"]
+    RT --> MEM["OpenViking Context Layer"]
     RT --> BILL["Billing + Wallet Layer"]
     RT --> HAND["Handoff + Analytics Layer"]
     HAND --> WEB["Owner Dashboard"]
     KG --> WEB
+    MEM --> WEB
 ```
 
 ## Core runtime loop
@@ -59,7 +61,9 @@ flowchart TD
    - collect intake
    - offer paid continuation
    - create human handoff
-7. Every step emits an audit event for analytics and future owner review.
+7. Runtime can recall representative-scoped resources, contact-scoped public-safe memories, and representative agent patterns from OpenViking before composing the next answer.
+8. Runtime can commit safe session context after useful turns, collector completions, paid unlocks, and handoff outcomes.
+9. Every step emits an audit event for analytics and future owner review.
 
 ## Data model summary
 
@@ -75,6 +79,17 @@ Structured public content split into:
 - policies and boundaries
 - FAQ
 - materials and links
+
+### OpenViking context layer
+
+OpenViking augments, but does not replace, Postgres.
+
+- Postgres remains the source of truth for contacts, conversations, invoices, handoffs, and dashboard analytics.
+- OpenViking stores representative-scoped public resources plus public-safe long-term context.
+- Resource URIs live under `viking://resources/delegate/reps/{slug}/...`.
+- Contact memories live under representative-scoped `viking://user/memories/.../{slug}/{contactId}/...`.
+- Agent patterns live under representative-scoped `viking://agent/memories/.../{slug}/...`.
+- Delegate stores recall provenance and commit traces in Postgres for debugging and auditability.
 
 ### Conversation Contract
 
@@ -138,6 +153,14 @@ The boundary is a first-class product feature, not a prompt convention.
 - refunds
 - sending sensitive materials
 - priority human escalation
+
+## OpenViking operating rules
+
+- OpenViking runs as a standalone HTTP service in Docker for local and production-style development.
+- Delegate uses OpenViking's `Create -> Interact -> Commit` session lifecycle.
+- Default recall behavior is `L1` first, then `L2` only when the runtime needs more detail.
+- If OpenViking is unavailable, or model credentials are missing, Delegate falls back to deterministic policy behavior instead of failing open.
+- OpenViking never receives owner-private notes, secrets, wallet internals, or hidden admin context.
 
 ## Recommended stack
 

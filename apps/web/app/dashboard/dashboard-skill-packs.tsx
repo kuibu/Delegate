@@ -3,6 +3,13 @@
 import type { FormEvent } from "react";
 import { useEffect, useState, useTransition } from "react";
 
+import {
+  DashboardPanelFrame,
+  DashboardSignalStrip,
+  DashboardSurface,
+  DashboardSurfaceGrid,
+} from "../ui/control-plane";
+
 type DashboardSkillPack = {
   linkId: string;
   id: string;
@@ -66,6 +73,38 @@ export function DashboardSkillPacks({
       },
     );
   }, [representativeSlug]);
+
+  const enabledCount = snapshot?.skillPacks.filter((skillPack) => skillPack.enabled).length ?? 0;
+  const builtinCount =
+    snapshot?.skillPacks.filter((skillPack) => skillPack.source === "builtin").length ?? 0;
+  const clawHubCount =
+    snapshot?.skillPacks.filter((skillPack) => skillPack.source === "clawhub").length ?? 0;
+  const signalCards = snapshot
+    ? [
+        {
+          label: "Tracked packs",
+          value: `${snapshot.skillPacks.length}`,
+          detail: "当前代表已经纳入治理范围的技能包总数。",
+          tone: "accent" as const,
+        },
+        {
+          label: "Enabled",
+          value: `${enabledCount}`,
+          detail: "这些 pack 才真正进入代表运行时。",
+          tone: "safe" as const,
+        },
+        {
+          label: "ClawHub",
+          value: `${clawHubCount}`,
+          detail: "来自 ClawHub 的扩展来源，需要显式启用。",
+        },
+        {
+          label: "Search results",
+          value: `${results.length}`,
+          detail: "当前搜索面板返回的可安装候选。",
+        },
+      ]
+    : [];
 
   async function loadResults(nextQuery: string) {
     const searchParams = new URLSearchParams();
@@ -171,25 +210,29 @@ export function DashboardSkillPacks({
     });
   }
 
-  return (
-    <section className="section">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Skill Packs</p>
-          <h2>从 ClawHub 发现技能包，再按代表边界启用</h2>
-        </div>
-        <p className="section-copy">
-          这里只安装来源和元数据，不执行远程代码。每个 pack 都需要显式启用，才会进入代表运行时。
-        </p>
-      </div>
+  if (!snapshot) {
+    return (
+      <section className="section">
+        <article className="dashboard-highlight-card">
+          <p className="panel-title">Loading skills</p>
+          <h3>正在读取代表已安装的 skill packs 和 ClawHub 搜索结果。</h3>
+          <p>完成后会先展示当前代表已追踪的 pack，再给出扩展入口。</p>
+        </article>
+      </section>
+    );
+  }
 
-      {snapshot ? (
-        <div className="panel dashboard-summary">
-          <div>
-            <p className="panel-title">Representative</p>
-            <h3>{snapshot.representative.displayName}</h3>
-            <p>{snapshot.representative.roleSummary}</p>
-          </div>
+  return (
+    <DashboardPanelFrame
+      eyebrow="Skill Packs"
+      summary="这里只安装来源和元数据，不执行远程代码。每个 pack 都需要显式启用，才会进入代表运行时。"
+      title="从 ClawHub 发现技能包，再按代表边界启用"
+    >
+      <div className="dashboard-panel-hero">
+        <article className="dashboard-highlight-card dashboard-highlight-card-primary">
+          <p className="panel-title">Representative boundary</p>
+          <h3>{snapshot.representative.displayName}</h3>
+          <p>{snapshot.representative.roleSummary}</p>
           <div className="chip-row">
             <span className="chip">{snapshot.skillPacks.length} packs tracked</span>
             <span className="chip chip-safe">
@@ -199,17 +242,49 @@ export function DashboardSkillPacks({
               {snapshot.representative.humanInLoop ? "human in loop" : "ai only"}
             </span>
           </div>
-        </div>
-      ) : null}
+        </article>
+
+        <DashboardSignalStrip cards={signalCards} />
+      </div>
 
       {message ? <div className="status-banner status-success">{message}</div> : null}
       {error ? <div className="status-banner status-error">{error}</div> : null}
 
-      <div className="table-grid">
-        <article className="table-card">
-          <h3>Installed on This Representative</h3>
+      <DashboardSignalStrip
+        cards={[
+          {
+            label: "Built in",
+            value: `${builtinCount}`,
+            detail: "内建能力包，默认更稳定更可控。",
+          },
+          {
+            label: "Group activation",
+            value: groupActivationLabels[snapshot.representative.groupActivation],
+            detail: "群组里默认采用的谨慎触发策略。",
+            tone: "safe" as const,
+          },
+          {
+            label: "Public mode",
+            value: snapshot.representative.publicMode ? "Public" : "Private",
+            detail: "是否以公开代表模式对外开放。",
+          },
+          {
+            label: "Human loop",
+            value: snapshot.representative.humanInLoop ? "Enabled" : "Off",
+            detail: "高价值升级是否可以转入人工接手。",
+            tone: snapshot.representative.humanInLoop ? ("safe" as const) : "default",
+          },
+        ]}
+      />
+
+      <DashboardSurfaceGrid>
+        <DashboardSurface
+          eyebrow="Current workspace"
+          meta={<span className="chip chip-safe">{enabledCount} enabled</span>}
+          title="Installed on this representative"
+        >
           <div className="row-list">
-            {snapshot?.skillPacks.length ? (
+            {snapshot.skillPacks.length ? (
               snapshot.skillPacks.map((skillPack) => (
                 <div className="skill-row" key={skillPack.linkId}>
                   <div>
@@ -224,7 +299,7 @@ export function DashboardSkillPacks({
                       ) : null}
                     </div>
                   </div>
-                  <div className="button-row">
+                  <div className="button-row button-row-stretch">
                     {skillPack.sourceUrl ? (
                       <a className="button-secondary" href={skillPack.sourceUrl} target="_blank" rel="noreferrer">
                         View source
@@ -251,10 +326,14 @@ export function DashboardSkillPacks({
               <p className="muted">No tracked skill packs yet.</p>
             )}
           </div>
-        </article>
+        </DashboardSurface>
 
-        <article className="table-card">
-          <h3>Discover on ClawHub</h3>
+        <DashboardSurface
+          eyebrow="Expansion"
+          meta={<span className="chip">{results.length} results</span>}
+          title="Discover on ClawHub"
+        >
+
           <form className="search-form" onSubmit={handleSearchSubmit}>
             <input
               className="text-input"
@@ -286,7 +365,7 @@ export function DashboardSkillPacks({
                       {result.ownerHandle ? <span className="chip">@{result.ownerHandle}</span> : null}
                     </div>
                   </div>
-                  <div className="button-row">
+                  <div className="button-row button-row-stretch">
                     {result.sourceUrl ? (
                       <a className="button-secondary" href={result.sourceUrl} target="_blank" rel="noreferrer">
                         Open
@@ -311,9 +390,9 @@ export function DashboardSkillPacks({
               );
             })}
           </div>
-        </article>
-      </div>
-    </section>
+        </DashboardSurface>
+      </DashboardSurfaceGrid>
+    </DashboardPanelFrame>
   );
 }
 

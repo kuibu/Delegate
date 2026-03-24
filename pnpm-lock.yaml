@@ -42,6 +42,9 @@ importers:
       '@delegate/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@delegate/openviking':
+        specifier: workspace:*
+        version: link:../../packages/openviking
       '@delegate/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
@@ -60,6 +63,9 @@ importers:
       '@delegate/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@delegate/openviking':
+        specifier: workspace:*
+        version: link:../../packages/openviking
       '@delegate/registry':
         specifier: workspace:*
         version: link:../../packages/registry
@@ -80,6 +86,12 @@ importers:
         version: 4.3.6
 
   packages/domain:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+
+  packages/openviking:
     dependencies:
       zod:
         specifier: ^4.3.6
