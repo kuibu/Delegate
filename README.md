@@ -13,6 +13,7 @@ This repository starts with the narrowest useful wedge:
 ## What is in the repo right now
 
 - A monorepo foundation for three separate web surfaces plus a Telegram bot runtime
+- An isolated compute-plane foundation with a dedicated broker, capability policy package, and artifact storage topology
 - Shared domain models for representatives, contracts, plans, handoff, and action gates
 - ClawHub-backed skill registry primitives for future representative skill packs
 - OpenViking-backed public memory and context retrieval plumbing
@@ -26,9 +27,9 @@ This repository starts with the narrowest useful wedge:
 The core product decision is that the representative is its own public runtime, not a filtered window into the owner's private workspace. That means:
 
 - no private memory access
-- no local filesystem access
+- no direct host filesystem access
 - no owner account automation
-- no arbitrary tool execution
+- general-purpose `exec / read / write / process / browser` only through an isolated compute plane
 - only public knowledge and explicitly allowed skills
 - external skill registries must be source-auditable and non-privileged by default
 
@@ -39,10 +40,14 @@ This repo encodes that boundary in both docs and code through the `Action Gate` 
 ```text
 apps/
   bot/          Telegram runtime powered by grammY
+  compute-broker/ Isolated compute session broker (Phase A)
   reps/         Public representative pages
   site/         Marketing website
   web/          Owner dashboard control plane
 packages/
+  artifacts/    Artifact object-key and retention helpers
+  capability-policy/ Capability gate evaluation primitives
+  compute-protocol/ Typed compute broker payloads and schemas
   domain/       Shared schemas and demo representative data
   openviking/   Typed OpenViking client, URI rules, and safety filters
   registry/     External skill registry clients (ClawHub first)
@@ -77,6 +82,9 @@ pnpm registry:search:clawhub "qualification"
 - `site`
 - `dashboard`
 - `reps`
+- `compute-broker`
+- `artifact-store`
+- `artifact-store-init`
 - `openviking`
 - `openviking-console`
 - `bot` when `TELEGRAM_BOT_TOKEN` is set in your shell or `.env`
@@ -86,6 +94,9 @@ Local URLs:
 - website: `http://localhost:3000`
 - dashboard: `http://localhost:3001/dashboard?view=overview`
 - representative app: `http://localhost:3002/reps/lin-founder-rep`
+- compute broker: `http://localhost:4010/health`
+- artifact store API: `http://localhost:9000`
+- artifact store console: `http://localhost:9001`
 - OpenViking API: `http://localhost:1933`
 - OpenViking console docs: `http://localhost:8020/docs`
 
@@ -149,3 +160,12 @@ Provider settings:
 More detail lives in [docs/openviking-integration.md](./docs/openviking-integration.md).
 
 The forward-looking architecture decisions, including the isolated compute plane and capability-gate direction, live in [docs/delegate-architecture-decisions.md](./docs/delegate-architecture-decisions.md).
+The concrete Phase A compute-plane delivery checklist lives in [docs/v2-isolated-compute-plane-plan.md](./docs/v2-isolated-compute-plane-plan.md).
+
+Phase B currently ships one narrow execution slice:
+
+- `exec` only
+- Docker-isolated commands
+- policy-driven `allow / ask / deny`
+- stdout/stderr artifact persistence to MinIO
+- approval request creation for risky commands

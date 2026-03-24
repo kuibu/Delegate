@@ -1,3 +1,4 @@
+export * from "./compute";
 export * from "./openviking";
 export * from "./owner-dashboard";
 export * from "./prisma";

@@ -79,6 +79,100 @@ enum EventType {
   PAYMENT_REFUNDED
   HANDOFF_REQUESTED
   HANDOFF_RESOLVED
+  COMPUTE_SESSION_REQUESTED
+  COMPUTE_SESSION_STARTED
+  COMPUTE_SESSION_TERMINATED
+  TOOL_EXECUTION_REQUESTED
+  TOOL_EXECUTION_BLOCKED
+  TOOL_EXECUTION_COMPLETED
+  APPROVAL_REQUESTED
+  APPROVAL_RESOLVED
+  ARTIFACT_STORED
+  BILLING_LEDGER_RECORDED
+}
+
+enum CapabilityKind {
+  EXEC
+  READ
+  WRITE
+  PROCESS
+  BROWSER
+}
+
+enum PolicyDecision {
+  ALLOW
+  ASK
+  DENY
+}
+
+enum ComputeSessionStatus {
+  REQUESTED
+  STARTING
+  RUNNING
+  IDLE
+  STOPPING
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+enum ToolExecutionStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  BLOCKED
+  CANCELED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum ArtifactKind {
+  STDOUT
+  STDERR
+  FILE
+  ARCHIVE
+  SCREENSHOT
+  JSON
+  TRACE
+}
+
+enum LedgerEntryKind {
+  MODEL_USAGE
+  COMPUTE_MINUTES
+  STORAGE_BYTES
+  ARTIFACT_EGRESS
+  BROWSER_MINUTES
+  PLAN_DEBIT
+  SPONSOR_CREDIT
+}
+
+enum ComputeRequestedBy {
+  SYSTEM
+  OWNER
+  AUDIENCE
+}
+
+enum ComputeRunnerType {
+  DOCKER
+  VM
+}
+
+enum ComputeNetworkMode {
+  NO_NETWORK
+  ALLOWLIST
+  FULL
+}
+
+enum ComputeFilesystemMode {
+  WORKSPACE_ONLY
+  READ_ONLY_WORKSPACE
+  EPHEMERAL_FULL
 }
 
 model Owner {
@@ -137,17 +231,30 @@ model Representative {
   openvikingLastSyncStatus String?
   openvikingLastSyncError String?
   openvikingLastSyncItemCount Int?
+  computeEnabled     Boolean           @default(false)
+  computeDefaultPolicyMode PolicyDecision @default(ASK)
+  computeBaseImage   String            @default("debian:bookworm-slim")
+  computeMaxSessionMinutes Int         @default(15)
+  computeAutoApproveBudgetCents Int    @default(0)
+  computeArtifactRetentionDays Int     @default(14)
+  computeNetworkMode ComputeNetworkMode @default(NO_NETWORK)
+  computeFilesystemMode ComputeFilesystemMode @default(WORKSPACE_ONLY)
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
   owner             Owner             @relation(fields: [ownerId], references: [id])
+  capabilityProfiles CapabilityPolicyProfile[]
+  computeSessions   ComputeSession[]
   conversations     Conversation[]
   contextSyncJobs   RepresentativeContextSync[]
   contacts          Contact[]
   commitTraces      ConversationCommitTrace[]
   events            EventAudit[]
   handoffRequests   HandoffRequest[]
+  artifacts         Artifact[]
+  approvalRequests  ApprovalRequest[]
   intakeSubmissions IntakeSubmission[]
   invoices          Invoice[]
+  ledgerEntries     LedgerEntry[]
   knowledgePack     KnowledgePack?
   memoryRecords     OpenVikingMemoryRecord[]
   pricingPlans      PricingPlan[]
@@ -238,7 +345,13 @@ model Contact {
   intakeSubmissions IntakeSubmission[]
   invoices         Invoice[]
   memoryRecords    OpenVikingMemoryRecord[]
+  computeSessions  ComputeSession[]
+  artifacts        Artifact[]
+  approvalRequests ApprovalRequest[]
+  ledgerEntries    LedgerEntry[]
   recallTraces     ConversationRecallTrace[]
+  computeTrustTier String?
+  lastApprovalGrantedAt DateTime?
 
   @@unique([representativeId, telegramUserId])
 }
@@ -254,20 +367,27 @@ model Conversation {
   freeRepliesUsed  Int               @default(0)
   passUnlockedAt   DateTime?
   deepHelpUnlockedAt DateTime?
+  activeComputeSessionId String?
+  computeBudgetRemainingCredits Int?
+  lastComputeAt    DateTime?
   openvikingSessionId String?        @unique
   openvikingSessionKey String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   lastMessageAt    DateTime          @default(now())
   commitTraces     ConversationCommitTrace[]
+  computeSessions  ComputeSession[]
   representative   Representative    @relation(fields: [representativeId], references: [id])
   contact          Contact           @relation(fields: [contactId], references: [id])
   recallTraces     ConversationRecallTrace[]
   turns            ConversationTurn[]
   events           EventAudit[]
+  artifacts        Artifact[]
+  approvalRequests ApprovalRequest[]
   handoffRequests  HandoffRequest[]
   intakeSubmissions IntakeSubmission[]
   invoices         Invoice[]
+  ledgerEntries    LedgerEntry[]
 
   @@unique([representativeId, telegramChatId, contactId])
 }
@@ -365,6 +485,178 @@ model EventAudit {
   representative   Representative  @relation(fields: [representativeId], references: [id])
   contact          Contact?        @relation(fields: [contactId], references: [id])
   conversation     Conversation?   @relation(fields: [conversationId], references: [id])
+}
+
+model CapabilityPolicyProfile {
+  id                 String                @id @default(cuid())
+  representativeId   String
+  name               String
+  isDefault          Boolean               @default(true)
+  defaultDecision    PolicyDecision        @default(ASK)
+  maxSessionMinutes  Int                   @default(15)
+  maxParallelSessions Int                  @default(1)
+  maxCommandSeconds  Int                   @default(30)
+  artifactRetentionDays Int                @default(14)
+  networkMode        ComputeNetworkMode    @default(NO_NETWORK)
+  filesystemMode     ComputeFilesystemMode @default(WORKSPACE_ONLY)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  representative     Representative        @relation(fields: [representativeId], references: [id])
+  computeSessions    ComputeSession[]
+  rules              CapabilityPolicyRule[]
+
+  @@index([representativeId, isDefault])
+}
+
+model CapabilityPolicyRule {
+  id                   String                @id @default(cuid())
+  profileId            String
+  capability           CapabilityKind
+  decision             PolicyDecision
+  commandPattern       String?
+  pathPattern          String?
+  domainPattern        String?
+  maxCostCents         Int?
+  requiresPaidPlan     Boolean               @default(false)
+  requiresHumanApproval Boolean              @default(false)
+  priority             Int                   @default(0)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  profile              CapabilityPolicyProfile @relation(fields: [profileId], references: [id])
+
+  @@index([profileId, capability, priority])
+}
+
+model ComputeSession {
+  id                 String               @id @default(cuid())
+  representativeId   String
+  contactId          String?
+  conversationId     String?
+  policyProfileId    String?
+  requestedBy        ComputeRequestedBy
+  status             ComputeSessionStatus @default(REQUESTED)
+  containerId        String?
+  runnerType         ComputeRunnerType    @default(DOCKER)
+  baseImage          String
+  leaseTokenHash     String               @unique
+  startedAt          DateTime?
+  lastHeartbeatAt    DateTime?
+  expiresAt          DateTime?
+  endedAt            DateTime?
+  failureReason      String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  representative     Representative       @relation(fields: [representativeId], references: [id])
+  contact            Contact?             @relation(fields: [contactId], references: [id])
+  conversation       Conversation?        @relation(fields: [conversationId], references: [id])
+  policyProfile      CapabilityPolicyProfile? @relation(fields: [policyProfileId], references: [id])
+  toolExecutions     ToolExecution[]
+  artifacts          Artifact[]
+  approvalRequests   ApprovalRequest[]
+  ledgerEntries      LedgerEntry[]
+
+  @@index([representativeId, status, createdAt])
+  @@index([contactId, createdAt])
+  @@index([conversationId, createdAt])
+}
+
+model ToolExecution {
+  id               String              @id @default(cuid())
+  sessionId        String
+  capability       CapabilityKind
+  status           ToolExecutionStatus @default(QUEUED)
+  requestedCommand String?
+  requestedPath    String?
+  workingDirectory String?
+  policyDecision   PolicyDecision?
+  approvalRequestId String?
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  exitCode         Int?
+  cpuMs            Int?
+  wallMs           Int?
+  bytesRead        Int?
+  bytesWritten     Int?
+  createdAt        DateTime            @default(now())
+  session          ComputeSession      @relation(fields: [sessionId], references: [id])
+  artifacts        Artifact[]
+
+  @@index([sessionId, createdAt])
+  @@index([status, createdAt])
+}
+
+model ApprovalRequest {
+  id                    String         @id @default(cuid())
+  representativeId      String
+  contactId             String?
+  conversationId        String?
+  sessionId             String?
+  toolExecutionId       String?        @unique
+  status                ApprovalStatus @default(PENDING)
+  reason                String
+  requestedActionSummary String
+  riskSummary           String
+  requestedAt           DateTime       @default(now())
+  resolvedAt            DateTime?
+  resolvedBy            String?
+  representative        Representative @relation(fields: [representativeId], references: [id])
+  contact               Contact?       @relation(fields: [contactId], references: [id])
+  conversation          Conversation?  @relation(fields: [conversationId], references: [id])
+  session               ComputeSession? @relation(fields: [sessionId], references: [id])
+
+  @@index([representativeId, status, requestedAt])
+}
+
+model Artifact {
+  id               String          @id @default(cuid())
+  representativeId String
+  contactId        String?
+  conversationId   String?
+  sessionId        String?
+  toolExecutionId  String?
+  kind             ArtifactKind
+  bucket           String
+  objectKey        String
+  mimeType         String
+  sizeBytes        Int
+  sha256           String
+  retentionUntil   DateTime?
+  summary          String?
+  createdAt        DateTime        @default(now())
+  representative   Representative  @relation(fields: [representativeId], references: [id])
+  contact          Contact?        @relation(fields: [contactId], references: [id])
+  conversation     Conversation?   @relation(fields: [conversationId], references: [id])
+  session          ComputeSession? @relation(fields: [sessionId], references: [id])
+  toolExecution    ToolExecution?  @relation(fields: [toolExecutionId], references: [id])
+
+  @@index([representativeId, createdAt])
+  @@index([sessionId, createdAt])
+}
+
+model LedgerEntry {
+  id               String          @id @default(cuid())
+  representativeId String
+  contactId        String?
+  conversationId   String?
+  sessionId        String?
+  toolExecutionId  String?
+  invoiceId        String?
+  kind             LedgerEntryKind
+  quantity         Float
+  unit             String
+  costCents        Int             @default(0)
+  creditDelta      Int             @default(0)
+  currency         String          @default("USD")
+  notes            String?
+  createdAt        DateTime        @default(now())
+  representative   Representative  @relation(fields: [representativeId], references: [id])
+  contact          Contact?        @relation(fields: [contactId], references: [id])
+  conversation     Conversation?   @relation(fields: [conversationId], references: [id])
+  session          ComputeSession? @relation(fields: [sessionId], references: [id])
+
+  @@index([representativeId, createdAt])
+  @@index([sessionId, createdAt])
+  @@index([kind, createdAt])
 }
 
 model RepresentativeContextSync {

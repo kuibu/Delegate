@@ -55,6 +55,10 @@ type PricingPlan = {
   includesPriorityHandoff: boolean;
 };
 
+type ComputePolicyMode = "allow" | "ask" | "deny";
+type ComputeNetworkMode = "no_network" | "allowlist" | "full";
+type ComputeFilesystemMode = "workspace_only" | "read_only_workspace" | "ephemeral_full";
+
 type RepresentativeSetupSnapshot = {
   id: string;
   slug: string;
@@ -80,6 +84,16 @@ type RepresentativeSetupSnapshot = {
     policies: KnowledgeDocument[];
   };
   handoffPrompt: string;
+  compute: {
+    enabled: boolean;
+    defaultPolicyMode: ComputePolicyMode;
+    baseImage: string;
+    maxSessionMinutes: number;
+    autoApproveBudgetCents: number;
+    artifactRetentionDays: number;
+    networkMode: ComputeNetworkMode;
+    filesystemMode: ComputeFilesystemMode;
+  };
 };
 
 type RepresentativeOpenVikingSnapshot = {
@@ -185,7 +199,49 @@ function getPricingTierLabels(locale: Locale): Record<PricingPlan["tier"], strin
   };
 }
 
-type SetupSectionId = "basics" | "contract" | "pricing" | "knowledge" | "memory";
+function getComputePolicyModeLabels(locale: Locale): Record<ComputePolicyMode, string> {
+  return locale === "zh"
+    ? {
+        allow: "默认放行",
+        ask: "默认审批",
+        deny: "默认拒绝",
+      }
+    : {
+        allow: "allow by default",
+        ask: "ask by default",
+        deny: "deny by default",
+      };
+}
+
+function getComputeNetworkModeLabels(locale: Locale): Record<ComputeNetworkMode, string> {
+  return locale === "zh"
+    ? {
+        no_network: "无网络",
+        allowlist: "Allowlist",
+        full: "完全联网",
+      }
+    : {
+        no_network: "no network",
+        allowlist: "allowlist",
+        full: "full network",
+      };
+}
+
+function getComputeFilesystemModeLabels(locale: Locale): Record<ComputeFilesystemMode, string> {
+  return locale === "zh"
+    ? {
+        workspace_only: "仅 workspace",
+        read_only_workspace: "只读 workspace",
+        ephemeral_full: "完全临时环境",
+      }
+    : {
+        workspace_only: "workspace only",
+        read_only_workspace: "read-only workspace",
+        ephemeral_full: "ephemeral full sandbox",
+      };
+}
+
+type SetupSectionId = "basics" | "contract" | "pricing" | "knowledge" | "compute" | "memory";
 
 const setupSections: Array<{
   id: SetupSectionId;
@@ -218,8 +274,14 @@ const setupSections: Array<{
     blurb: "整理 FAQ、资料和政策，让 bot 先读结构化公开知识。",
   },
   {
-    id: "memory",
+    id: "compute",
     step: "05",
+    label: "Compute",
+    blurb: "配置隔离 compute plane 的预算、镜像和执行边界。",
+  },
+  {
+    id: "memory",
+    step: "06",
     label: "Memory",
     blurb: "最后再配置 OpenViking 这层进阶记忆和资源同步。",
   },
@@ -256,8 +318,14 @@ const setupSectionsEn: Array<{
     blurb: "Organize FAQ, materials, and policy before the bot improvises.",
   },
   {
-    id: "memory",
+    id: "compute",
     step: "05",
+    label: "Compute",
+    blurb: "Set the budget, image, and execution boundary for the isolated compute plane.",
+  },
+  {
+    id: "memory",
+    step: "06",
     label: "Memory",
     blurb: "Configure advanced OpenViking memory and sync last.",
   },
@@ -272,6 +340,9 @@ export function DashboardRepresentativeSetup({
 }) {
   const t = pickCopy(locale, setupCopy);
   const localizedGroupActivationLabels = getGroupActivationLabels(locale);
+  const localizedComputePolicyModeLabels = getComputePolicyModeLabels(locale);
+  const localizedComputeNetworkModeLabels = getComputeNetworkModeLabels(locale);
+  const localizedComputeFilesystemModeLabels = getComputeFilesystemModeLabels(locale);
   const intentOptions = getIntentOptions(locale);
   const materialKindOptions = getMaterialKindOptions(locale);
   const pricingTierLabels = getPricingTierLabels(locale);
@@ -489,6 +560,9 @@ export function DashboardRepresentativeSetup({
     openVikingDraft,
     locale,
     localizedGroupActivationLabels,
+    localizedComputePolicyModeLabels,
+    localizedComputeNetworkModeLabels,
+    localizedComputeFilesystemModeLabels,
   );
 
   return (
@@ -1017,6 +1091,198 @@ export function DashboardRepresentativeSetup({
           </DashboardSurface>
         ) : null}
 
+        {activeSection === "compute" ? (
+          <DashboardSurface
+            eyebrow={t.computeEyebrow}
+            meta={
+              <div className="chip-row">
+                <span
+                  className={draft.compute.enabled ? "chip chip-safe" : "chip chip-danger"}
+                >
+                  {draft.compute.enabled ? "enabled" : "disabled"}
+                </span>
+                <span className="chip">
+                  {localizedComputePolicyModeLabels[draft.compute.defaultPolicyMode]}
+                </span>
+                <span className="chip">
+                  {localizedComputeNetworkModeLabels[draft.compute.networkMode]}
+                </span>
+              </div>
+            }
+            title={t.computeTitle}
+            tone="accent"
+          >
+            <div className="setup-grid">
+              <div className="field-stack field-span-full">
+                <span>{t.togglesLabel}</span>
+                <div className="toggle-grid">
+                  <label className="toggle-row">
+                    <input
+                      checked={draft.compute.enabled}
+                      onChange={(event) =>
+                        updateDraft((value) => ({
+                          ...value,
+                          compute: {
+                            ...value.compute,
+                            enabled: event.target.checked,
+                          },
+                        }))
+                      }
+                      type="checkbox"
+                    />
+                    <span>{t.enableCompute}</span>
+                  </label>
+                </div>
+              </div>
+
+              <label className="field-stack">
+                <span>{t.defaultPolicyMode}</span>
+                <select
+                  className="text-input"
+                  onChange={(event) =>
+                    updateDraft((value) => ({
+                      ...value,
+                      compute: {
+                        ...value.compute,
+                        defaultPolicyMode: event.target.value as ComputePolicyMode,
+                      },
+                    }))
+                  }
+                  value={draft.compute.defaultPolicyMode}
+                >
+                  {Object.entries(localizedComputePolicyModeLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-stack">
+                <span>{t.baseImage}</span>
+                <input
+                  className="text-input"
+                  onChange={(event) =>
+                    updateDraft((value) => ({
+                      ...value,
+                      compute: {
+                        ...value.compute,
+                        baseImage: event.target.value,
+                      },
+                    }))
+                  }
+                  value={draft.compute.baseImage}
+                />
+              </label>
+
+              <label className="field-stack">
+                <span>{t.maxSessionMinutes}</span>
+                <input
+                  className="text-input"
+                  min={5}
+                  max={240}
+                  onChange={(event) =>
+                    updateDraft((value) => ({
+                      ...value,
+                      compute: {
+                        ...value.compute,
+                        maxSessionMinutes: Number(event.target.value || 5),
+                      },
+                    }))
+                  }
+                  type="number"
+                  value={draft.compute.maxSessionMinutes}
+                />
+              </label>
+
+              <label className="field-stack">
+                <span>{t.autoApproveBudget}</span>
+                <input
+                  className="text-input"
+                  min={0}
+                  onChange={(event) =>
+                    updateDraft((value) => ({
+                      ...value,
+                      compute: {
+                        ...value.compute,
+                        autoApproveBudgetCents: Number(event.target.value || 0),
+                      },
+                    }))
+                  }
+                  type="number"
+                  value={draft.compute.autoApproveBudgetCents}
+                />
+              </label>
+
+              <label className="field-stack">
+                <span>{t.artifactRetentionDays}</span>
+                <input
+                  className="text-input"
+                  min={1}
+                  max={365}
+                  onChange={(event) =>
+                    updateDraft((value) => ({
+                      ...value,
+                      compute: {
+                        ...value.compute,
+                        artifactRetentionDays: Number(event.target.value || 1),
+                      },
+                    }))
+                  }
+                  type="number"
+                  value={draft.compute.artifactRetentionDays}
+                />
+              </label>
+
+              <label className="field-stack">
+                <span>{t.networkMode}</span>
+                <select
+                  className="text-input"
+                  onChange={(event) =>
+                    updateDraft((value) => ({
+                      ...value,
+                      compute: {
+                        ...value.compute,
+                        networkMode: event.target.value as ComputeNetworkMode,
+                      },
+                    }))
+                  }
+                  value={draft.compute.networkMode}
+                >
+                  {Object.entries(localizedComputeNetworkModeLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-stack">
+                <span>{t.filesystemMode}</span>
+                <select
+                  className="text-input"
+                  onChange={(event) =>
+                    updateDraft((value) => ({
+                      ...value,
+                      compute: {
+                        ...value.compute,
+                        filesystemMode: event.target.value as ComputeFilesystemMode,
+                      },
+                    }))
+                  }
+                  value={draft.compute.filesystemMode}
+                >
+                  {Object.entries(localizedComputeFilesystemModeLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </DashboardSurface>
+        ) : null}
+
         {activeSection === "memory" && openVikingDraft ? (
           <DashboardSurface
             eyebrow={t.memoryEyebrow}
@@ -1354,6 +1620,16 @@ const setupCopy = {
     identitySummary: "Identity summary",
     materialsTitle: "Materials",
     policiesTitle: "Policies",
+    computeEyebrow: "Isolated Compute",
+    computeTitle: "把一般性能力放进默认隔离的 compute plane，再配置默认策略与预算。",
+    enableCompute: "Enable compute",
+    defaultPolicyMode: "Default policy mode",
+    baseImage: "Base image",
+    maxSessionMinutes: "Max session minutes",
+    autoApproveBudget: "Auto-approve budget (USD cents)",
+    artifactRetentionDays: "Artifact retention (days)",
+    networkMode: "Network mode",
+    filesystemMode: "Filesystem mode",
     memoryEyebrow: "OpenViking Memory",
     memoryTitle: "代表级公开记忆层：资源同步、recall、capture 和可观测性。",
     documentEditor: {
@@ -1457,6 +1733,16 @@ const setupCopy = {
     identitySummary: "Identity summary",
     materialsTitle: "Materials",
     policiesTitle: "Policies",
+    computeEyebrow: "Isolated compute",
+    computeTitle: "Move general-purpose capability into a sandboxed compute plane, then tune the default policy and budget.",
+    enableCompute: "Enable compute",
+    defaultPolicyMode: "Default policy mode",
+    baseImage: "Base image",
+    maxSessionMinutes: "Max session minutes",
+    autoApproveBudget: "Auto-approve budget (USD cents)",
+    artifactRetentionDays: "Artifact retention (days)",
+    networkMode: "Network mode",
+    filesystemMode: "Filesystem mode",
     memoryEyebrow: "OpenViking Memory",
     memoryTitle: "Representative-level public memory: sync, recall, capture, and observability.",
     documentEditor: {
@@ -1505,6 +1791,9 @@ function buildSetupStepCards(
   openVikingDraft: RepresentativeOpenVikingSnapshot | null,
   locale: Locale,
   groupActivationLabels: Record<GroupActivation, string>,
+  computePolicyModeLabels: Record<ComputePolicyMode, string>,
+  computeNetworkModeLabels: Record<ComputeNetworkMode, string>,
+  computeFilesystemModeLabels: Record<ComputeFilesystemMode, string>,
 ): Array<{
   label: string;
   value: string;
@@ -1642,6 +1931,57 @@ function buildSetupStepCards(
           label: "Identity",
           value: draft.knowledgePack.identitySummary ? "Ready" : "Missing",
           detail: "代表自我介绍是否已经足够清晰。",
+        },
+      ];
+    case "compute":
+      if (locale === "en") {
+        return [
+          {
+            label: "Access",
+            value: draft.compute.enabled ? "Enabled" : "Disabled",
+            detail: "Whether this representative can request isolated compute sessions.",
+            tone: "accent",
+          },
+          {
+            label: "Default policy",
+            value: computePolicyModeLabels[draft.compute.defaultPolicyMode],
+            detail: "How unmatched capabilities are handled by default.",
+          },
+          {
+            label: "Network",
+            value: computeNetworkModeLabels[draft.compute.networkMode],
+            detail: "Default network boundary for each compute session.",
+            tone: "safe",
+          },
+          {
+            label: "Filesystem",
+            value: computeFilesystemModeLabels[draft.compute.filesystemMode],
+            detail: "How much of the workspace the runner can see.",
+          },
+        ];
+      }
+      return [
+        {
+          label: "Access",
+          value: draft.compute.enabled ? "Enabled" : "Disabled",
+          detail: "这个代表是否允许申请隔离 compute session。",
+          tone: "accent",
+        },
+        {
+          label: "Default policy",
+          value: computePolicyModeLabels[draft.compute.defaultPolicyMode],
+          detail: "没有命中具体规则时的默认处置方式。",
+        },
+        {
+          label: "Network",
+          value: computeNetworkModeLabels[draft.compute.networkMode],
+          detail: "每个 compute session 默认采用的网络边界。",
+          tone: "safe",
+        },
+        {
+          label: "Filesystem",
+          value: computeFilesystemModeLabels[draft.compute.filesystemMode],
+          detail: "runner 默认可以看到多少文件系统范围。",
         },
       ];
     case "memory":
@@ -1889,6 +2229,9 @@ function cloneSnapshot(snapshot: RepresentativeSetupSnapshot): RepresentativeSet
       faq: snapshot.knowledgePack.faq.map((item) => ({ ...item })),
       materials: snapshot.knowledgePack.materials.map((item) => ({ ...item })),
       policies: snapshot.knowledgePack.policies.map((item) => ({ ...item })),
+    },
+    compute: {
+      ...snapshot.compute,
     },
   };
 }

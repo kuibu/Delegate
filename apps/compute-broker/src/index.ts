@@ -1,0 +1,189 @@
+import "dotenv/config";
+
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { URL } from "node:url";
+import {
+  brokerHealthSchema,
+  resolveApprovalRequestSchema,
+  terminateComputeSessionRequestSchema,
+} from "@delegate/compute-protocol";
+import { computeBrokerConfig } from "./config";
+import {
+  executeTool,
+  listSessionApprovals,
+  listSessionArtifacts,
+  resolveApproval,
+} from "./executions";
+import {
+  createComputeSession,
+  getComputeSession,
+  SessionError,
+  terminateComputeSession,
+} from "./sessions";
+
+const server = createServer(async (request, response) => {
+  try {
+    const method = request.method ?? "GET";
+    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+
+    if ((method === "GET" || method === "HEAD") && url.pathname === "/health") {
+      return sendJson(
+        response,
+        200,
+        brokerHealthSchema.parse({
+          status: "ok",
+          service: "compute-broker",
+          runnerType: computeBrokerConfig.runnerType,
+          artifactBucket: computeBrokerConfig.artifactStore.bucket,
+        }),
+      );
+    }
+
+    if (!isAuthorized(request.headers.authorization)) {
+      return sendJson(response, 401, {
+        error: "unauthorized",
+      });
+    }
+
+    if (method === "POST" && url.pathname === "/internal/compute/sessions") {
+      const body = await readJson(request);
+      const created = await createComputeSession(body);
+      return sendJson(response, 201, created);
+    }
+
+    const segments = url.pathname.split("/").filter(Boolean);
+
+    if (
+      method === "POST" &&
+      segments[0] === "internal" &&
+      segments[1] === "compute" &&
+      segments[2] === "sessions" &&
+      segments[3] &&
+      segments[4] === "executions"
+    ) {
+      const sessionId = segments[3];
+      const body = await readJson(request);
+      const result = await executeTool(sessionId, body);
+      return sendJson(response, 200, result);
+    }
+
+    if (
+      method === "POST" &&
+      segments[0] === "internal" &&
+      segments[1] === "compute" &&
+      segments[2] === "approvals" &&
+      segments[3] &&
+      segments[4] === "resolve"
+    ) {
+      const approvalId = segments[3];
+      const body = resolveApprovalRequestSchema.parse(await readJson(request));
+      const result = await resolveApproval(approvalId, body);
+      return sendJson(response, 200, result);
+    }
+
+    if (
+      method === "GET" &&
+      segments[0] === "internal" &&
+      segments[1] === "compute" &&
+      segments[2] === "sessions" &&
+      segments[3] &&
+      segments[4] === "artifacts"
+    ) {
+      const sessionId = segments[3];
+      const artifacts = await listSessionArtifacts(sessionId);
+      return sendJson(response, 200, artifacts);
+    }
+
+    if (
+      method === "GET" &&
+      segments[0] === "internal" &&
+      segments[1] === "compute" &&
+      segments[2] === "sessions" &&
+      segments[3] &&
+      segments[4] === "approvals"
+    ) {
+      const sessionId = segments[3];
+      const approvals = await listSessionApprovals(sessionId);
+      return sendJson(response, 200, approvals);
+    }
+
+    if (
+      method === "GET" &&
+      segments[0] === "internal" &&
+      segments[1] === "compute" &&
+      segments[2] === "sessions" &&
+      segments[3] &&
+      segments.length === 4
+    ) {
+      const sessionId = segments[3];
+      if (!sessionId) {
+        return sendJson(response, 400, { error: "missing_session_id" });
+      }
+      const session = await getComputeSession(sessionId);
+      return sendJson(response, 200, { session });
+    }
+
+    if (method === "POST" && url.pathname.endsWith("/terminate")) {
+      const sessionId = segments.at(-2);
+      if (!sessionId) {
+        return sendJson(response, 400, { error: "missing_session_id" });
+      }
+      const body = terminateComputeSessionRequestSchema.parse(await readJson(request));
+      const session = await terminateComputeSession(sessionId, body.reason);
+      return sendJson(response, 200, { session });
+    }
+
+    return sendJson(response, 404, { error: "not_found" });
+  } catch (error) {
+    if (error instanceof SessionError) {
+      return sendJson(response, error.statusCode, { error: error.message });
+    }
+
+    if (error instanceof Error) {
+      return sendJson(response, 400, { error: error.message });
+    }
+
+    return sendJson(response, 500, { error: "internal_error" });
+  }
+});
+
+server.listen(computeBrokerConfig.port, "0.0.0.0", () => {
+  console.log(`compute-broker listening on http://0.0.0.0:${computeBrokerConfig.port}`);
+});
+
+function isAuthorized(authorizationHeader: string | undefined): boolean {
+  if (!authorizationHeader?.startsWith("Bearer ")) {
+    return false;
+  }
+
+  return authorizationHeader.slice("Bearer ".length) === computeBrokerConfig.internalToken;
+}
+
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  if (!chunks.length) {
+    return {};
+  }
+
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function sendJson(
+  response: ServerResponse<IncomingMessage>,
+  statusCode: number,
+  payload: unknown,
+) {
+  response.statusCode = statusCode;
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  if (response.req.method === "HEAD") {
+    response.end();
+    return;
+  }
+
+  response.end(JSON.stringify(payload));
+}

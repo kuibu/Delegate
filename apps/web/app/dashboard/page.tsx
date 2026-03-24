@@ -11,6 +11,7 @@ import {
 } from "@delegate/web-ui";
 
 import { DashboardOverview } from "./dashboard-overview";
+import { DashboardCompute } from "./dashboard-compute";
 import { DashboardOpenViking } from "./dashboard-openviking";
 import { DashboardRepresentativeDirectory } from "./dashboard-representative-directory";
 import { DashboardRepresentativeSetup } from "./dashboard-representative-setup";
@@ -161,6 +162,7 @@ export default async function DashboardPage({
               <DashboardRepresentativeSetup locale={locale} representativeSlug={activeSlug} />
             ) : null}
             {activeView === "skills" ? <DashboardSkillPacks locale={locale} representativeSlug={activeSlug} /> : null}
+            {activeView === "compute" ? <DashboardCompute locale={locale} representativeSlug={activeSlug} /> : null}
             {activeView === "memory" ? <DashboardOpenViking locale={locale} representativeSlug={activeSlug} /> : null}
           </div>
         </section>
@@ -169,10 +171,16 @@ export default async function DashboardPage({
   );
 }
 
-type DashboardView = "overview" | "setup" | "skills" | "memory";
+type DashboardView = "overview" | "setup" | "skills" | "compute" | "memory";
 
 function isDashboardView(value: string | undefined): value is DashboardView {
-  return value === "overview" || value === "setup" || value === "skills" || value === "memory";
+  return (
+    value === "overview" ||
+    value === "setup" ||
+    value === "skills" ||
+    value === "compute" ||
+    value === "memory"
+  );
 }
 
 function resolveServiceUrl(envValue: string | undefined, fallback: string): string {
@@ -243,6 +251,15 @@ const dashboardCopy: Record<
         stageCopy: "技能页应该帮助你判断哪些能力值得启用，而不是把代表重新变回一个可随意执行代码的 agent。",
       },
       {
+        id: "compute",
+        label: "计算",
+        eyebrow: "隔离",
+        blurb: "审批、session、artifact 与 compute 成本控制。",
+        shortLabel: "计算",
+        stageTitle: "把 exec、browser 和 artifact 放进隔离 compute plane，而不是让公开代表直接接触宿主机。",
+        stageCopy: "这页不是终端替身，而是受 policy、approval 和 billing 约束的计算控制台。先决定哪些请求值得批准，再观察 session 和 artifact 是否处在受控边界内。",
+      },
+      {
         id: "memory",
         label: "记忆",
         eyebrow: "进阶",
@@ -297,6 +314,15 @@ const dashboardCopy: Record<
         shortLabel: "Skills",
         stageTitle: "Enable only the skill packs that improve conversion without widening the runtime trust boundary.",
         stageCopy: "The skill lane should help an owner make controlled capability decisions, not turn the representative back into an open-ended tool runner.",
+      },
+      {
+        id: "compute",
+        label: "Compute",
+        eyebrow: "Isolated",
+        blurb: "Approvals, sessions, artifacts, and compute cost control.",
+        shortLabel: "Compute",
+        stageTitle: "Put exec, browser, and artifacts inside an isolated compute plane instead of exposing the host.",
+        stageCopy: "This is not a terminal replacement. It is a governed compute lane shaped by policy, approval, and billing. Approve the right requests first, then inspect sessions and artifacts.",
       },
       {
         id: "memory",

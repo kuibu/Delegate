@@ -3,12 +3,16 @@ import "dotenv/config";
 import { demoRepresentative } from "@delegate/domain";
 import {
   AudienceRole,
+  ComputeFilesystemMode,
+  ComputeNetworkMode,
   Channel,
   ContactStage,
   EventType,
   GroupActivation,
   HandoffStatus,
   InvoiceStatus,
+  Prisma,
+  PolicyDecision,
   PricingPlanType,
   PrismaClient,
   SkillPackSource,
@@ -150,6 +154,14 @@ export async function seedDatabase(client: PrismaClient = prisma): Promise<void>
         handoffPrompt: demoRepresentative.handoffPrompt,
         allowedSkills: demoRepresentative.skills,
         actionGate: demoRepresentative.actionGate,
+        computeEnabled: false,
+        computeDefaultPolicyMode: PolicyDecision.ASK,
+        computeBaseImage: "debian:bookworm-slim",
+        computeMaxSessionMinutes: 15,
+        computeAutoApproveBudgetCents: 0,
+        computeArtifactRetentionDays: 14,
+        computeNetworkMode: ComputeNetworkMode.NO_NETWORK,
+        computeFilesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
       },
       update: {
         ownerId: DEMO_OWNER_ID,
@@ -169,8 +181,18 @@ export async function seedDatabase(client: PrismaClient = prisma): Promise<void>
         handoffPrompt: demoRepresentative.handoffPrompt,
         allowedSkills: demoRepresentative.skills,
         actionGate: demoRepresentative.actionGate,
+        computeEnabled: false,
+        computeDefaultPolicyMode: PolicyDecision.ASK,
+        computeBaseImage: "debian:bookworm-slim",
+        computeMaxSessionMinutes: 15,
+        computeAutoApproveBudgetCents: 0,
+        computeArtifactRetentionDays: 14,
+        computeNetworkMode: ComputeNetworkMode.NO_NETWORK,
+        computeFilesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
       },
     });
+
+    const defaultPolicyProfile = await upsertDefaultCapabilityPolicyProfile(tx, representative.id);
 
     await tx.knowledgePack.upsert({
       where: { representativeId: representative.id },
@@ -742,7 +764,112 @@ export async function seedDatabase(client: PrismaClient = prisma): Promise<void>
     if (!skillPackIdsBySlug.has("founder-core")) {
       throw new Error("Expected founder-core skill pack to be seeded.");
     }
+
+    if (!defaultPolicyProfile.id) {
+      throw new Error("Expected default compute policy profile to be seeded.");
+    }
   });
+}
+
+async function upsertDefaultCapabilityPolicyProfile(
+  tx: Prisma.TransactionClient,
+  representativeId: string,
+) {
+  const existingProfile = await tx.capabilityPolicyProfile.findFirst({
+    where: {
+      representativeId,
+      isDefault: true,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  const profileId = existingProfile?.id ?? `cap_profile_${representativeId}`;
+
+  const profile = existingProfile
+    ? await tx.capabilityPolicyProfile.update({
+        where: { id: profileId },
+        data: {
+          name: "Default Compute Guardrail",
+          isDefault: true,
+          defaultDecision: PolicyDecision.ASK,
+          maxSessionMinutes: 15,
+          maxParallelSessions: 1,
+          maxCommandSeconds: 30,
+          artifactRetentionDays: 14,
+          networkMode: ComputeNetworkMode.NO_NETWORK,
+          filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
+        },
+      })
+    : await tx.capabilityPolicyProfile.create({
+        data: {
+          id: profileId,
+          representativeId,
+          name: "Default Compute Guardrail",
+          isDefault: true,
+          defaultDecision: PolicyDecision.ASK,
+          maxSessionMinutes: 15,
+          maxParallelSessions: 1,
+          maxCommandSeconds: 30,
+          artifactRetentionDays: 14,
+          networkMode: ComputeNetworkMode.NO_NETWORK,
+          filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
+        },
+      });
+
+  await tx.capabilityPolicyRule.deleteMany({
+    where: {
+      profileId: profile.id,
+    },
+  });
+
+  await tx.capabilityPolicyRule.createMany({
+    data: [
+      {
+        id: `${profile.id}_exec_safe_readonly`,
+        profileId: profile.id,
+        capability: "EXEC",
+        decision: "ALLOW",
+        commandPattern: "^(pwd|ls|cat|find|grep|head|tail)(?:\\s+[A-Za-z0-9_./:@=-]+)*\\s*$",
+        priority: 100,
+        requiresPaidPlan: false,
+        requiresHumanApproval: false,
+      },
+      {
+        id: `${profile.id}_read_workspace`,
+        profileId: profile.id,
+        capability: "READ",
+        decision: "ALLOW",
+        pathPattern: "^/workspace(?:/|$)",
+        priority: 90,
+        requiresPaidPlan: false,
+        requiresHumanApproval: false,
+      },
+      {
+        id: `${profile.id}_write_workspace`,
+        profileId: profile.id,
+        capability: "WRITE",
+        decision: "ASK",
+        pathPattern: "^/workspace(?:/|$)",
+        priority: 80,
+        requiresPaidPlan: false,
+        requiresHumanApproval: true,
+      },
+      {
+        id: `${profile.id}_browser_review`,
+        profileId: profile.id,
+        capability: "BROWSER",
+        decision: "ASK",
+        domainPattern: ".*",
+        priority: 70,
+        requiresPaidPlan: true,
+        requiresHumanApproval: true,
+      },
+    ],
+  });
+
+  return profile;
 }
 
 function mapGroupActivationToDb(value: (typeof demoRepresentative.groupActivation)): GroupActivation {

@@ -20,7 +20,15 @@ import {
   resolveOpenVikingEnv,
 } from "@delegate/openviking";
 import {
+  computeFilesystemModeSchema,
+  computeNetworkModeSchema,
+  policyDecisionSchema,
+} from "@delegate/compute-protocol";
+import {
+  ComputeFilesystemMode,
+  ComputeNetworkMode,
   GroupActivation,
+  PolicyDecision,
   PricingPlanType,
   SkillPackSource,
   type Prisma,
@@ -87,6 +95,16 @@ const representativeSetupUpdateSchema = z.object({
     materials: z.array(editableKnowledgeDocumentSchema),
     policies: z.array(editableKnowledgeDocumentSchema),
   }),
+  compute: z.object({
+    enabled: z.boolean(),
+    defaultPolicyMode: policyDecisionSchema,
+    baseImage: z.string().trim().min(1),
+    maxSessionMinutes: z.number().int().min(5).max(240),
+    autoApproveBudgetCents: z.number().int().min(0).max(100000),
+    artifactRetentionDays: z.number().int().min(1).max(365),
+    networkMode: computeNetworkModeSchema,
+    filesystemMode: computeFilesystemModeSchema,
+  }),
 });
 
 const representativeCreateSchema = z.object({
@@ -123,6 +141,16 @@ export type RepresentativeSetupSnapshot = Pick<
 > & {
   publicMode: boolean;
   humanInLoop: boolean;
+  compute: {
+    enabled: boolean;
+    defaultPolicyMode: "allow" | "ask" | "deny";
+    baseImage: string;
+    maxSessionMinutes: number;
+    autoApproveBudgetCents: number;
+    artifactRetentionDays: number;
+    networkMode: "no_network" | "allowlist" | "full";
+    filesystemMode: "workspace_only" | "read_only_workspace" | "ephemeral_full";
+  };
 };
 
 export type RepresentativeSetupUpdateInput = z.infer<typeof representativeSetupUpdateSchema>;
@@ -137,6 +165,17 @@ export type RepresentativeDirectoryItem = {
 };
 
 let demoFallbackSetupSnapshot: RepresentativeSetupSnapshot | null = null;
+
+const defaultComputeSetup: RepresentativeSetupSnapshot["compute"] = {
+  enabled: false,
+  defaultPolicyMode: "ask",
+  baseImage: "debian:bookworm-slim",
+  maxSessionMinutes: 15,
+  autoApproveBudgetCents: 0,
+  artifactRetentionDays: 14,
+  networkMode: "no_network",
+  filesystemMode: "workspace_only",
+};
 
 export async function listRepresentativeDirectoryItems(): Promise<RepresentativeDirectoryItem[]> {
   if (!process.env.DATABASE_URL?.trim()) {
@@ -229,8 +268,18 @@ export async function createRepresentative(
           openvikingRecallLimit: 6,
           openvikingRecallScoreThreshold: 0.01,
           openvikingTargetUri: buildRepresentativeResourceRootUri(slug),
+          computeEnabled: template.compute.enabled,
+          computeDefaultPolicyMode: mapPolicyDecisionToDb(template.compute.defaultPolicyMode),
+          computeBaseImage: template.compute.baseImage,
+          computeMaxSessionMinutes: template.compute.maxSessionMinutes,
+          computeAutoApproveBudgetCents: template.compute.autoApproveBudgetCents,
+          computeArtifactRetentionDays: template.compute.artifactRetentionDays,
+          computeNetworkMode: mapComputeNetworkModeToDb(template.compute.networkMode),
+          computeFilesystemMode: mapComputeFilesystemModeToDb(template.compute.filesystemMode),
         },
       });
+
+      await upsertDefaultCapabilityPolicyProfile(tx, representative.id, template.compute);
 
       await tx.wallet.create({
         data: {
@@ -403,8 +452,18 @@ export async function updateRepresentativeSetup(params: {
           paywalledIntents: input.contract.paywalledIntents,
           handoffWindowHours: input.contract.handoffWindowHours,
           handoffPrompt: input.handoffPrompt,
+          computeEnabled: input.compute.enabled,
+          computeDefaultPolicyMode: mapPolicyDecisionToDb(input.compute.defaultPolicyMode),
+          computeBaseImage: input.compute.baseImage,
+          computeMaxSessionMinutes: input.compute.maxSessionMinutes,
+          computeAutoApproveBudgetCents: input.compute.autoApproveBudgetCents,
+          computeArtifactRetentionDays: input.compute.artifactRetentionDays,
+          computeNetworkMode: mapComputeNetworkModeToDb(input.compute.networkMode),
+          computeFilesystemMode: mapComputeFilesystemModeToDb(input.compute.filesystemMode),
         },
       });
+
+      await upsertDefaultCapabilityPolicyProfile(tx, representative.id, input.compute);
 
       await tx.knowledgePack.upsert({
         where: { representativeId: representative.id },
@@ -508,6 +567,16 @@ function serializeRepresentativeSetup(
     pricing: mergePricingPlans(representative.pricingPlans),
     handoffPrompt: representative.handoffPrompt || demoRepresentative.handoffPrompt,
     actionGate: parseActionGate(representative.actionGate),
+    compute: {
+      enabled: representative.computeEnabled,
+      defaultPolicyMode: mapPolicyDecisionFromDb(representative.computeDefaultPolicyMode),
+      baseImage: representative.computeBaseImage,
+      maxSessionMinutes: representative.computeMaxSessionMinutes,
+      autoApproveBudgetCents: representative.computeAutoApproveBudgetCents,
+      artifactRetentionDays: representative.computeArtifactRetentionDays,
+      networkMode: mapComputeNetworkModeFromDb(representative.computeNetworkMode),
+      filesystemMode: mapComputeFilesystemModeFromDb(representative.computeFilesystemMode),
+    },
   };
 }
 
@@ -540,6 +609,7 @@ function getOrCreateDemoFallbackSetupSnapshot(): RepresentativeSetupSnapshot {
       pricing: demoRepresentative.pricing.map((plan) => ({ ...plan })),
       handoffPrompt: demoRepresentative.handoffPrompt,
       actionGate: { ...demoRepresentative.actionGate },
+      compute: { ...defaultComputeSetup },
     };
   }
 
@@ -573,6 +643,9 @@ function updateDemoFallbackRepresentativeSetup(
     materials: normalizeKnowledgeDocuments(input.knowledgePack.materials, "materials"),
     policies: normalizeKnowledgeDocuments(input.knowledgePack.policies, "policies"),
   };
+  snapshot.compute = {
+    ...input.compute,
+  };
 
   return cloneRepresentativeSetupSnapshot(snapshot);
 }
@@ -598,6 +671,7 @@ function cloneRepresentativeSetupSnapshot(
     },
     pricing: snapshot.pricing.map((plan) => ({ ...plan })),
     actionGate: { ...snapshot.actionGate },
+    compute: { ...snapshot.compute },
   };
 }
 
@@ -683,7 +757,107 @@ function buildRepresentativeTemplate(params: {
     pricing: demoRepresentative.pricing.map((plan) => ({ ...plan })),
     handoffPrompt: `${safeOwnerName} 的真人评估入口已经开启。请留下你的身份、需求摘要、预算区间、目标时间，以及为什么需要真人接手。`,
     actionGate: { ...demoRepresentative.actionGate },
+    compute: { ...defaultComputeSetup },
   };
+}
+
+async function upsertDefaultCapabilityPolicyProfile(
+  tx: Prisma.TransactionClient,
+  representativeId: string,
+  compute: RepresentativeSetupSnapshot["compute"],
+) {
+  const existingProfile = await tx.capabilityPolicyProfile.findFirst({
+    where: {
+      representativeId,
+      isDefault: true,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  const profileId = existingProfile?.id ?? `cap_profile_${representativeId}`;
+  const profile = existingProfile
+    ? await tx.capabilityPolicyProfile.update({
+        where: { id: profileId },
+        data: {
+          name: "Default Compute Guardrail",
+          isDefault: true,
+          defaultDecision: mapPolicyDecisionToDb(compute.defaultPolicyMode),
+          maxSessionMinutes: compute.maxSessionMinutes,
+          maxParallelSessions: 1,
+          maxCommandSeconds: 30,
+          artifactRetentionDays: compute.artifactRetentionDays,
+          networkMode: mapComputeNetworkModeToDb(compute.networkMode),
+          filesystemMode: mapComputeFilesystemModeToDb(compute.filesystemMode),
+        },
+      })
+    : await tx.capabilityPolicyProfile.create({
+        data: {
+          id: profileId,
+          representativeId,
+          name: "Default Compute Guardrail",
+          isDefault: true,
+          defaultDecision: mapPolicyDecisionToDb(compute.defaultPolicyMode),
+          maxSessionMinutes: compute.maxSessionMinutes,
+          maxParallelSessions: 1,
+          maxCommandSeconds: 30,
+          artifactRetentionDays: compute.artifactRetentionDays,
+          networkMode: mapComputeNetworkModeToDb(compute.networkMode),
+          filesystemMode: mapComputeFilesystemModeToDb(compute.filesystemMode),
+        },
+      });
+
+  await tx.capabilityPolicyRule.deleteMany({
+    where: {
+      profileId: profile.id,
+    },
+  });
+
+  await tx.capabilityPolicyRule.createMany({
+    data: [
+      {
+        id: `${profile.id}_exec_safe_readonly`,
+        profileId: profile.id,
+        capability: "EXEC",
+        decision: "ALLOW",
+        commandPattern: "^(pwd|ls|cat|find|grep|head|tail)(?:\\s+[A-Za-z0-9_./:@=-]+)*\\s*$",
+        priority: 100,
+        requiresPaidPlan: false,
+        requiresHumanApproval: false,
+      },
+      {
+        id: `${profile.id}_read_workspace`,
+        profileId: profile.id,
+        capability: "READ",
+        decision: "ALLOW",
+        pathPattern: "^/workspace(?:/|$)",
+        priority: 90,
+        requiresPaidPlan: false,
+        requiresHumanApproval: false,
+      },
+      {
+        id: `${profile.id}_write_workspace`,
+        profileId: profile.id,
+        capability: "WRITE",
+        decision: "ASK",
+        pathPattern: "^/workspace(?:/|$)",
+        priority: 80,
+        requiresPaidPlan: false,
+        requiresHumanApproval: true,
+      },
+      {
+        id: `${profile.id}_browser_review`,
+        profileId: profile.id,
+        capability: "BROWSER",
+        decision: "ASK",
+        domainPattern: ".*",
+        priority: 70,
+        requiresPaidPlan: true,
+        requiresHumanApproval: true,
+      },
+    ],
+  });
 }
 
 function buildDemoDirectoryItem(): RepresentativeDirectoryItem {
@@ -879,6 +1053,32 @@ function mapSkillPackSourceToDb(value: "builtin" | "owner_upload" | "clawhub"): 
     default:
       return SkillPackSource.BUILTIN;
   }
+}
+
+function mapPolicyDecisionToDb(value: RepresentativeSetupSnapshot["compute"]["defaultPolicyMode"]) {
+  return value.toUpperCase() as PolicyDecision;
+}
+
+function mapPolicyDecisionFromDb(value: PolicyDecision) {
+  return value.toLowerCase() as RepresentativeSetupSnapshot["compute"]["defaultPolicyMode"];
+}
+
+function mapComputeNetworkModeToDb(value: RepresentativeSetupSnapshot["compute"]["networkMode"]) {
+  return value.toUpperCase() as ComputeNetworkMode;
+}
+
+function mapComputeNetworkModeFromDb(value: ComputeNetworkMode) {
+  return value.toLowerCase() as RepresentativeSetupSnapshot["compute"]["networkMode"];
+}
+
+function mapComputeFilesystemModeToDb(
+  value: RepresentativeSetupSnapshot["compute"]["filesystemMode"],
+) {
+  return value.toUpperCase() as ComputeFilesystemMode;
+}
+
+function mapComputeFilesystemModeFromDb(value: ComputeFilesystemMode) {
+  return value.toLowerCase() as RepresentativeSetupSnapshot["compute"]["filesystemMode"];
 }
 
 function mapPricingPlanTypeFromDb(value: PricingPlanType): PricingPlan["tier"] {

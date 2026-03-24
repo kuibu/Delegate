@@ -1,0 +1,284 @@
+import {
+  approvalRequestSnapshotSchema,
+  artifactSnapshotSchema,
+  capabilityPolicyProfileSchema,
+  computeSessionSnapshotSchema,
+  toolExecutionSnapshotSchema,
+  type ComputeFilesystemMode,
+  type ComputeNetworkMode,
+} from "@delegate/compute-protocol";
+
+export function mapRequestedByToDb(value: "system" | "owner" | "audience") {
+  return value.toUpperCase() as "SYSTEM" | "OWNER" | "AUDIENCE";
+}
+
+export function mapRequestedByFromDb(value: string) {
+  return value.toLowerCase() as "system" | "owner" | "audience";
+}
+
+export function mapRunnerTypeToDb(value: "docker" | "vm") {
+  return value.toUpperCase() as "DOCKER" | "VM";
+}
+
+export function mapRunnerTypeFromDb(value: string) {
+  return value.toLowerCase() as "docker" | "vm";
+}
+
+export function mapSessionStatusFromDb(value: string) {
+  return value.toLowerCase() as
+    | "requested"
+    | "starting"
+    | "running"
+    | "idle"
+    | "stopping"
+    | "completed"
+    | "failed"
+    | "expired";
+}
+
+export function mapToolStatusFromDb(value: string) {
+  return value.toLowerCase() as
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "blocked"
+    | "canceled";
+}
+
+export function mapApprovalStatusFromDb(value: string) {
+  return value.toLowerCase() as "pending" | "approved" | "rejected" | "expired";
+}
+
+export function mapCapabilityFromDb(value: string) {
+  return value.toLowerCase() as "exec" | "read" | "write" | "process" | "browser";
+}
+
+export function mapPolicyDecisionToDb(value: "allow" | "ask" | "deny") {
+  return value.toUpperCase() as "ALLOW" | "ASK" | "DENY";
+}
+
+export function mapPolicyDecisionFromDb(value: string) {
+  return value.toLowerCase() as "allow" | "ask" | "deny";
+}
+
+export function mapArtifactKindFromDb(value: string) {
+  return value.toLowerCase() as
+    | "stdout"
+    | "stderr"
+    | "file"
+    | "archive"
+    | "screenshot"
+    | "json"
+    | "trace";
+}
+
+export function mapNetworkModeFromDb(value: string) {
+  return value.toLowerCase() as ComputeNetworkMode;
+}
+
+export function mapFilesystemModeFromDb(value: string) {
+  return value.toLowerCase() as ComputeFilesystemMode;
+}
+
+export function serializeSession(session: {
+  id: string;
+  representativeId: string;
+  contactId: string | null;
+  conversationId: string | null;
+  policyProfileId: string | null;
+  requestedBy: string;
+  status: string;
+  runnerType: string;
+  baseImage: string;
+  containerId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  startedAt: Date | null;
+  lastHeartbeatAt: Date | null;
+  expiresAt: Date | null;
+  endedAt: Date | null;
+  failureReason: string | null;
+}) {
+  return computeSessionSnapshotSchema.parse({
+    id: session.id,
+    representativeId: session.representativeId,
+    contactId: session.contactId,
+    conversationId: session.conversationId,
+    policyProfileId: session.policyProfileId,
+    requestedBy: mapRequestedByFromDb(session.requestedBy),
+    status: mapSessionStatusFromDb(session.status),
+    runnerType: mapRunnerTypeFromDb(session.runnerType),
+    baseImage: session.baseImage,
+    containerId: session.containerId,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: session.updatedAt.toISOString(),
+    startedAt: session.startedAt?.toISOString() ?? null,
+    lastHeartbeatAt: session.lastHeartbeatAt?.toISOString() ?? null,
+    expiresAt: session.expiresAt?.toISOString() ?? null,
+    endedAt: session.endedAt?.toISOString() ?? null,
+    failureReason: session.failureReason,
+  });
+}
+
+export function serializeExecution(execution: {
+  id: string;
+  sessionId: string;
+  capability: string;
+  status: string;
+  requestedCommand: string | null;
+  requestedPath: string | null;
+  workingDirectory: string | null;
+  policyDecision: string | null;
+  approvalRequestId: string | null;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  exitCode: number | null;
+  cpuMs: number | null;
+  wallMs: number | null;
+  bytesRead: number | null;
+  bytesWritten: number | null;
+  createdAt: Date;
+}) {
+  return toolExecutionSnapshotSchema.parse({
+    id: execution.id,
+    sessionId: execution.sessionId,
+    capability: mapCapabilityFromDb(execution.capability),
+    status: mapToolStatusFromDb(execution.status),
+    requestedCommand: execution.requestedCommand,
+    requestedPath: execution.requestedPath,
+    workingDirectory: execution.workingDirectory,
+    policyDecision: execution.policyDecision
+      ? mapPolicyDecisionFromDb(execution.policyDecision)
+      : null,
+    approvalRequestId: execution.approvalRequestId,
+    startedAt: execution.startedAt?.toISOString() ?? null,
+    finishedAt: execution.finishedAt?.toISOString() ?? null,
+    exitCode: execution.exitCode,
+    cpuMs: execution.cpuMs,
+    wallMs: execution.wallMs,
+    bytesRead: execution.bytesRead,
+    bytesWritten: execution.bytesWritten,
+    createdAt: execution.createdAt.toISOString(),
+  });
+}
+
+export function serializeApprovalRequest(approvalRequest: {
+  id: string;
+  representativeId: string;
+  contactId: string | null;
+  conversationId: string | null;
+  sessionId: string | null;
+  toolExecutionId: string | null;
+  status: string;
+  reason: string;
+  requestedActionSummary: string;
+  riskSummary: string;
+  requestedAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: string | null;
+}) {
+  return approvalRequestSnapshotSchema.parse({
+    id: approvalRequest.id,
+    representativeId: approvalRequest.representativeId,
+    contactId: approvalRequest.contactId,
+    conversationId: approvalRequest.conversationId,
+    sessionId: approvalRequest.sessionId,
+    toolExecutionId: approvalRequest.toolExecutionId,
+    status: mapApprovalStatusFromDb(approvalRequest.status),
+    reason: approvalRequest.reason,
+    requestedActionSummary: approvalRequest.requestedActionSummary,
+    riskSummary: approvalRequest.riskSummary,
+    requestedAt: approvalRequest.requestedAt.toISOString(),
+    resolvedAt: approvalRequest.resolvedAt?.toISOString() ?? null,
+    resolvedBy: approvalRequest.resolvedBy,
+  });
+}
+
+export function serializeArtifact(artifact: {
+  id: string;
+  representativeId: string;
+  contactId: string | null;
+  conversationId: string | null;
+  sessionId: string | null;
+  toolExecutionId: string | null;
+  kind: string;
+  bucket: string;
+  objectKey: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  retentionUntil: Date | null;
+  summary: string | null;
+  createdAt: Date;
+}) {
+  return artifactSnapshotSchema.parse({
+    id: artifact.id,
+    representativeId: artifact.representativeId,
+    contactId: artifact.contactId,
+    conversationId: artifact.conversationId,
+    sessionId: artifact.sessionId,
+    toolExecutionId: artifact.toolExecutionId,
+    kind: mapArtifactKindFromDb(artifact.kind),
+    bucket: artifact.bucket,
+    objectKey: artifact.objectKey,
+    mimeType: artifact.mimeType,
+    sizeBytes: artifact.sizeBytes,
+    sha256: artifact.sha256,
+    retentionUntil: artifact.retentionUntil?.toISOString() ?? null,
+    summary: artifact.summary,
+    createdAt: artifact.createdAt.toISOString(),
+  });
+}
+
+export function serializeCapabilityProfile(profile: {
+  id: string;
+  representativeId: string;
+  name: string;
+  isDefault: boolean;
+  defaultDecision: string;
+  maxSessionMinutes: number;
+  maxParallelSessions: number;
+  maxCommandSeconds: number;
+  artifactRetentionDays: number;
+  networkMode: string;
+  filesystemMode: string;
+  rules: Array<{
+    id: string;
+    capability: string;
+    decision: string;
+    commandPattern: string | null;
+    pathPattern: string | null;
+    domainPattern: string | null;
+    maxCostCents: number | null;
+    requiresPaidPlan: boolean;
+    requiresHumanApproval: boolean;
+    priority: number;
+  }>;
+}) {
+  return capabilityPolicyProfileSchema.parse({
+    id: profile.id,
+    representativeId: profile.representativeId,
+    name: profile.name,
+    isDefault: profile.isDefault,
+    defaultDecision: mapPolicyDecisionFromDb(profile.defaultDecision),
+    maxSessionMinutes: profile.maxSessionMinutes,
+    maxParallelSessions: profile.maxParallelSessions,
+    maxCommandSeconds: profile.maxCommandSeconds,
+    artifactRetentionDays: profile.artifactRetentionDays,
+    networkMode: mapNetworkModeFromDb(profile.networkMode),
+    filesystemMode: mapFilesystemModeFromDb(profile.filesystemMode),
+    rules: profile.rules.map((rule) => ({
+      id: rule.id,
+      capability: mapCapabilityFromDb(rule.capability),
+      decision: mapPolicyDecisionFromDb(rule.decision),
+      ...(rule.commandPattern ? { commandPattern: rule.commandPattern } : {}),
+      ...(rule.pathPattern ? { pathPattern: rule.pathPattern } : {}),
+      ...(rule.domainPattern ? { domainPattern: rule.domainPattern } : {}),
+      ...(typeof rule.maxCostCents === "number" ? { maxCostCents: rule.maxCostCents } : {}),
+      requiresPaidPlan: rule.requiresPaidPlan,
+      requiresHumanApproval: rule.requiresHumanApproval,
+      priority: rule.priority,
+    })),
+  });
+}

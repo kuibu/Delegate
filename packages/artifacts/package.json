@@ -1,17 +1,16 @@
 {
-  "name": "@delegate/web-data",
+  "name": "@delegate/artifacts",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
   "dependencies": {
     "@delegate/compute-protocol": "workspace:*",
-    "@delegate/domain": "workspace:*",
-    "@delegate/openviking": "workspace:*",
-    "@delegate/registry": "workspace:*",
-    "@prisma/client": "^6.19.2",
     "zod": "^4.3.6"
   }
 }

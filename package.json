@@ -11,6 +11,7 @@
     "dev:dashboard": "pnpm --filter @delegate/dashboard dev",
     "dev:reps": "pnpm --filter @delegate/reps dev",
     "dev:bot": "pnpm --filter @delegate/bot dev",
+    "dev:compute-broker": "pnpm --filter @delegate/compute-broker dev",
     "registry:search:clawhub": "tsx scripts/clawhub-search.ts",
     "docker:up": "docker compose up -d --build",
     "docker:up:db": "docker compose up -d postgres",

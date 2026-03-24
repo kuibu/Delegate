@@ -9,6 +9,16 @@ x-app-environment: &app-environment
   TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
   TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
   DEMO_REP_SLUG: ${DEMO_REP_SLUG:-lin-founder-rep}
+  COMPUTE_BROKER_URL: ${COMPUTE_BROKER_URL:-http://compute-broker:4010}
+  COMPUTE_BROKER_INTERNAL_TOKEN: ${COMPUTE_BROKER_INTERNAL_TOKEN:-delegate-local-compute-token}
+  COMPUTE_RUNNER_TYPE: ${COMPUTE_RUNNER_TYPE:-docker}
+  COMPUTE_RUNNER_IMAGE: ${COMPUTE_RUNNER_IMAGE:-debian:bookworm-slim}
+  COMPUTE_HOST_WORKSPACE_ROOT: ${COMPUTE_HOST_WORKSPACE_ROOT:-/Users/a/repos/Delegate}
+  ARTIFACT_STORE_ENDPOINT: ${ARTIFACT_STORE_ENDPOINT:-http://artifact-store:9000}
+  ARTIFACT_STORE_BUCKET: ${ARTIFACT_STORE_BUCKET:-delegate-compute-artifacts}
+  ARTIFACT_STORE_ACCESS_KEY: ${ARTIFACT_STORE_ACCESS_KEY:-delegate}
+  ARTIFACT_STORE_SECRET_KEY: ${ARTIFACT_STORE_SECRET_KEY:-delegate-secret-key}
+  ARTIFACT_STORE_REGION: ${ARTIFACT_STORE_REGION:-us-east-1}
   OPENVIKING_ENABLED: ${OPENVIKING_ENABLED:-true}
   OPENVIKING_BASE_URL: ${OPENVIKING_BASE_URL:-http://openviking:1933}
   OPENVIKING_API_KEY: ${OPENVIKING_API_KEY:-delegate-local-root-key}
@@ -56,6 +66,42 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+
+  artifact-store:
+    image: minio/minio:latest
+    container_name: delegate-artifact-store
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${ARTIFACT_STORE_ACCESS_KEY:-delegate}
+      MINIO_ROOT_PASSWORD: ${ARTIFACT_STORE_SECRET_KEY:-delegate-secret-key}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - delegate-artifact-store-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  artifact-store-init:
+    image: minio/mc:latest
+    entrypoint: ["/bin/sh", "-c"]
+    depends_on:
+      artifact-store:
+        condition: service_healthy
+    environment:
+      ARTIFACT_STORE_ENDPOINT: ${ARTIFACT_STORE_ENDPOINT:-http://artifact-store:9000}
+      ARTIFACT_STORE_BUCKET: ${ARTIFACT_STORE_BUCKET:-delegate-compute-artifacts}
+      ARTIFACT_STORE_ACCESS_KEY: ${ARTIFACT_STORE_ACCESS_KEY:-delegate}
+      ARTIFACT_STORE_SECRET_KEY: ${ARTIFACT_STORE_SECRET_KEY:-delegate-secret-key}
+    volumes:
+      - ./deploy/minio:/opt/delegate-minio:ro
+    command: /bin/sh /opt/delegate-minio/bootstrap.sh
+    restart: "no"
 
   migrate:
     <<: *app-service
@@ -149,6 +195,34 @@ services:
         tail -f /dev/null;
       fi"
 
+  compute-broker:
+    <<: *app-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      artifact-store-init:
+        condition: service_completed_successfully
+    command: >
+      sh -lc "pnpm --filter @delegate/compute-broker start"
+    ports:
+      - "4010:4010"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4010/health').then((res)=>{if(!res.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   openviking:
     image: ghcr.io/volcengine/openviking:main
     container_name: delegate-openviking
@@ -199,5 +273,6 @@ services:
 
 volumes:
   delegate-postgres-data:
+  delegate-artifact-store-data:
   openviking-config:
   openviking-data:

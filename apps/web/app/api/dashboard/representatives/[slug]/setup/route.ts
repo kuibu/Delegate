@@ -161,6 +161,61 @@ export async function PATCH(
                 materials: [],
                 policies: [],
               },
+        compute:
+          typeof body.compute === "object" && body.compute
+            ? {
+                enabled: Boolean((body.compute as { enabled?: boolean }).enabled),
+                defaultPolicyMode:
+                  (body.compute as { defaultPolicyMode?: string }).defaultPolicyMode === "allow" ||
+                  (body.compute as { defaultPolicyMode?: string }).defaultPolicyMode === "deny" ||
+                  (body.compute as { defaultPolicyMode?: string }).defaultPolicyMode === "ask"
+                    ? (body.compute as { defaultPolicyMode: "allow" | "ask" | "deny" })
+                        .defaultPolicyMode
+                    : "ask",
+                baseImage: String((body.compute as { baseImage?: string }).baseImage ?? ""),
+                maxSessionMinutes: Number(
+                  (body.compute as { maxSessionMinutes?: number }).maxSessionMinutes ?? 15,
+                ),
+                autoApproveBudgetCents: Number(
+                  (body.compute as { autoApproveBudgetCents?: number }).autoApproveBudgetCents ??
+                    0,
+                ),
+                artifactRetentionDays: Number(
+                  (body.compute as { artifactRetentionDays?: number }).artifactRetentionDays ??
+                    14,
+                ),
+                networkMode:
+                  (body.compute as { networkMode?: string }).networkMode === "allowlist" ||
+                  (body.compute as { networkMode?: string }).networkMode === "full" ||
+                  (body.compute as { networkMode?: string }).networkMode === "no_network"
+                    ? (body.compute as { networkMode: "no_network" | "allowlist" | "full" })
+                        .networkMode
+                    : "no_network",
+                filesystemMode:
+                  (body.compute as { filesystemMode?: string }).filesystemMode ===
+                    "read_only_workspace" ||
+                  (body.compute as { filesystemMode?: string }).filesystemMode ===
+                    "ephemeral_full" ||
+                  (body.compute as { filesystemMode?: string }).filesystemMode ===
+                    "workspace_only"
+                    ? (body.compute as {
+                        filesystemMode:
+                          | "workspace_only"
+                          | "read_only_workspace"
+                          | "ephemeral_full";
+                      }).filesystemMode
+                    : "workspace_only",
+              }
+            : {
+                enabled: false,
+                defaultPolicyMode: "ask",
+                baseImage: "debian:bookworm-slim",
+                maxSessionMinutes: 15,
+                autoApproveBudgetCents: 0,
+                artifactRetentionDays: 14,
+                networkMode: "no_network",
+                filesystemMode: "workspace_only",
+              },
       },
     });
 
