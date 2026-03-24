@@ -7,7 +7,9 @@ import {
   DashboardSignalStrip,
   DashboardSurface,
   DashboardSurfaceGrid,
-} from "../ui/control-plane";
+  pickCopy,
+  type Locale,
+} from "@delegate/web-ui";
 
 type DashboardOverviewSnapshot = {
   representative: {
@@ -64,9 +66,12 @@ const statusLabel = {
 
 export function DashboardOverview({
   representativeSlug,
+  locale,
 }: {
   representativeSlug: string;
+  locale: Locale;
 }) {
+  const t = pickCopy(locale, copy);
   const [snapshot, setSnapshot] = useState<DashboardOverviewSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -74,8 +79,8 @@ export function DashboardOverview({
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
-    void refreshOverview(representativeSlug, setSnapshot, setError);
-  }, [representativeSlug]);
+    void refreshOverview(representativeSlug, locale, setSnapshot, setError);
+  }, [representativeSlug, locale]);
 
   const openHandoffCount = snapshot
     ? snapshot.handoffRequests.filter((item) => item.status === "open" || item.status === "reviewing")
@@ -84,26 +89,26 @@ export function DashboardOverview({
   const signalCards = snapshot
     ? [
         {
-          label: "Open handoffs",
+          label: t.signalCards.openHandoffsLabel,
           value: `${openHandoffCount}`,
-          detail: "当前值得主人优先判断与接手的请求数。",
+          detail: t.signalCards.openHandoffsDetail,
           tone: "accent" as const,
         },
         {
-          label: "Stars live",
+          label: t.signalCards.starsLiveLabel,
           value: `${snapshot.wallet.starsBalance}`,
-          detail: "当前可支撑公开代表持续应答的 Stars 余额。",
+          detail: t.signalCards.starsLiveDetail,
           tone: "safe" as const,
         },
         {
-          label: "Sponsor pool",
+          label: t.signalCards.sponsorPoolLabel,
           value: `${snapshot.wallet.sponsorPoolCredit}`,
-          detail: "公共赞助池还能继续支撑多少代表流量。",
+          detail: t.signalCards.sponsorPoolDetail,
         },
         {
-          label: "Recent invoices",
+          label: t.signalCards.recentInvoicesLabel,
           value: `${snapshot.recentInvoices.length}`,
-          detail: "最近的付费信号与续用动作。",
+          detail: t.signalCards.recentInvoicesDetail,
         },
       ]
     : [];
@@ -134,15 +139,11 @@ export function DashboardOverview({
           throw new Error(await extractError(response));
         }
 
-        await refreshOverview(representativeSlug, setSnapshot, setError);
-        setMessage(`${label} is now ${statusLabel[nextStatus]}.`);
+        await refreshOverview(representativeSlug, locale, setSnapshot, setError);
+        setMessage(t.statusSaved(label, statusLabel[nextStatus]));
       })()
         .catch((nextError: unknown) => {
-          setError(
-            nextError instanceof Error
-              ? nextError.message
-              : "Failed to update owner inbox status.",
-          );
+          setError(nextError instanceof Error ? nextError.message : t.updateError);
         })
         .finally(() => {
           setBusyKey(null);
@@ -154,9 +155,9 @@ export function DashboardOverview({
     return (
       <section className="section">
         <article className="dashboard-highlight-card">
-          <p className="panel-title">Loading overview</p>
-          <h3>正在读取 owner dashboard 的最新快照。</h3>
-          <p>会先加载指标、handoff 收件箱和最近的 Stars 付款记录。</p>
+          <p className="panel-title">{t.loadingTitle}</p>
+          <h3>{t.loadingHeadline}</h3>
+          <p>{t.loadingCopy}</p>
         </article>
       </section>
     );
@@ -164,19 +165,19 @@ export function DashboardOverview({
 
   return (
     <DashboardPanelFrame
-      eyebrow="Owner View"
-      summary={`${snapshot.representative.displayName} 的 dashboard 先展示高频信号，再进入 handoff 和付款细节。`}
-      title="先看今天的运营脉冲，再决定要不要深入处理。"
+      eyebrow={t.ownerViewEyebrow}
+      summary={t.summary(snapshot.representative.displayName)}
+      title={t.panelTitle}
     >
       <div className="dashboard-panel-hero">
         <article className="dashboard-highlight-card dashboard-highlight-card-primary">
-          <p className="panel-title">Daily operating pulse</p>
-          <h3>主人需要的是“值不值得亲自接手”的判断面板，不是长聊天记录。</h3>
+          <p className="panel-title">{t.heroKicker}</p>
+          <h3>{t.heroTitle}</h3>
           <p>{snapshot.representative.roleSummary}</p>
           <div className="chip-row">
             <span className="chip">{snapshot.representative.displayName}</span>
-            <span className="chip chip-safe">{snapshot.wallet.starsBalance} Stars live</span>
-            <span className="chip">{openHandoffCount} active handoffs</span>
+            <span className="chip chip-safe">{t.starsLiveChip(snapshot.wallet.starsBalance)}</span>
+            <span className="chip">{t.activeHandoffsChip(openHandoffCount)}</span>
           </div>
         </article>
 
@@ -200,11 +201,9 @@ export function DashboardOverview({
           <div className="dashboard-inline-section-heading">
             <div>
               <p className="eyebrow">OpenViking</p>
-              <h3>记忆层也应该像收件箱一样可观测。</h3>
+              <h3>{t.openVikingTitle}</h3>
             </div>
-            <p className="section-copy">
-              capture、commit、resource sync 和 recall 必须进入 owner 的日常读数，而不是藏在日志里。
-            </p>
+            <p className="section-copy">{t.openVikingCopy}</p>
           </div>
           <DashboardSignalStrip
             cards={snapshot.openVikingMetrics.map((metric) => ({
@@ -219,9 +218,9 @@ export function DashboardOverview({
 
       <DashboardSurfaceGrid>
         <DashboardSurface
-          eyebrow="Handoff inbox"
-          meta={<span className="chip chip-safe">{openHandoffCount} active</span>}
-          title="人工转接收件箱"
+          eyebrow={t.handoffEyebrow}
+          meta={<span className="chip chip-safe">{t.activeChip(openHandoffCount)}</span>}
+          title={t.handoffTitle}
         >
           <div className="row-list">
             {snapshot.handoffRequests.length ? (
@@ -234,9 +233,9 @@ export function DashboardOverview({
                       <span className="chip">{item.score}</span>
                       <span className="chip">{item.requestType}</span>
                       <span className="chip">{item.status}</span>
-                      {item.isPaid ? <span className="chip chip-safe">paid</span> : null}
+                      {item.isPaid ? <span className="chip chip-safe">{t.paidLabel}</span> : null}
                     </div>
-                    <p className="footer-note">Owner action: {item.recommendedOwnerAction}</p>
+                    <p className="footer-note">{t.ownerActionLabel(item.recommendedOwnerAction)}</p>
                   </div>
 
                   <div className="button-row button-row-stretch">
@@ -248,22 +247,22 @@ export function DashboardOverview({
                         onClick={() => handleStatusChange(item.id, action.status, item.who)}
                         type="button"
                       >
-                        {busyKey === `${item.id}:${action.status}` ? "Saving..." : action.label}
+                        {busyKey === `${item.id}:${action.status}` ? t.saving : translateActionLabel(locale, action.label)}
                       </button>
                     ))}
                   </div>
                 </div>
               ))
             ) : (
-              <p className="muted">当前没有待处理的 handoff 请求。</p>
+              <p className="muted">{t.noHandoffs}</p>
             )}
           </div>
         </DashboardSurface>
 
         <DashboardSurface
-          eyebrow="Billing"
-          meta={<span className="chip">{snapshot.recentInvoices.length} invoices</span>}
-          title="最近 Stars 付款"
+          eyebrow={t.billingEyebrow}
+          meta={<span className="chip">{t.invoicesChip(snapshot.recentInvoices.length)}</span>}
+          title={t.billingTitle}
         >
           <div className="row-list">
             {snapshot.recentInvoices.length ? (
@@ -278,23 +277,23 @@ export function DashboardOverview({
                     </p>
                     <div className="chip-row">
                       <span className="chip">{invoice.planType}</span>
-                      <span className="chip">{formatTimestamp(invoice.createdAt)}</span>
+                      <span className="chip">{formatTimestamp(invoice.createdAt, locale)}</span>
                       {invoice.paidAt ? (
-                        <span className="chip chip-safe">{formatTimestamp(invoice.paidAt)}</span>
+                        <span className="chip chip-safe">{formatTimestamp(invoice.paidAt, locale)}</span>
                       ) : null}
                     </div>
                   </div>
                   <div className="button-row button-row-stretch">
                     {invoice.invoiceLink ? (
                       <a className="button-secondary" href={invoice.invoiceLink} target="_blank" rel="noreferrer">
-                        View invoice
+                        {t.openInvoice}
                       </a>
                     ) : null}
                   </div>
                 </div>
               ))
             ) : (
-              <p className="muted">还没有任何 Stars invoice 记录。</p>
+              <p className="muted">{t.noInvoices}</p>
             )}
           </div>
         </DashboardSurface>
@@ -333,10 +332,11 @@ function buildNextStatusActions(
 
 async function refreshOverview(
   representativeSlug: string,
+  locale: Locale,
   setSnapshot: (value: DashboardOverviewSnapshot) => void,
   setError: (value: string | null) => void,
 ) {
-  const response = await fetch(`/api/dashboard/representatives/${representativeSlug}/overview`, {
+  const response = await fetch(`/api/dashboard/representatives/${representativeSlug}/overview?lang=${locale}`, {
     cache: "no-store",
   });
 
@@ -361,16 +361,114 @@ async function extractError(response: Response): Promise<string> {
   return `${response.status} ${response.statusText}`;
 }
 
-function formatTimestamp(value: string): string {
+function formatTimestamp(value: string, locale: Locale): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
 
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
 }
+
+function translateActionLabel(locale: Locale, label: string): string {
+  if (locale === "en") {
+    return label;
+  }
+
+  switch (label) {
+    case "Review":
+      return "评估";
+    case "Accept":
+      return "接受";
+    case "Decline":
+      return "拒绝";
+    case "Close":
+      return "关闭";
+    default:
+      return label;
+  }
+}
+
+const copy = {
+  zh: {
+    signalCards: {
+      openHandoffsLabel: "待处理 handoff",
+      openHandoffsDetail: "当前值得主人优先判断与接手的请求数。",
+      starsLiveLabel: "Stars 余额",
+      starsLiveDetail: "当前可支撑公开代表持续应答的 Stars 余额。",
+      sponsorPoolLabel: "赞助池",
+      sponsorPoolDetail: "公共赞助池还能继续支撑多少代表流量。",
+      recentInvoicesLabel: "最近付款",
+      recentInvoicesDetail: "最近的付费信号与续用动作。",
+    },
+    statusSaved: (label: string, status: string) => `${label} 现在是 ${status}。`,
+    updateError: "更新 owner inbox 状态失败。",
+    loadingTitle: "概览加载中",
+    loadingHeadline: "正在读取 owner dashboard 的最新快照。",
+    loadingCopy: "会先加载指标、handoff 收件箱和最近的 Stars 付款记录。",
+    ownerViewEyebrow: "Owner View",
+    summary: (name: string) => `${name} 的 dashboard 先展示高频信号，再进入 handoff 和付款细节。`,
+    panelTitle: "先看今天的运营脉冲，再决定要不要深入处理。",
+    heroKicker: "Daily operating pulse",
+    heroTitle: "主人需要的是“值不值得亲自接手”的判断面板，不是长聊天记录。",
+    starsLiveChip: (stars: number) => `${stars} Stars live`,
+    activeHandoffsChip: (count: number) => `${count} active handoffs`,
+    openVikingTitle: "记忆层也应该像收件箱一样可观测。",
+    openVikingCopy: "capture、commit、resource sync 和 recall 必须进入 owner 的日常读数，而不是藏在日志里。",
+    handoffEyebrow: "Handoff inbox",
+    activeChip: (count: number) => `${count} active`,
+    handoffTitle: "人工转接收件箱",
+    paidLabel: "已付费",
+    ownerActionLabel: (value: string) => `Owner action: ${value}`,
+    saving: "保存中...",
+    noHandoffs: "当前没有待处理的 handoff 请求。",
+    billingEyebrow: "Billing",
+    invoicesChip: (count: number) => `${count} 笔 invoices`,
+    billingTitle: "最近 Stars 付款",
+    openInvoice: "查看发票",
+    noInvoices: "还没有任何 Stars invoice 记录。",
+  },
+  en: {
+    signalCards: {
+      openHandoffsLabel: "Open handoffs",
+      openHandoffsDetail: "Requests that deserve direct owner review right now.",
+      starsLiveLabel: "Stars live",
+      starsLiveDetail: "The current Stars balance keeping the public representative active.",
+      sponsorPoolLabel: "Sponsor pool",
+      sponsorPoolDetail: "How much shared credit is left to support representative traffic.",
+      recentInvoicesLabel: "Recent invoices",
+      recentInvoicesDetail: "The latest payment and continuation signals.",
+    },
+    statusSaved: (label: string, status: string) => `${label} is now ${status}.`,
+    updateError: "Failed to update owner inbox status.",
+    loadingTitle: "Loading overview",
+    loadingHeadline: "Fetching the latest owner dashboard snapshot.",
+    loadingCopy: "Metrics, handoff inbox items, and recent Stars payments load first.",
+    ownerViewEyebrow: "Owner View",
+    summary: (name: string) => `${name}'s dashboard surfaces high-frequency signal before handoff and billing detail.`,
+    panelTitle: "Read today's operating pulse before deciding what deserves deeper attention.",
+    heroKicker: "Daily operating pulse",
+    heroTitle: "Owners need a triage panel that answers “should I step in?”, not a long chat log.",
+    starsLiveChip: (stars: number) => `${stars} Stars live`,
+    activeHandoffsChip: (count: number) => `${count} active handoffs`,
+    openVikingTitle: "The memory layer should be as observable as the inbox.",
+    openVikingCopy: "Capture, commit, resource sync, and recall belong in daily owner metrics instead of hidden logs.",
+    handoffEyebrow: "Handoff inbox",
+    activeChip: (count: number) => `${count} active`,
+    handoffTitle: "Human handoff inbox",
+    paidLabel: "paid",
+    ownerActionLabel: (value: string) => `Owner action: ${value}`,
+    saving: "Saving...",
+    noHandoffs: "There are no handoff requests waiting right now.",
+    billingEyebrow: "Billing",
+    invoicesChip: (count: number) => `${count} invoices`,
+    billingTitle: "Recent Stars payments",
+    openInvoice: "View invoice",
+    noInvoices: "There are no Stars invoices yet.",
+  },
+} as const;

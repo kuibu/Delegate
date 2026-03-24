@@ -24,9 +24,9 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Delegate",
+  title: "Delegate Representative",
   description:
-    "Telegram-native public representative for founders, creators, and inbound-heavy operators.",
+    "Public representative profiles for Telegram-native founder and operator interfaces.",
 };
 
 export default async function RootLayout({

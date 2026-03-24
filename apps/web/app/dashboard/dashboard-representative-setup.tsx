@@ -8,7 +8,9 @@ import {
   DashboardSignalStrip,
   DashboardSurface,
   DashboardSurfaceGrid,
-} from "../ui/control-plane";
+  pickCopy,
+  type Locale,
+} from "@delegate/web-ui";
 
 type InquiryIntent =
   | "faq"
@@ -105,39 +107,83 @@ type RepresentativeOpenVikingSnapshot = {
   };
 };
 
-const groupActivationLabels: Record<GroupActivation, string> = {
-  mention_only: "仅 mention",
-  reply_or_mention: "reply 或 mention",
-  always: "始终响应",
-};
+function getGroupActivationLabels(locale: Locale): Record<GroupActivation, string> {
+  return locale === "zh"
+    ? {
+        mention_only: "仅 mention",
+        reply_or_mention: "reply 或 mention",
+        always: "始终响应",
+      }
+    : {
+        mention_only: "mention only",
+        reply_or_mention: "reply or mention",
+        always: "always on",
+      };
+}
 
-const intentOptions: Array<{ value: InquiryIntent; label: string }> = [
-  { value: "faq", label: "FAQ" },
-  { value: "materials", label: "资料" },
-  { value: "pricing", label: "报价" },
-  { value: "collaboration", label: "合作" },
-  { value: "scheduling", label: "预约" },
-  { value: "handoff", label: "人工转接" },
-  { value: "candidate", label: "招聘" },
-  { value: "media", label: "媒体" },
-  { value: "support", label: "支持" },
-  { value: "unknown", label: "未知问题" },
-];
+function getIntentOptions(locale: Locale): Array<{ value: InquiryIntent; label: string }> {
+  return locale === "zh"
+    ? [
+        { value: "faq", label: "FAQ" },
+        { value: "materials", label: "资料" },
+        { value: "pricing", label: "报价" },
+        { value: "collaboration", label: "合作" },
+        { value: "scheduling", label: "预约" },
+        { value: "handoff", label: "人工转接" },
+        { value: "candidate", label: "招聘" },
+        { value: "media", label: "媒体" },
+        { value: "support", label: "支持" },
+        { value: "unknown", label: "未知问题" },
+      ]
+    : [
+        { value: "faq", label: "FAQ" },
+        { value: "materials", label: "Materials" },
+        { value: "pricing", label: "Pricing" },
+        { value: "collaboration", label: "Collaboration" },
+        { value: "scheduling", label: "Scheduling" },
+        { value: "handoff", label: "Human handoff" },
+        { value: "candidate", label: "Candidate" },
+        { value: "media", label: "Media" },
+        { value: "support", label: "Support" },
+        { value: "unknown", label: "Unknown" },
+      ];
+}
 
-const materialKindOptions: Array<{ value: KnowledgeDocumentKind; label: string }> = [
-  { value: "deck", label: "Deck" },
-  { value: "case_study", label: "Case study" },
-  { value: "download", label: "Download" },
-  { value: "calendar", label: "Calendar" },
-  { value: "pricing", label: "Pricing" },
-];
+function getMaterialKindOptions(locale: Locale): Array<{ value: KnowledgeDocumentKind; label: string }> {
+  return locale === "zh"
+    ? [
+        { value: "deck", label: "演示材料" },
+        { value: "case_study", label: "案例" },
+        { value: "download", label: "下载资料" },
+        { value: "calendar", label: "日程入口" },
+        { value: "pricing", label: "价格页" },
+      ]
+    : [
+        { value: "deck", label: "Deck" },
+        { value: "case_study", label: "Case study" },
+        { value: "download", label: "Download" },
+        { value: "calendar", label: "Calendar" },
+        { value: "pricing", label: "Pricing" },
+      ];
+}
 
-const pricingTierLabels: Record<PricingPlan["tier"], string> = {
-  free: "Free",
-  pass: "Pass",
-  deep_help: "Deep Help",
-  sponsor: "Sponsor",
-};
+function getPricingTierLabels(locale: Locale): Record<PricingPlan["tier"], string> {
+  if (locale === "zh") {
+    return {
+      free: "Free",
+      pass: "Pass",
+      deep_help: "Deep Help",
+      sponsor: "Sponsor",
+    };
+  }
+
+  return {
+    free: "Free",
+    pass: "Pass",
+    deep_help: "Deep Help",
+    sponsor: "Sponsor",
+  };
+}
 
 type SetupSectionId = "basics" | "contract" | "pricing" | "knowledge" | "memory";
 
@@ -179,11 +225,56 @@ const setupSections: Array<{
   },
 ];
 
+const setupSectionsEn: Array<{
+  id: SetupSectionId;
+  step: string;
+  label: string;
+  blurb: string;
+}> = [
+  {
+    id: "basics",
+    step: "01",
+    label: "Basics",
+    blurb: "Define identity, voice, and group activation rules first.",
+  },
+  {
+    id: "contract",
+    step: "02",
+    label: "Contract",
+    blurb: "Make the free scope, paywalls, and review window explicit.",
+  },
+  {
+    id: "pricing",
+    step: "03",
+    label: "Pricing",
+    blurb: "Explain the four access layers and their escalation value.",
+  },
+  {
+    id: "knowledge",
+    step: "04",
+    label: "Knowledge",
+    blurb: "Organize FAQ, materials, and policy before the bot improvises.",
+  },
+  {
+    id: "memory",
+    step: "05",
+    label: "Memory",
+    blurb: "Configure advanced OpenViking memory and sync last.",
+  },
+];
+
 export function DashboardRepresentativeSetup({
   representativeSlug,
+  locale,
 }: {
   representativeSlug: string;
+  locale: Locale;
 }) {
+  const t = pickCopy(locale, setupCopy);
+  const localizedGroupActivationLabels = getGroupActivationLabels(locale);
+  const intentOptions = getIntentOptions(locale);
+  const materialKindOptions = getMaterialKindOptions(locale);
+  const pricingTierLabels = getPricingTierLabels(locale);
   const [snapshot, setSnapshot] = useState<RepresentativeSetupSnapshot | null>(null);
   const [draft, setDraft] = useState<RepresentativeSetupSnapshot | null>(null);
   const [openVikingSnapshot, setOpenVikingSnapshot] =
@@ -195,6 +286,7 @@ export function DashboardRepresentativeSetup({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SetupSectionId>("basics");
   const [isPending, startTransition] = useTransition();
+  const localizedSetupSections = locale === "zh" ? setupSections : setupSectionsEn;
 
   useEffect(() => {
     void Promise.all([
@@ -238,12 +330,12 @@ export function DashboardRepresentativeSetup({
         const nextSnapshot = (await response.json()) as RepresentativeSetupSnapshot;
         setSnapshot(nextSnapshot);
         setDraft(cloneSnapshot(nextSnapshot));
-        setMessage("Representative setup saved.");
+        setMessage(t.savedMessage);
       })().catch((nextError: unknown) => {
         setError(
           nextError instanceof Error
             ? nextError.message
-            : "Failed to save representative setup.",
+            : t.saveError,
         );
       });
     });
@@ -293,14 +385,14 @@ export function DashboardRepresentativeSetup({
         const nextSnapshot = (await response.json()) as RepresentativeOpenVikingSnapshot;
         setOpenVikingSnapshot(nextSnapshot);
         setOpenVikingDraft(cloneOpenVikingSnapshot(nextSnapshot));
-        setMessage("OpenViking memory settings saved.");
+        setMessage(t.memorySavedMessage);
       })()
         .catch((nextError: unknown) => {
           setError(
             nextError instanceof Error
               ? nextError.message
-              : "Failed to save OpenViking memory settings.",
-          );
+              : t.memorySaveError,
+        );
         })
         .finally(() => {
           setBusyKey(null);
@@ -329,14 +421,14 @@ export function DashboardRepresentativeSetup({
         const nextSnapshot = (await response.json()) as RepresentativeOpenVikingSnapshot;
         setOpenVikingSnapshot(nextSnapshot);
         setOpenVikingDraft(cloneOpenVikingSnapshot(nextSnapshot));
-        setMessage("Representative public knowledge synced into OpenViking.");
+        setMessage(t.memorySyncedMessage);
       })()
         .catch((nextError: unknown) => {
           setError(
             nextError instanceof Error
               ? nextError.message
-              : "Failed to sync representative public knowledge into OpenViking.",
-          );
+              : t.memorySyncError,
+        );
         })
         .finally(() => {
           setBusyKey(null);
@@ -350,9 +442,9 @@ export function DashboardRepresentativeSetup({
         <div className="section-heading">
           <div>
             <p className="eyebrow">Representative Setup</p>
-            <h2>把 demo 配置变成真的 owner 配置</h2>
+            <h2>{t.loadingHeadline}</h2>
           </div>
-          <p className="section-copy">正在加载当前代表配置。</p>
+          <p className="section-copy">{t.loadingCopy}</p>
         </div>
       </section>
     );
@@ -360,57 +452,63 @@ export function DashboardRepresentativeSetup({
 
   const activeSectionIndex = Math.max(
     0,
-    setupSections.findIndex((section) => section.id === activeSection),
+    localizedSetupSections.findIndex((section) => section.id === activeSection),
   );
-  const currentSection = setupSections[activeSectionIndex]!;
+  const currentSection = localizedSetupSections[activeSectionIndex]!;
   const totalKnowledgeItems =
     draft.knowledgePack.faq.length +
     draft.knowledgePack.materials.length +
     draft.knowledgePack.policies.length;
   const setupSignalCards = [
     {
-      label: "Languages",
+      label: t.signalCards.languagesLabel,
       value: `${draft.languages.length}`,
-      detail: "代表当前对外声明支持的语言数。",
+      detail: t.signalCards.languagesDetail,
       tone: "accent" as const,
     },
     {
-      label: "Free replies",
+      label: t.signalCards.freeRepliesLabel,
       value: `${draft.contract.freeReplyLimit}`,
-      detail: "首次接触阶段的免费回复额度。",
+      detail: t.signalCards.freeRepliesDetail,
       tone: "safe" as const,
     },
     {
-      label: "Pricing tiers",
+      label: t.signalCards.pricingTiersLabel,
       value: `${draft.pricing.length}`,
-      detail: "当前公开提供的访问深度层级。",
+      detail: t.signalCards.pricingTiersDetail,
     },
     {
-      label: "Knowledge items",
+      label: t.signalCards.knowledgeItemsLabel,
       value: `${totalKnowledgeItems}`,
-      detail: "已经可供 bot 使用的结构化公开知识条目。",
+      detail: t.signalCards.knowledgeItemsDetail,
     },
   ];
-  const currentStepCards = buildSetupStepCards(draft, currentSection, openVikingDraft);
+  const currentStepCards = buildSetupStepCards(
+    draft,
+    currentSection,
+    openVikingDraft,
+    locale,
+    localizedGroupActivationLabels,
+  );
 
   return (
     <DashboardPanelFrame
-      eyebrow="Representative Setup"
-      summary={`当前编辑的是 ${snapshot?.name ?? draft.name}，保存后公开页和运行时都应该使用这份配置。`}
-      title="让公开资料页和 bot 都读同一份代表配置"
+      eyebrow={t.panelEyebrow}
+      summary={t.panelSummary(snapshot?.name ?? draft.name)}
+      title={t.panelTitle}
     >
       {message ? <div className="status-banner status-success">{message}</div> : null}
       {error ? <div className="status-banner status-error">{error}</div> : null}
 
       <div className="dashboard-panel-hero">
         <article className="dashboard-highlight-card dashboard-highlight-card-primary">
-          <p className="panel-title">Representative identity</p>
+          <p className="panel-title">{t.identityKicker}</p>
           <h3>{draft.name}</h3>
           <p>{draft.tagline}</p>
           <div className="chip-row">
             <span className="chip">{draft.ownerName}</span>
-            <span className="chip chip-safe">{groupActivationLabels[draft.groupActivation]}</span>
-            <span className="chip">{draft.publicMode ? "public" : "private"}</span>
+            <span className="chip chip-safe">{localizedGroupActivationLabels[draft.groupActivation]}</span>
+            <span className="chip">{draft.publicMode ? t.publicLabel : t.privateLabel}</span>
             <span className="chip">{draft.humanInLoop ? "ai + human" : "ai only"}</span>
           </div>
         </article>
@@ -419,14 +517,14 @@ export function DashboardRepresentativeSetup({
 
       <DashboardSurfaceGrid>
         <DashboardSurface
-          eyebrow="Launch flow"
+          eyebrow={t.launchEyebrow}
           meta={<span className="chip chip-safe">{draft.slug}</span>}
-          title="Progressive representative setup"
+          title={t.launchTitle}
           tone="accent"
         >
           <div className="setup-stepper-shell">
             <nav aria-label="Representative setup steps" className="setup-stepper">
-              {setupSections.map((section, index) => {
+              {localizedSetupSections.map((section, index) => {
                 const isActive = section.id === activeSection;
                 const isComplete = index < activeSectionIndex;
 
@@ -453,13 +551,13 @@ export function DashboardRepresentativeSetup({
 
             <article className="setup-step-summary">
               <div>
-                <p className="panel-title">Current step</p>
+                <p className="panel-title">{t.currentStepLabel}</p>
                 <h3>{currentSection.label}</h3>
                 <p>{currentSection.blurb}</p>
               </div>
               <div className="chip-row">
                 <span className="chip">
-                  {activeSectionIndex + 1} / {setupSections.length}
+                  {activeSectionIndex + 1} / {localizedSetupSections.length}
                 </span>
                 <span className="chip chip-safe">{draft.slug}</span>
               </div>
@@ -468,18 +566,16 @@ export function DashboardRepresentativeSetup({
         </DashboardSurface>
 
         <DashboardSurface
-          eyebrow="Step preview"
+          eyebrow={t.stepPreviewEyebrow}
           meta={
             <span className="chip">
-              {activeSectionIndex + 1} / {setupSections.length}
+              {activeSectionIndex + 1} / {localizedSetupSections.length}
             </span>
           }
-          title={`${currentSection.label} should feel publishable`}
+          title={t.stepPreviewTitle(currentSection.label)}
         >
           <div>
-            <p className="section-copy">
-              每一步都不是后台参数页，而是在定义一个对外关系接口该如何被理解、收费和接手。
-            </p>
+            <p className="section-copy">{t.stepPreviewCopy}</p>
           </div>
           <DashboardSignalStrip cards={currentStepCards} />
         </DashboardSurface>
@@ -490,20 +586,20 @@ export function DashboardRepresentativeSetup({
           <DashboardSurfaceGrid columns={1}>
             {activeSection === "basics" ? (
               <DashboardSurface
-                eyebrow="Basics"
+                eyebrow={t.basicsEyebrow}
                 meta={
                   <div className="chip-row">
-                    <span className="chip">{groupActivationLabels[draft.groupActivation]}</span>
-                    <span className="chip">{draft.publicMode ? "public" : "private"}</span>
-                    <span className="chip">{draft.humanInLoop ? "ai + human" : "ai only"}</span>
+                    <span className="chip">{localizedGroupActivationLabels[draft.groupActivation]}</span>
+                    <span className="chip">{draft.publicMode ? t.publicLabel : t.privateLabel}</span>
+                    <span className="chip">{draft.humanInLoop ? t.aiHumanLabel : t.aiOnlyLabel}</span>
                   </div>
                 }
-                title="代表是谁、代表谁、说话风格和群组激活规则。"
+                title={t.basicsTitle}
                 tone="accent"
               >
                 <div className="setup-grid">
                   <label className="field-stack">
-                    <span>Owner name</span>
+                    <span>{t.ownerName}</span>
                     <input
                       className="text-input"
                       onChange={(event) =>
@@ -514,7 +610,7 @@ export function DashboardRepresentativeSetup({
                   </label>
 
               <label className="field-stack">
-                <span>Representative name</span>
+                <span>{t.representativeName}</span>
                 <input
                   className="text-input"
                   onChange={(event) =>
@@ -525,7 +621,7 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <label className="field-stack field-span-full">
-                <span>Tagline</span>
+                <span>{t.tagline}</span>
                 <input
                   className="text-input"
                   onChange={(event) =>
@@ -536,7 +632,7 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <label className="field-stack field-span-full">
-                <span>Tone</span>
+                <span>{t.tone}</span>
                 <textarea
                   className="text-input textarea-input"
                   onChange={(event) =>
@@ -548,7 +644,7 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <label className="field-stack">
-                <span>Languages</span>
+                <span>{t.languages}</span>
                 <input
                   className="text-input"
                   onChange={(event) =>
@@ -562,7 +658,7 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <label className="field-stack">
-                <span>Group activation</span>
+                <span>{t.groupActivation}</span>
                 <select
                   className="text-input"
                   onChange={(event) =>
@@ -573,7 +669,7 @@ export function DashboardRepresentativeSetup({
                   }
                   value={draft.groupActivation}
                 >
-                  {Object.entries(groupActivationLabels).map(([value, label]) => (
+                  {Object.entries(localizedGroupActivationLabels).map(([value, label]) => (
                     <option key={value} value={value}>
                       {label}
                     </option>
@@ -582,7 +678,7 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <div className="field-stack field-span-full">
-                <span>Mode</span>
+                <span>{t.mode}</span>
                 <div className="toggle-grid">
                   <label className="toggle-row">
                     <input
@@ -592,7 +688,7 @@ export function DashboardRepresentativeSetup({
                       }
                       type="checkbox"
                     />
-                    <span>Public mode</span>
+                    <span>{t.publicMode}</span>
                   </label>
                   <label className="toggle-row">
                     <input
@@ -605,13 +701,13 @@ export function DashboardRepresentativeSetup({
                       }
                       type="checkbox"
                     />
-                    <span>Human in loop</span>
+                    <span>{t.humanInLoop}</span>
                   </label>
                 </div>
               </div>
 
                   <label className="field-stack field-span-full">
-                    <span>Handoff prompt</span>
+                    <span>{t.handoffPrompt}</span>
                     <textarea
                       className="text-input textarea-input"
                       onChange={(event) =>
@@ -627,12 +723,12 @@ export function DashboardRepresentativeSetup({
 
             {activeSection === "contract" ? (
               <DashboardSurface
-                eyebrow="Conversation Contract"
-                title="免费范围、付费边界和人工评估时窗。"
+                eyebrow={t.contractEyebrow}
+                title={t.contractTitle}
               >
                 <div className="setup-grid">
                   <label className="field-stack">
-                    <span>Free reply limit</span>
+                    <span>{t.freeReplyLimit}</span>
                     <input
                       className="text-input"
                       min={1}
@@ -651,7 +747,7 @@ export function DashboardRepresentativeSetup({
                   </label>
 
               <label className="field-stack">
-                <span>Handoff window (hours)</span>
+                <span>{t.handoffWindow}</span>
                 <input
                   className="text-input"
                   min={1}
@@ -670,7 +766,7 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <div className="field-stack field-span-full">
-                <span>Free scope</span>
+                <span>{t.freeScope}</span>
                 <div className="checkbox-grid">
                   {intentOptions.map((intent) => (
                     <label className="toggle-row" key={`free-${intent.value}`}>
@@ -698,7 +794,7 @@ export function DashboardRepresentativeSetup({
               </div>
 
                   <div className="field-stack field-span-full">
-                    <span>Paywalled intents</span>
+                    <span>{t.paywalledIntents}</span>
                     <div className="checkbox-grid">
                       {intentOptions.map((intent) => (
                         <label className="toggle-row" key={`paid-${intent.value}`}>
@@ -732,8 +828,8 @@ export function DashboardRepresentativeSetup({
 
         {activeSection === "pricing" ? (
           <DashboardSurface
-            eyebrow="Pricing Plans"
-            title="坚持四档：Free / Pass / Deep Help / Sponsor。"
+            eyebrow={t.pricingEyebrow}
+            title={t.pricingTitle}
           >
             <div className="pricing-editor-grid">
               {draft.pricing.map((plan) => (
@@ -743,7 +839,7 @@ export function DashboardRepresentativeSetup({
                   </div>
                   <div className="setup-grid compact-grid">
                   <label className="field-stack">
-                    <span>Name</span>
+                    <span>{t.nameLabel}</span>
                     <input
                       className="text-input"
                       onChange={(event) =>
@@ -761,7 +857,7 @@ export function DashboardRepresentativeSetup({
                   </label>
 
                   <label className="field-stack">
-                    <span>Stars</span>
+                    <span>{t.starsLabel}</span>
                     <input
                       className="text-input"
                       min={0}
@@ -781,7 +877,7 @@ export function DashboardRepresentativeSetup({
                   </label>
 
                   <label className="field-stack">
-                    <span>Replies</span>
+                    <span>{t.repliesLabel}</span>
                     <input
                       className="text-input"
                       min={0}
@@ -801,7 +897,7 @@ export function DashboardRepresentativeSetup({
                   </label>
 
                   <label className="field-stack field-span-full">
-                    <span>Summary</span>
+                    <span>{t.summaryLabel}</span>
                     <textarea
                       className="text-input textarea-input"
                       onChange={(event) =>
@@ -837,7 +933,7 @@ export function DashboardRepresentativeSetup({
                         }
                         type="checkbox"
                       />
-                      <span>Includes priority handoff</span>
+                      <span>{t.priorityHandoff}</span>
                     </label>
                   </div>
                 </div>
@@ -848,12 +944,12 @@ export function DashboardRepresentativeSetup({
 
         {activeSection === "knowledge" ? (
           <DashboardSurface
-            eyebrow="Knowledge Pack"
-            title="让公开知识先于自由发挥，回答和材料都从这里长出来。"
+            eyebrow={t.knowledgeEyebrow}
+            title={t.knowledgeTitle}
           >
             <div className="setup-stack">
               <label className="field-stack">
-                <span>Identity summary</span>
+                <span>{t.identitySummary}</span>
                 <textarea
                   className="text-input textarea-input"
                   onChange={(event) =>
@@ -873,6 +969,7 @@ export function DashboardRepresentativeSetup({
               <KnowledgeDocumentEditor
                 documents={draft.knowledgePack.faq}
                 fixedKind="faq"
+                labels={t.documentEditor}
                 onChange={(documents) =>
                   updateDraft((value) => ({
                     ...value,
@@ -888,6 +985,7 @@ export function DashboardRepresentativeSetup({
               <KnowledgeDocumentEditor
                 documents={draft.knowledgePack.materials}
                 kindOptions={materialKindOptions}
+                labels={t.documentEditor}
                 onChange={(documents) =>
                   updateDraft((value) => ({
                     ...value,
@@ -897,12 +995,13 @@ export function DashboardRepresentativeSetup({
                     },
                   }))
                 }
-                title="Materials"
+                title={t.materialsTitle}
               />
 
               <KnowledgeDocumentEditor
                 documents={draft.knowledgePack.policies}
                 fixedKind="policy"
+                labels={t.documentEditor}
                 onChange={(documents) =>
                   updateDraft((value) => ({
                     ...value,
@@ -912,7 +1011,7 @@ export function DashboardRepresentativeSetup({
                     },
                   }))
                 }
-                title="Policies"
+                title={t.policiesTitle}
               />
             </div>
           </DashboardSurface>
@@ -920,7 +1019,7 @@ export function DashboardRepresentativeSetup({
 
         {activeSection === "memory" && openVikingDraft ? (
           <DashboardSurface
-            eyebrow="OpenViking Memory"
+            eyebrow={t.memoryEyebrow}
             meta={
               <div className="chip-row">
                 <span className="chip">{openVikingDraft.health.mode}</span>
@@ -938,21 +1037,21 @@ export function DashboardRepresentativeSetup({
                 <span className="chip">{openVikingDraft.lastSyncStatus}</span>
               </div>
             }
-            title="代表级公开记忆层：资源同步、recall、capture 和可观测性。"
+            title={t.memoryTitle}
             tone="accent"
           >
             <div className="setup-grid">
               <div className="field-stack field-span-full">
-                <span>Health</span>
+                <span>{t.healthLabel}</span>
                 <p className="muted">{openVikingDraft.health.detail}</p>
-                <p className="footer-note">Base URL: {openVikingDraft.health.baseUrl}</p>
+                <p className="footer-note">{t.baseUrlLabel(openVikingDraft.health.baseUrl)}</p>
                 {openVikingDraft.health.consoleUrl ? (
-                  <p className="footer-note">Console: {openVikingDraft.health.consoleUrl}</p>
+                  <p className="footer-note">{t.consoleLabel(openVikingDraft.health.consoleUrl)}</p>
                 ) : null}
               </div>
 
               <div className="field-stack field-span-full">
-                <span>Toggles</span>
+                <span>{t.togglesLabel}</span>
                 <div className="toggle-grid">
                   <label className="toggle-row">
                     <input
@@ -965,7 +1064,7 @@ export function DashboardRepresentativeSetup({
                       }
                       type="checkbox"
                     />
-                    <span>Enable OpenViking</span>
+                    <span>{t.enableOpenViking}</span>
                   </label>
                   <label className="toggle-row">
                     <input
@@ -978,7 +1077,7 @@ export function DashboardRepresentativeSetup({
                       }
                       type="checkbox"
                     />
-                    <span>Auto recall</span>
+                    <span>{t.autoRecall}</span>
                   </label>
                   <label className="toggle-row">
                     <input
@@ -991,13 +1090,13 @@ export function DashboardRepresentativeSetup({
                       }
                       type="checkbox"
                     />
-                    <span>Auto capture</span>
+                    <span>{t.autoCapture}</span>
                   </label>
                 </div>
               </div>
 
               <label className="field-stack">
-                <span>Agent ID override</span>
+                <span>{t.agentIdOverride}</span>
                 <input
                   className="text-input"
                   onChange={(event) =>
@@ -1037,7 +1136,7 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <label className="field-stack">
-                <span>Capture mode</span>
+                <span>{t.captureMode}</span>
                 <select
                   className="text-input"
                   onChange={(event) =>
@@ -1054,7 +1153,7 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <label className="field-stack">
-                <span>Recall limit</span>
+                <span>{t.recallLimit}</span>
                 <input
                   className="text-input"
                   min={1}
@@ -1071,7 +1170,7 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <label className="field-stack">
-                <span>Recall score threshold</span>
+                <span>{t.recallScoreThreshold}</span>
                 <input
                   className="text-input"
                   max={1}
@@ -1089,7 +1188,7 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <label className="field-stack field-span-full">
-                <span>Target resource scope</span>
+                <span>{t.targetResourceScope}</span>
                 <input
                   className="text-input"
                   onChange={(event) =>
@@ -1103,15 +1202,19 @@ export function DashboardRepresentativeSetup({
               </label>
 
               <div className="field-stack field-span-full">
-                <span>Sync status</span>
+                <span>{t.syncStatus}</span>
                 <p className="muted">
-                  Last sync: {openVikingDraft.lastSyncAt ? formatTimestamp(openVikingDraft.lastSyncAt) : "never"}
+                  {t.lastSyncLabel(
+                    openVikingDraft.lastSyncAt
+                      ? formatTimestamp(openVikingDraft.lastSyncAt, locale)
+                      : t.never,
+                  )}
                 </p>
                 <p className="footer-note">
-                  Status: {openVikingDraft.lastSyncStatus} · items: {openVikingDraft.lastSyncItemCount}
+                  {t.syncStatusLine(openVikingDraft.lastSyncStatus, openVikingDraft.lastSyncItemCount)}
                 </p>
                 {openVikingDraft.lastSyncError ? (
-                  <p className="footer-note">Error: {openVikingDraft.lastSyncError}</p>
+                  <p className="footer-note">{t.errorLine(openVikingDraft.lastSyncError)}</p>
                 ) : null}
               </div>
             </div>
@@ -1123,7 +1226,7 @@ export function DashboardRepresentativeSetup({
                 onClick={handleOpenVikingSubmit}
                 type="button"
               >
-                {busyKey === "openviking:save" ? "Saving..." : "Save OpenViking settings"}
+                {busyKey === "openviking:save" ? t.saving : t.saveOpenVikingSettings}
               </button>
               <button
                 className="button-secondary"
@@ -1131,15 +1234,15 @@ export function DashboardRepresentativeSetup({
                 onClick={handleOpenVikingSync}
                 type="button"
               >
-                {busyKey === "openviking:sync" ? "Syncing..." : "Sync public knowledge"}
+                {busyKey === "openviking:sync" ? t.syncing : t.syncPublicKnowledge}
               </button>
             </div>
           </DashboardSurface>
         ) : null}
 
         {activeSection === "memory" && !openVikingDraft ? (
-          <DashboardSurface eyebrow="OpenViking Memory" title="正在加载代表级公开记忆配置。">
-            <p className="muted">再等一下，加载完成后这里会展示代表级公开记忆配置。</p>
+          <DashboardSurface eyebrow={t.memoryEyebrow} title={t.loadingMemoryTitle}>
+            <p className="muted">{t.loadingMemoryCopy}</p>
           </DashboardSurface>
         ) : null}
 
@@ -1150,34 +1253,35 @@ export function DashboardRepresentativeSetup({
               disabled={activeSectionIndex <= 0}
               onClick={() =>
                 setActiveSection(
-                  setupSections[Math.max(0, activeSectionIndex - 1)]?.id ?? "basics",
+                  localizedSetupSections[Math.max(0, activeSectionIndex - 1)]?.id ?? "basics",
                 )
               }
               type="button"
             >
-              Previous step
+              {t.previousStep}
             </button>
             <button
               className="button-secondary"
-              disabled={activeSectionIndex >= setupSections.length - 1}
+              disabled={activeSectionIndex >= localizedSetupSections.length - 1}
               onClick={() =>
                 setActiveSection(
-                  setupSections[Math.min(setupSections.length - 1, activeSectionIndex + 1)]?.id ??
-                    "memory",
+                  localizedSetupSections[
+                    Math.min(localizedSetupSections.length - 1, activeSectionIndex + 1)
+                  ]?.id ?? "memory",
                 )
               }
               type="button"
             >
-              Next step
+              {t.nextStep}
             </button>
           </div>
 
           <div className="button-row">
             <span className="muted">
-              Step {activeSectionIndex + 1} of {setupSections.length}
+              {t.stepCount(activeSectionIndex + 1, localizedSetupSections.length)}
             </span>
             <button className="button-primary" disabled={isPending} type="submit">
-              {isPending ? "Saving..." : "Save representative setup"}
+              {isPending ? t.saving : t.saveRepresentativeSetup}
             </button>
           </div>
         </div>
@@ -1186,10 +1290,221 @@ export function DashboardRepresentativeSetup({
   );
 }
 
+const setupCopy = {
+  zh: {
+    savedMessage: "代表配置已保存。",
+    saveError: "保存代表配置失败。",
+    memorySavedMessage: "OpenViking 记忆设置已保存。",
+    memorySaveError: "保存 OpenViking 记忆设置失败。",
+    memorySyncedMessage: "代表公开知识已同步到 OpenViking。",
+    memorySyncError: "同步代表公开知识到 OpenViking 失败。",
+    loadingHeadline: "把 demo 配置变成真的 owner 配置",
+    loadingCopy: "正在加载当前代表配置。",
+    panelEyebrow: "Representative Setup",
+    panelSummary: (name: string) => `当前编辑的是 ${name}，保存后公开页和运行时都应该使用这份配置。`,
+    panelTitle: "让公开资料页和 bot 都读同一份代表配置",
+    identityKicker: "Representative identity",
+    signalCards: {
+      languagesLabel: "Languages",
+      languagesDetail: "代表当前对外声明支持的语言数。",
+      freeRepliesLabel: "Free replies",
+      freeRepliesDetail: "首次接触阶段的免费回复额度。",
+      pricingTiersLabel: "Pricing tiers",
+      pricingTiersDetail: "当前公开提供的访问深度层级。",
+      knowledgeItemsLabel: "Knowledge items",
+      knowledgeItemsDetail: "已经可供 bot 使用的结构化公开知识条目。",
+    },
+    publicLabel: "public",
+    privateLabel: "private",
+    aiHumanLabel: "ai + human",
+    aiOnlyLabel: "ai only",
+    launchEyebrow: "Launch flow",
+    launchTitle: "渐进式代表设置",
+    currentStepLabel: "Current step",
+    stepPreviewEyebrow: "Step preview",
+    stepPreviewTitle: (label: string) => `${label} 应该看起来可发布`,
+    stepPreviewCopy: "每一步都不是后台参数页，而是在定义一个对外关系接口该如何被理解、收费和接手。",
+    basicsEyebrow: "Basics",
+    basicsTitle: "代表是谁、代表谁、说话风格和群组激活规则。",
+    ownerName: "Owner name",
+    representativeName: "Representative name",
+    tagline: "Tagline",
+    tone: "Tone",
+    languages: "Languages",
+    groupActivation: "Group activation",
+    mode: "Mode",
+    publicMode: "Public mode",
+    humanInLoop: "Human in loop",
+    handoffPrompt: "Handoff prompt",
+    contractEyebrow: "Conversation Contract",
+    contractTitle: "免费范围、付费边界和人工评估时窗。",
+    freeReplyLimit: "Free reply limit",
+    handoffWindow: "Handoff window (hours)",
+    freeScope: "Free scope",
+    paywalledIntents: "Paywalled intents",
+    pricingEyebrow: "Pricing Plans",
+    pricingTitle: "坚持四档：Free / Pass / Deep Help / Sponsor。",
+    nameLabel: "Name",
+    starsLabel: "Stars",
+    repliesLabel: "Replies",
+    summaryLabel: "Summary",
+    priorityHandoff: "Includes priority handoff",
+    knowledgeEyebrow: "Knowledge Pack",
+    knowledgeTitle: "让公开知识先于自由发挥，回答和材料都从这里长出来。",
+    identitySummary: "Identity summary",
+    materialsTitle: "Materials",
+    policiesTitle: "Policies",
+    memoryEyebrow: "OpenViking Memory",
+    memoryTitle: "代表级公开记忆层：资源同步、recall、capture 和可观测性。",
+    documentEditor: {
+      itemsLabel: (count: number) => `${count} 项`,
+      addItem: "添加条目",
+      title: "标题",
+      kind: "类型",
+      summary: "摘要",
+      url: "URL",
+      remove: "删除",
+      empty: "还没有任何条目。",
+    },
+    healthLabel: "Health",
+    baseUrlLabel: (value: string) => `Base URL: ${value}`,
+    consoleLabel: (value?: string) => `Console: ${value ?? ""}`,
+    togglesLabel: "Toggles",
+    enableOpenViking: "Enable OpenViking",
+    autoRecall: "Auto recall",
+    autoCapture: "Auto capture",
+    agentIdOverride: "Agent ID override",
+    captureMode: "Capture mode",
+    recallLimit: "Recall limit",
+    recallScoreThreshold: "Recall score threshold",
+    targetResourceScope: "Target resource scope",
+    syncStatus: "Sync status",
+    never: "never",
+    lastSyncLabel: (value: string) => `Last sync: ${value}`,
+    syncStatusLine: (status: string, items: number) => `Status: ${status} · items: ${items}`,
+    errorLine: (value: string) => `Error: ${value}`,
+    saving: "保存中...",
+    saveOpenVikingSettings: "保存 OpenViking 设置",
+    syncing: "同步中...",
+    syncPublicKnowledge: "同步公开知识",
+    loadingMemoryTitle: "正在加载代表级公开记忆配置。",
+    loadingMemoryCopy: "再等一下，加载完成后这里会展示代表级公开记忆配置。",
+    previousStep: "上一步",
+    nextStep: "下一步",
+    stepCount: (current: number, total: number) => `第 ${current} / ${total} 步`,
+    saveRepresentativeSetup: "保存代表配置",
+  },
+  en: {
+    savedMessage: "Representative setup saved.",
+    saveError: "Failed to save representative setup.",
+    memorySavedMessage: "OpenViking memory settings saved.",
+    memorySaveError: "Failed to save OpenViking memory settings.",
+    memorySyncedMessage: "Representative public knowledge synced into OpenViking.",
+    memorySyncError: "Failed to sync representative public knowledge into OpenViking.",
+    loadingHeadline: "Turn the demo configuration into a real owner configuration",
+    loadingCopy: "Loading the current representative setup.",
+    panelEyebrow: "Representative Setup",
+    panelSummary: (name: string) => `You are editing ${name}. After saving, the public page and runtime should both read from this configuration.`,
+    panelTitle: "Make the public page and bot read from the same representative configuration",
+    identityKicker: "Representative identity",
+    signalCards: {
+      languagesLabel: "Languages",
+      languagesDetail: "How many languages this representative publicly declares.",
+      freeRepliesLabel: "Free replies",
+      freeRepliesDetail: "The free reply depth available in first-contact mode.",
+      pricingTiersLabel: "Pricing tiers",
+      pricingTiersDetail: "How many public access layers are currently offered.",
+      knowledgeItemsLabel: "Knowledge items",
+      knowledgeItemsDetail: "Structured public knowledge items available to the bot.",
+    },
+    publicLabel: "public",
+    privateLabel: "private",
+    aiHumanLabel: "ai + human",
+    aiOnlyLabel: "ai only",
+    launchEyebrow: "Launch flow",
+    launchTitle: "Progressive representative setup",
+    currentStepLabel: "Current step",
+    stepPreviewEyebrow: "Step preview",
+    stepPreviewTitle: (label: string) => `${label} should feel publishable`,
+    stepPreviewCopy: "Each step defines how an external relationship interface should be understood, priced, and escalated.",
+    basicsEyebrow: "Basics",
+    basicsTitle: "Define identity, voice, and group activation rules.",
+    ownerName: "Owner name",
+    representativeName: "Representative name",
+    tagline: "Tagline",
+    tone: "Tone",
+    languages: "Languages",
+    groupActivation: "Group activation",
+    mode: "Mode",
+    publicMode: "Public mode",
+    humanInLoop: "Human in loop",
+    handoffPrompt: "Handoff prompt",
+    contractEyebrow: "Conversation contract",
+    contractTitle: "Free scope, paywalls, and the owner review window.",
+    freeReplyLimit: "Free reply limit",
+    handoffWindow: "Handoff window (hours)",
+    freeScope: "Free scope",
+    paywalledIntents: "Paywalled intents",
+    pricingEyebrow: "Pricing plans",
+    pricingTitle: "Keep the four access layers: Free / Pass / Deep Help / Sponsor.",
+    nameLabel: "Name",
+    starsLabel: "Stars",
+    repliesLabel: "Replies",
+    summaryLabel: "Summary",
+    priorityHandoff: "Includes priority handoff",
+    knowledgeEyebrow: "Knowledge pack",
+    knowledgeTitle: "Make structured public knowledge come before improvisation.",
+    identitySummary: "Identity summary",
+    materialsTitle: "Materials",
+    policiesTitle: "Policies",
+    memoryEyebrow: "OpenViking Memory",
+    memoryTitle: "Representative-level public memory: sync, recall, capture, and observability.",
+    documentEditor: {
+      itemsLabel: (count: number) => `${count} items`,
+      addItem: "Add item",
+      title: "Title",
+      kind: "Kind",
+      summary: "Summary",
+      url: "URL",
+      remove: "Remove",
+      empty: "No items yet.",
+    },
+    healthLabel: "Health",
+    baseUrlLabel: (value: string) => `Base URL: ${value}`,
+    consoleLabel: (value?: string) => `Console: ${value ?? ""}`,
+    togglesLabel: "Toggles",
+    enableOpenViking: "Enable OpenViking",
+    autoRecall: "Auto recall",
+    autoCapture: "Auto capture",
+    agentIdOverride: "Agent ID override",
+    captureMode: "Capture mode",
+    recallLimit: "Recall limit",
+    recallScoreThreshold: "Recall score threshold",
+    targetResourceScope: "Target resource scope",
+    syncStatus: "Sync status",
+    never: "never",
+    lastSyncLabel: (value: string) => `Last sync: ${value}`,
+    syncStatusLine: (status: string, items: number) => `Status: ${status} · items: ${items}`,
+    errorLine: (value: string) => `Error: ${value}`,
+    saving: "Saving...",
+    saveOpenVikingSettings: "Save OpenViking settings",
+    syncing: "Syncing...",
+    syncPublicKnowledge: "Sync public knowledge",
+    loadingMemoryTitle: "Loading representative memory configuration.",
+    loadingMemoryCopy: "One moment. This section will show representative-level public memory settings when loading finishes.",
+    previousStep: "Previous step",
+    nextStep: "Next step",
+    stepCount: (current: number, total: number) => `Step ${current} of ${total}`,
+    saveRepresentativeSetup: "Save representative setup",
+  },
+} as const;
+
 function buildSetupStepCards(
   draft: RepresentativeSetupSnapshot,
   currentSection: { id: SetupSectionId; label: string; blurb: string },
   openVikingDraft: RepresentativeOpenVikingSnapshot | null,
+  locale: Locale,
+  groupActivationLabels: Record<GroupActivation, string>,
 ): Array<{
   label: string;
   value: string;
@@ -1198,6 +1513,14 @@ function buildSetupStepCards(
 }> {
   switch (currentSection.id) {
     case "basics":
+      if (locale === "en") {
+        return [
+          { label: "Owner", value: draft.ownerName, detail: "Who this representative ultimately works for.", tone: "accent" },
+          { label: "Mode", value: draft.publicMode ? "Public" : "Private", detail: "Whether it is publicly exposed.", },
+          { label: "Group trigger", value: groupActivationLabels[draft.groupActivation], detail: "How conservatively the rep responds inside groups.", tone: "safe" },
+          { label: "Handoff", value: draft.humanInLoop ? "Ready" : "AI only", detail: "Whether high-value requests can escalate to a human.", },
+        ];
+      }
       return [
         {
           label: "Owner",
@@ -1223,6 +1546,14 @@ function buildSetupStepCards(
         },
       ];
     case "contract":
+      if (locale === "en") {
+        return [
+          { label: "Free limit", value: `${draft.contract.freeReplyLimit}`, detail: "Reply limit allowed in the free stage.", tone: "accent" },
+          { label: "Free intents", value: `${draft.contract.freeScope.length}`, detail: "Intent types still covered for free.", },
+          { label: "Paywalled", value: `${draft.contract.paywalledIntents.length}`, detail: "Intent types that require paid continuation.", tone: "safe" },
+          { label: "Handoff SLA", value: `${draft.contract.handoffWindowHours}h`, detail: "Expected owner response window for handoff.", },
+        ];
+      }
       return [
         {
           label: "Free limit",
@@ -1248,6 +1579,14 @@ function buildSetupStepCards(
         },
       ];
     case "pricing":
+      if (locale === "en") {
+        return [
+          { label: "Plans", value: `${draft.pricing.length}`, detail: "Current public access layers.", tone: "accent" },
+          { label: "Paid tiers", value: `${draft.pricing.filter((plan) => plan.stars > 0).length}`, detail: "How many tiers actually trigger payment.", },
+          { label: "Priority handoff", value: `${draft.pricing.filter((plan) => plan.includesPriorityHandoff).length}`, detail: "Pricing tiers that include priority escalation.", tone: "safe" },
+          { label: "Highest tier", value: `${Math.max(...draft.pricing.map((plan) => plan.stars), 0)} Stars`, detail: "Telegram Stars price for the deepest service layer.", },
+        ];
+      }
       return [
         {
           label: "Plans",
@@ -1273,6 +1612,14 @@ function buildSetupStepCards(
         },
       ];
     case "knowledge":
+      if (locale === "en") {
+        return [
+          { label: "FAQ", value: `${draft.knowledgePack.faq.length}`, detail: "Number of high-frequency standard answers.", tone: "accent" },
+          { label: "Materials", value: `${draft.knowledgePack.materials.length}`, detail: "Decks, case studies, and downloads that can be delivered directly.", },
+          { label: "Policies", value: `${draft.knowledgePack.policies.length}`, detail: "Rules covering boundary, pricing, and process.", tone: "safe" },
+          { label: "Identity", value: draft.knowledgePack.identitySummary ? "Ready" : "Missing", detail: "Whether the self-introduction is clear enough yet.", },
+        ];
+      }
       return [
         {
           label: "FAQ",
@@ -1298,6 +1645,14 @@ function buildSetupStepCards(
         },
       ];
     case "memory":
+      if (locale === "en") {
+        return [
+          { label: "OpenViking", value: openVikingDraft?.enabled ? "Enabled" : "Off", detail: "Whether the representative-level public memory layer is enabled.", tone: "accent" },
+          { label: "Recall", value: openVikingDraft?.autoRecall ? "Auto" : "Manual", detail: "Whether public context is recalled automatically before responses.", },
+          { label: "Capture", value: openVikingDraft?.autoCapture ? "Auto" : "Manual", detail: "Whether public-safe memory is committed automatically at key workflow points.", tone: "safe" },
+          { label: "Last sync", value: openVikingDraft?.lastSyncStatus ?? "unknown", detail: "Status of the most recent resource sync.", },
+        ];
+      }
       return [
         {
           label: "OpenViking",
@@ -1331,12 +1686,23 @@ function KnowledgeDocumentEditor({
   onChange,
   fixedKind,
   kindOptions,
+  labels,
 }: {
   title: string;
   documents: KnowledgeDocument[];
   onChange: (documents: KnowledgeDocument[]) => void;
   fixedKind?: KnowledgeDocumentKind;
   kindOptions?: Array<{ value: KnowledgeDocumentKind; label: string }>;
+  labels: {
+    itemsLabel: (count: number) => string;
+    addItem: string;
+    title: string;
+    kind: string;
+    summary: string;
+    url: string;
+    remove: string;
+    empty: string;
+  };
 }) {
   const options =
     kindOptions ??
@@ -1370,10 +1736,10 @@ function KnowledgeDocumentEditor({
       <div className="setup-section-header">
         <div>
           <h3>{title}</h3>
-          <p>{documents.length} items</p>
+          <p>{labels.itemsLabel(documents.length)}</p>
         </div>
         <button className="button-secondary" onClick={addDocument} type="button">
-          Add item
+          {labels.addItem}
         </button>
       </div>
 
@@ -1383,7 +1749,7 @@ function KnowledgeDocumentEditor({
             <div className="knowledge-editor-card" key={document.id}>
               <div className="setup-grid compact-grid">
                 <label className="field-stack">
-                  <span>Title</span>
+                  <span>{labels.title}</span>
                   <input
                     className="text-input"
                     onChange={(event) =>
@@ -1395,12 +1761,12 @@ function KnowledgeDocumentEditor({
 
                 {fixedKind ? (
                   <label className="field-stack">
-                    <span>Kind</span>
+                    <span>{labels.kind}</span>
                     <input className="text-input" readOnly value={fixedKind} />
                   </label>
                 ) : (
                   <label className="field-stack">
-                    <span>Kind</span>
+                    <span>{labels.kind}</span>
                     <select
                       className="text-input"
                       onChange={(event) =>
@@ -1420,7 +1786,7 @@ function KnowledgeDocumentEditor({
                 )}
 
                 <label className="field-stack field-span-full">
-                  <span>Summary</span>
+                  <span>{labels.summary}</span>
                   <textarea
                     className="text-input textarea-input"
                     onChange={(event) =>
@@ -1432,7 +1798,7 @@ function KnowledgeDocumentEditor({
                 </label>
 
                 <label className="field-stack field-span-full">
-                  <span>URL</span>
+                  <span>{labels.url}</span>
                   <input
                     className="text-input"
                     onChange={(event) =>
@@ -1452,13 +1818,13 @@ function KnowledgeDocumentEditor({
                   onClick={() => removeDocument(document.id)}
                   type="button"
                 >
-                  Remove
+                  {labels.remove}
                 </button>
               </div>
             </div>
           ))
         ) : (
-          <p className="muted">No items yet.</p>
+          <p className="muted">{labels.empty}</p>
         )}
       </div>
     </div>
@@ -1584,7 +1950,11 @@ async function extractError(response: Response): Promise<string> {
   }
 }
 
-function formatTimestamp(value: string): string {
+function formatTimestamp(value: string, locale: Locale): string {
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString(locale === "zh" ? "zh-CN" : "en-US");
 }

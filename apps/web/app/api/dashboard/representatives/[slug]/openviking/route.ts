@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import {
   getRepresentativeOpenVikingSnapshot,
   updateRepresentativeOpenVikingConfig,
-} from "../../../../../../lib/openviking";
+} from "@delegate/web-data";
 
 export async function GET(
   _request: Request,

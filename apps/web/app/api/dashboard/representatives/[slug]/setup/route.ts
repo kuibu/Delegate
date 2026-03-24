@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import {
   getRepresentativeSetupSnapshot,
   updateRepresentativeSetup,
-} from "../../../../../../lib/representative-setup";
+} from "@delegate/web-data";
 
 export async function GET(
   _request: Request,

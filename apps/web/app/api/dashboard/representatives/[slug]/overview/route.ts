@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
 
-import { getDashboardOverviewSnapshot } from "../../../../../../lib/owner-dashboard";
+import { getDashboardOverviewSnapshot } from "@delegate/web-data";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params;
+  const locale = new URL(request.url).searchParams.get("lang") === "en" ? "en" : "zh";
 
   try {
-    const snapshot = await getDashboardOverviewSnapshot(slug);
+    const snapshot = await getDashboardOverviewSnapshot(slug, locale);
     if (!snapshot) {
       return NextResponse.json({ error: "Representative not found." }, { status: 404 });
     }

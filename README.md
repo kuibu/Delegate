@@ -12,12 +12,12 @@ This repository starts with the narrowest useful wedge:
 
 ## What is in the repo right now
 
-- A monorepo foundation for a web control plane and a Telegram bot runtime
+- A monorepo foundation for three separate web surfaces plus a Telegram bot runtime
 - Shared domain models for representatives, contracts, plans, handoff, and action gates
 - ClawHub-backed skill registry primitives for future representative skill packs
 - OpenViking-backed public memory and context retrieval plumbing
 - A deterministic policy engine that decides whether to answer, collect intake, hand off, or charge
-- A public representative page and an owner dashboard with inbox + billing snapshots
+- Three distinct Next.js surfaces: a marketing site, a public representative app, and an owner dashboard
 - Telegram Stars invoice handling that writes back into conversations, wallet state, and owner inbox
 - A Prisma schema, initial Postgres migration, and deterministic demo seed for the core product entities
 
@@ -39,12 +39,16 @@ This repo encodes that boundary in both docs and code through the `Action Gate` 
 ```text
 apps/
   bot/          Telegram runtime powered by grammY
-  web/          Public representative page + owner dashboard shell
+  reps/         Public representative pages
+  site/         Marketing website
+  web/          Owner dashboard control plane
 packages/
   domain/       Shared schemas and demo representative data
   openviking/   Typed OpenViking client, URI rules, and safety filters
   registry/     External skill registry clients (ClawHub first)
   runtime/      Inquiry classification and action-gate policy engine
+  web-data/     Shared dashboard/public-page data access helpers
+  web-ui/       Shared design system and control-plane UI primitives
 docs/
   architecture.md
   openclaw-adoption.md
@@ -69,14 +73,18 @@ pnpm registry:search:clawhub "qualification"
 
 - `postgres`
 - `migrate`
-- `web`
+- `site`
+- `dashboard`
+- `reps`
 - `openviking`
 - `openviking-console`
 - `bot` when `TELEGRAM_BOT_TOKEN` is set in your shell or `.env`
 
 Local URLs:
 
-- app: `http://localhost:3000`
+- website: `http://localhost:3000`
+- dashboard: `http://localhost:3001/dashboard?view=overview`
+- representative app: `http://localhost:3002/reps/lin-founder-rep`
 - OpenViking API: `http://localhost:1933`
 - OpenViking console docs: `http://localhost:8020/docs`
 
@@ -87,7 +95,9 @@ If you only want the database container for local non-Docker app development, us
 ```bash
 pnpm docker:up:db
 pnpm db:setup
-pnpm dev:web
+pnpm dev:site
+pnpm dev:dashboard
+pnpm dev:reps
 pnpm dev:bot
 ```
 

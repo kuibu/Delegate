@@ -17,7 +17,9 @@
       "@delegate/domain": ["packages/domain/src/index.ts"],
       "@delegate/runtime": ["packages/runtime/src/index.ts"],
       "@delegate/registry": ["packages/registry/src/index.ts"],
-      "@delegate/openviking": ["packages/openviking/src/index.ts"]
+      "@delegate/openviking": ["packages/openviking/src/index.ts"],
+      "@delegate/web-data": ["packages/web-data/src/index.ts"],
+      "@delegate/web-ui": ["packages/web-ui/src/index.ts"]
     }
   }
 }

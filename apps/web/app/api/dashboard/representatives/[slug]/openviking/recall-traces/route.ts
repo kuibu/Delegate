@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getRepresentativeOpenVikingRecallTraces } from "../../../../../../../lib/openviking";
+import { getRepresentativeOpenVikingRecallTraces } from "@delegate/web-data";
 
 export async function GET(
   _request: Request,

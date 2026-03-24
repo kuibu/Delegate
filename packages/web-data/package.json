@@ -1,0 +1,16 @@
+{
+  "name": "@delegate/web-data",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@delegate/domain": "workspace:*",
+    "@delegate/openviking": "workspace:*",
+    "@delegate/registry": "workspace:*",
+    "@prisma/client": "^6.19.2",
+    "zod": "^4.3.6"
+  }
+}

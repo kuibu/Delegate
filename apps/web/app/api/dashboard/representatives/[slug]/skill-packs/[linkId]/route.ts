@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { setRepresentativeSkillPackEnabled } from "../../../../../../../lib/representative-skill-packs";
+import { setRepresentativeSkillPackEnabled } from "@delegate/web-data";
 
 export async function PATCH(
   request: Request,

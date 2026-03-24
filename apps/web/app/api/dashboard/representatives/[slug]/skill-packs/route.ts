@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import {
   getRepresentativeSkillPackSnapshot,
   installClawHubSkillPackForRepresentative,
-} from "../../../../../../lib/representative-skill-packs";
+} from "@delegate/web-data";
 
 export async function GET(
   _request: Request,

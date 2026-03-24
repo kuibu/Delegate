@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { setHandoffRequestStatus } from "../../../../../../../lib/owner-dashboard";
+import { setHandoffRequestStatus } from "@delegate/web-data";
 
 export async function PATCH(
   request: Request,

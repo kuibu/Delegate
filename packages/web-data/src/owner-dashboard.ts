@@ -89,9 +89,10 @@ let demoFallbackOverviewSnapshot: DashboardOverviewSnapshot | null = null;
 
 export async function getDashboardOverviewSnapshot(
   representativeSlug: string,
+  locale: "zh" | "en" = "zh",
 ): Promise<DashboardOverviewSnapshot | null> {
   if (shouldUseStaticFallbackMode(representativeSlug)) {
-    return cloneDashboardOverviewSnapshot(getOrCreateDemoFallbackOverviewSnapshot());
+    return cloneDashboardOverviewSnapshot(getOrCreateDemoFallbackOverviewSnapshot(locale));
   }
 
   try {
@@ -149,30 +150,44 @@ export async function getDashboardOverviewSnapshot(
       },
       metrics: [
         {
-          label: "今日新会话",
+          label: locale === "zh" ? "今日新会话" : "New conversations",
           value: String(todayConversationCount),
-          detail:
-            todayConversationCount > 0 ? "已进入真实会话表统计" : "今天还没有新的 inbound 会话",
+          detail: todayConversationCount > 0
+            ? locale === "zh"
+              ? "已进入真实会话表统计"
+              : "Now counted from real conversation rows."
+            : locale === "zh"
+              ? "今天还没有新的 inbound 会话"
+              : "No new inbound conversations yet today.",
         },
         {
-          label: "已确认付费",
+          label: locale === "zh" ? "已确认付费" : "Confirmed payments",
           value: String(paidInvoiceCount),
-          detail: paidBreakdown || "还没有完成的 Stars 付费记录",
-        },
-        {
-          label: "待人工评估",
-          value: String(openHandoffCount),
           detail:
-            openHandoffCount > 0
-              ? "包含 open 与 reviewing 状态的收件项"
-              : "当前 owner inbox 已清空",
+            paidBreakdown ||
+            (locale === "zh"
+              ? "还没有完成的 Stars 付费记录"
+              : "No completed Stars payments yet."),
         },
         {
-          label: "Stars 余额",
+          label: locale === "zh" ? "待人工评估" : "Pending owner review",
+          value: String(openHandoffCount),
+          detail: openHandoffCount > 0
+            ? locale === "zh"
+              ? "包含 open 与 reviewing 状态的收件项"
+              : "Includes inbox items in open and reviewing states."
+            : locale === "zh"
+              ? "当前 owner inbox 已清空"
+              : "The owner inbox is currently clear.",
+        },
+        {
+          label: locale === "zh" ? "Stars 余额" : "Stars balance",
           value: wallet ? String(wallet.starsBalance) : "0",
           detail: wallet
             ? `sponsor pool ${wallet.sponsorPoolCredit} · credits ${wallet.balanceCredits}`
-            : "还没有 owner wallet 记录",
+            : locale === "zh"
+              ? "还没有 owner wallet 记录"
+              : "No owner wallet record yet.",
         },
       ],
       wallet: {
@@ -183,34 +198,52 @@ export async function getDashboardOverviewSnapshot(
       openVikingMetrics: openVikingMetrics
         ? [
             {
-              label: "OpenViking resources",
+              label: locale === "zh" ? "OpenViking resources" : "OpenViking resources",
               value: String(openVikingMetrics.resourcesSynced),
-              detail: "最近一次成功同步的公开资源数",
+              detail:
+                locale === "zh"
+                  ? "最近一次成功同步的公开资源数"
+                  : "Public resources from the most recent successful sync.",
             },
             {
-              label: "Memories today",
+              label: locale === "zh" ? "Memories today" : "Memories today",
               value: String(openVikingMetrics.memoriesCapturedToday),
-              detail: "今天写入的公开安全记忆摘要",
+              detail:
+                locale === "zh"
+                  ? "今天写入的公开安全记忆摘要"
+                  : "Public-safe memory summaries captured today.",
             },
             {
-              label: "Commits today",
+              label: locale === "zh" ? "Commits today" : "Commits today",
               value: String(openVikingMetrics.sessionsCommittedToday),
-              detail: "今天完成的 OpenViking session commit 次数",
+              detail:
+                locale === "zh"
+                  ? "今天完成的 OpenViking session commit 次数"
+                  : "OpenViking session commits completed today.",
             },
             {
-              label: "Recalls today",
+              label: locale === "zh" ? "Recalls today" : "Recalls today",
               value: String(openVikingMetrics.recallsUsedToday),
-              detail: "今天真正注入回复链路的 recall 次数",
+              detail:
+                locale === "zh"
+                  ? "今天真正注入回复链路的 recall 次数"
+                  : "Recall operations actually injected into response flow today.",
             },
             {
-              label: "Sync failures",
+              label: locale === "zh" ? "Sync failures" : "Sync failures",
               value: String(openVikingMetrics.syncFailures),
-              detail: "累计失败的 sync job 数量",
+              detail:
+                locale === "zh"
+                  ? "累计失败的 sync job 数量"
+                  : "Cumulative failed sync jobs.",
             },
             {
               label: "Health",
               value: openVikingMetrics.lastHealthCheckResult,
-              detail: "最近一次 OpenViking health check 结果",
+              detail:
+                locale === "zh"
+                  ? "最近一次 OpenViking health check 结果"
+                  : "Most recent OpenViking health check result.",
             },
           ]
         : [],
@@ -239,7 +272,7 @@ export async function getDashboardOverviewSnapshot(
     };
   } catch (error) {
     if (shouldUseDemoFallback(error, representativeSlug)) {
-      return cloneDashboardOverviewSnapshot(getOrCreateDemoFallbackOverviewSnapshot());
+      return cloneDashboardOverviewSnapshot(getOrCreateDemoFallbackOverviewSnapshot(locale));
     }
     throw error;
   }
@@ -306,7 +339,7 @@ export async function setHandoffRequestStatus(params: {
   }
 }
 
-function getOrCreateDemoFallbackOverviewSnapshot(): DashboardOverviewSnapshot {
+function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): DashboardOverviewSnapshot {
   if (!demoFallbackOverviewSnapshot) {
     const now = new Date();
     const hoursAgo = (value: number) => new Date(now.getTime() - value * 60 * 60 * 1000).toISOString();
@@ -317,25 +350,13 @@ function getOrCreateDemoFallbackOverviewSnapshot(): DashboardOverviewSnapshot {
         displayName: demoRepresentative.name,
         roleSummary: demoRepresentative.tagline,
       },
-      metrics: [
-        { label: "今日新会话", value: "4", detail: "1 个来自群组 mention，3 个来自私聊" },
-        { label: "已确认付费", value: "3", detail: "1 Pass，1 Deep Help，1 Sponsor" },
-        { label: "待人工评估", value: "3", detail: "2 个合作，1 个退款" },
-        { label: "Stars 余额", value: "2060", detail: "sponsor pool 1200 · credits 240" },
-      ],
+      metrics: [],
       wallet: {
         starsBalance: 2060,
         sponsorPoolCredit: 1200,
         balanceCredits: 240,
       },
-      openVikingMetrics: [
-        { label: "OpenViking resources", value: "5", detail: "最近一次公开知识同步写入了 5 份资源" },
-        { label: "Memories today", value: "3", detail: "今天写入了 3 条公开安全记忆摘要" },
-        { label: "Commits today", value: "4", detail: "今天完成了 4 次 session commit" },
-        { label: "Recalls today", value: "9", detail: "今天有 9 次 recall 被注入回复链路" },
-        { label: "Sync failures", value: "0", detail: "当前 demo 没有失败的 sync job" },
-        { label: "Health", value: "healthy", detail: "OpenViking demo health check 正常" },
-      ],
+      openVikingMetrics: [],
       handoffRequests: [
         {
           id: "demo-handoff-acme",
@@ -409,6 +430,138 @@ function getOrCreateDemoFallbackOverviewSnapshot(): DashboardOverviewSnapshot {
     };
   }
 
+  demoFallbackOverviewSnapshot.representative.roleSummary =
+    locale === "zh"
+      ? demoRepresentative.tagline
+      : "Answers public questions, qualifies demand, collects intake, and hands off when needed.";
+  demoFallbackOverviewSnapshot.handoffRequests = [
+    {
+      id: "demo-handoff-acme",
+      who: "Acme AI",
+      why:
+        locale === "zh"
+          ? "想谈一周内启动的自动化合作，预算已说明。"
+          : "Wants to discuss an automation engagement starting within a week and already shared budget.",
+      score: "High",
+      status: "open",
+      recommendedOwnerAction:
+        locale === "zh"
+          ? "查看预算并决定是否安排 founder 通话。"
+          : "Review the budget and decide whether to accept a founder call.",
+      requestType: "collaboration",
+      isPaid: true,
+      requestedAt: demoFallbackOverviewSnapshot.handoffRequests[0]?.requestedAt ?? new Date().toISOString(),
+    },
+    {
+      id: "demo-handoff-creator",
+      who: "Creator Podcast",
+      why:
+        locale === "zh"
+          ? "媒体采访请求，需要 founder 本人确认档期。"
+          : "Media interview request that needs founder approval for scheduling.",
+      score: "Medium",
+      status: "reviewing",
+      recommendedOwnerAction:
+        locale === "zh"
+          ? "确认是否有播客录制档期。"
+          : "Confirm whether there is a viable podcast recording slot.",
+      requestType: "media",
+      isPaid: false,
+      requestedAt: demoFallbackOverviewSnapshot.handoffRequests[1]?.requestedAt ?? new Date().toISOString(),
+    },
+    {
+      id: "demo-handoff-refund",
+      who: locale === "zh" ? "匿名用户" : "Anonymous user",
+      why:
+        locale === "zh"
+          ? "要求退款，触发 ask-first 规则。"
+          : "Asked for a refund and triggered the ask-first policy.",
+      score: "High",
+      status: "open",
+      recommendedOwnerAction:
+        locale === "zh"
+          ? "先决定是否退款，再发人工回复。"
+          : "Approve or decline the refund before sending a human response.",
+      requestType: "refund",
+      isPaid: true,
+      requestedAt: demoFallbackOverviewSnapshot.handoffRequests[2]?.requestedAt ?? new Date().toISOString(),
+    },
+  ];
+  demoFallbackOverviewSnapshot.recentInvoices = [
+    {
+      id: "demo-invoice-pass",
+      who: "Acme AI",
+      planName: "Pass",
+      planType: "pass",
+      starsAmount: 180,
+      status: "paid",
+      createdAt: demoFallbackOverviewSnapshot.recentInvoices[0]?.createdAt ?? new Date().toISOString(),
+      ...(demoFallbackOverviewSnapshot.recentInvoices[0]?.paidAt
+        ? { paidAt: demoFallbackOverviewSnapshot.recentInvoices[0].paidAt }
+        : {}),
+      invoiceLink: "https://t.me/invoice/acme-pass",
+    },
+    {
+      id: "demo-invoice-deep-help",
+      who: locale === "zh" ? "匿名用户" : "Anonymous user",
+      planName: "Deep Help",
+      planType: "deep_help",
+      starsAmount: 680,
+      status: "paid",
+      createdAt: demoFallbackOverviewSnapshot.recentInvoices[1]?.createdAt ?? new Date().toISOString(),
+      ...(demoFallbackOverviewSnapshot.recentInvoices[1]?.paidAt
+        ? { paidAt: demoFallbackOverviewSnapshot.recentInvoices[1].paidAt }
+        : {}),
+      invoiceLink: "https://t.me/invoice/refund-deep-help",
+    },
+    {
+      id: "demo-invoice-sponsor",
+      who: "Community Angel",
+      planName: "Sponsor",
+      planType: "sponsor",
+      starsAmount: 1200,
+      status: "fulfilled",
+      createdAt: demoFallbackOverviewSnapshot.recentInvoices[2]?.createdAt ?? new Date().toISOString(),
+      ...(demoFallbackOverviewSnapshot.recentInvoices[2]?.paidAt
+        ? { paidAt: demoFallbackOverviewSnapshot.recentInvoices[2].paidAt }
+        : {}),
+      invoiceLink: "https://t.me/invoice/sponsor-pool",
+    },
+  ];
+
+  demoFallbackOverviewSnapshot.metrics =
+    locale === "zh"
+      ? [
+          { label: "今日新会话", value: "4", detail: "1 个来自群组 mention，3 个来自私聊" },
+          { label: "已确认付费", value: "3", detail: "1 Pass，1 Deep Help，1 Sponsor" },
+          { label: "待人工评估", value: "3", detail: "2 个合作，1 个退款" },
+          { label: "Stars 余额", value: "2060", detail: "sponsor pool 1200 · credits 240" },
+        ]
+      : [
+          { label: "New conversations", value: "4", detail: "1 from group mentions, 3 from private chat" },
+          { label: "Confirmed payments", value: "3", detail: "1 Pass, 1 Deep Help, 1 Sponsor" },
+          { label: "Pending owner review", value: "3", detail: "2 collaboration requests, 1 refund" },
+          { label: "Stars balance", value: "2060", detail: "sponsor pool 1200 · credits 240" },
+        ];
+  demoFallbackOverviewSnapshot.openVikingMetrics =
+    locale === "zh"
+      ? [
+          { label: "OpenViking resources", value: "5", detail: "最近一次公开知识同步写入了 5 份资源" },
+          { label: "Memories today", value: "3", detail: "今天写入了 3 条公开安全记忆摘要" },
+          { label: "Commits today", value: "4", detail: "今天完成了 4 次 session commit" },
+          { label: "Recalls today", value: "9", detail: "今天有 9 次 recall 被注入回复链路" },
+          { label: "Sync failures", value: "0", detail: "当前 demo 没有失败的 sync job" },
+          { label: "Health", value: "healthy", detail: "OpenViking demo health check 正常" },
+        ]
+      : [
+          { label: "OpenViking resources", value: "5", detail: "5 public resources were written in the latest sync." },
+          { label: "Memories today", value: "3", detail: "3 public-safe memory summaries were captured today." },
+          { label: "Commits today", value: "4", detail: "4 session commits completed today." },
+          { label: "Recalls today", value: "9", detail: "9 recalls were injected into response flow today." },
+          { label: "Sync failures", value: "0", detail: "There are no failed sync jobs in the demo right now." },
+          { label: "Health", value: "healthy", detail: "OpenViking demo health check is healthy." },
+        ];
+
   return demoFallbackOverviewSnapshot;
 }
 
@@ -416,7 +569,7 @@ function setDemoFallbackHandoffStatus(
   handoffId: string,
   status: DashboardOverviewSnapshot["handoffRequests"][number]["status"],
 ): DashboardOverviewSnapshot["handoffRequests"][number] {
-  const snapshot = getOrCreateDemoFallbackOverviewSnapshot();
+  const snapshot = getOrCreateDemoFallbackOverviewSnapshot("zh");
   const handoff = snapshot.handoffRequests.find((entry) => entry.id === handoffId);
 
   if (!handoff) {

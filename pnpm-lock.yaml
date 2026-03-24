@@ -58,6 +58,45 @@ importers:
         specifier: ^1.41.1
         version: 1.41.1
 
+  apps/reps:
+    dependencies:
+      '@delegate/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@delegate/web-data':
+        specifier: workspace:*
+        version: link:../../packages/web-data
+      '@delegate/web-ui':
+        specifier: workspace:*
+        version: link:../../packages/web-ui
+      next:
+        specifier: ^16.2.1
+        version: 16.2.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      react:
+        specifier: ^19.2.0
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.2.0
+        version: 19.2.4(react@19.2.4)
+
+  apps/site:
+    dependencies:
+      '@delegate/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@delegate/web-ui':
+        specifier: workspace:*
+        version: link:../../packages/web-ui
+      next:
+        specifier: ^16.2.1
+        version: 16.2.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      react:
+        specifier: ^19.2.0
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.2.0
+        version: 19.2.4(react@19.2.4)
+
   apps/web:
     dependencies:
       '@delegate/domain':
@@ -69,6 +108,12 @@ importers:
       '@delegate/registry':
         specifier: workspace:*
         version: link:../../packages/registry
+      '@delegate/web-data':
+        specifier: workspace:*
+        version: link:../../packages/web-data
+      '@delegate/web-ui':
+        specifier: workspace:*
+        version: link:../../packages/web-ui
       '@prisma/client':
         specifier: ^6.19.2
         version: 6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
@@ -111,6 +156,30 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.3.6
+
+  packages/web-data:
+    dependencies:
+      '@delegate/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@delegate/openviking':
+        specifier: workspace:*
+        version: link:../openviking
+      '@delegate/registry':
+        specifier: workspace:*
+        version: link:../registry
+      '@prisma/client':
+        specifier: ^6.19.2
+        version: 6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+
+  packages/web-ui:
+    dependencies:
+      react:
+        specifier: ^19.2.0
+        version: 19.2.4
 
 packages:
 

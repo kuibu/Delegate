@@ -7,7 +7,9 @@ import {
   DashboardSignalStrip,
   DashboardSurface,
   DashboardSurfaceGrid,
-} from "../ui/control-plane";
+  pickCopy,
+  type Locale,
+} from "@delegate/web-ui";
 
 type OpenVikingSnapshot = {
   representativeSlug: string;
@@ -78,9 +80,12 @@ type MemoryPreview = {
 
 export function DashboardOpenViking({
   representativeSlug,
+  locale,
 }: {
   representativeSlug: string;
+  locale: Locale;
 }) {
+  const t = pickCopy(locale, copy);
   const [snapshot, setSnapshot] = useState<OpenVikingSnapshot | null>(null);
   const [recallTraces, setRecallTraces] = useState<RecallTrace[]>([]);
   const [memories, setMemories] = useState<MemoryPreview[]>([]);
@@ -97,9 +102,9 @@ export function DashboardOpenViking({
     return (
       <section className="section">
         <article className="dashboard-highlight-card">
-          <p className="panel-title">Loading memory console</p>
-          <h3>正在读取 OpenViking 的 sync、recall、commit 和 memory preview。</h3>
-          <p>完成后会优先展示健康状态和最近的运行痕迹。</p>
+          <p className="panel-title">{t.loadingTitle}</p>
+          <h3>{t.loadingHeadline}</h3>
+          <p>{t.loadingCopy}</p>
         </article>
       </section>
     );
@@ -124,12 +129,10 @@ export function DashboardOpenViking({
         }
 
         await refreshAll(representativeSlug, setSnapshot, setRecallTraces, setMemories, setError);
-        setMessage(trigger === "retry" ? "Retry sync completed." : "Representative knowledge re-synced.");
+        setMessage(trigger === "retry" ? t.retryDone : t.resynced);
       })()
         .catch((nextError: unknown) => {
-          setError(
-            nextError instanceof Error ? nextError.message : "OpenViking sync failed.",
-          );
+          setError(nextError instanceof Error ? nextError.message : t.syncError);
         })
         .finally(() => {
           setBusyKey(null);
@@ -139,14 +142,14 @@ export function DashboardOpenViking({
 
   return (
     <DashboardPanelFrame
-      eyebrow="OpenViking Console"
-      summary="这里展示 OpenViking 最近的资源同步、recall provenance、session commit 和记忆摘要。"
-      title="把 recall / commit / memory preview 变成 owner 可操作的控制面板"
+      eyebrow={t.panelEyebrow}
+      summary={t.panelSummary}
+      title={t.panelTitle}
     >
       <div className="dashboard-panel-hero">
         <article className="dashboard-highlight-card dashboard-highlight-card-primary">
-          <p className="panel-title">Memory runtime</p>
-          <h3>{snapshot.enabled ? "这层记忆已经接到代表工作流里。" : "这层记忆目前处于关闭状态。"}</h3>
+          <p className="panel-title">{t.heroKicker}</p>
+          <h3>{snapshot.enabled ? t.heroEnabled : t.heroDisabled}</h3>
           <p>{snapshot.health.detail}</p>
           <div className="chip-row">
             <span className="chip">{snapshot.health.mode}</span>
@@ -170,24 +173,24 @@ export function DashboardOpenViking({
             {
               label: "Agent ID",
               value: snapshot.agentIdOverride ?? snapshot.agentId,
-              detail: "代表级的 session 和记忆命名空间标识。",
+              detail: t.agentIdDetail,
               tone: "accent" as const,
             },
             {
-              label: "Recall limit",
+              label: t.recallLimitLabel,
               value: `${snapshot.recallLimit}`,
-              detail: "默认一次回复可召回的上下文数量上限。",
+              detail: t.recallLimitDetail,
             },
             {
-              label: "Capture mode",
+              label: t.captureModeLabel,
               value: snapshot.captureMode,
-              detail: "当前的自动记忆提取模式。",
+              detail: t.captureModeDetail,
               tone: snapshot.autoCapture ? ("safe" as const) : "default",
             },
             {
-              label: "Synced items",
+              label: t.syncedItemsLabel,
               value: `${snapshot.lastSyncItemCount}`,
-              detail: "最近一次知识同步写入的资源数量。",
+              detail: t.syncedItemsDetail,
             },
           ]}
         />
@@ -203,7 +206,7 @@ export function DashboardOpenViking({
           onClick={() => triggerSync("manual")}
           type="button"
         >
-          {busyKey === "manual" ? "Syncing..." : "Resync public knowledge"}
+          {busyKey === "manual" ? t.syncing : t.resync}
         </button>
         <button
           className="button-secondary"
@@ -211,7 +214,7 @@ export function DashboardOpenViking({
           onClick={() => triggerSync("retry")}
           type="button"
         >
-          {busyKey === "retry" ? "Retrying..." : "Retry failed sync"}
+          {busyKey === "retry" ? t.retrying : t.retry}
         </button>
         {snapshot.health.consoleUrl ? (
           <a
@@ -220,7 +223,7 @@ export function DashboardOpenViking({
             rel="noreferrer"
             target="_blank"
           >
-            Open OpenViking Console
+            {t.openConsole}
           </a>
         ) : null}
       </div>
@@ -239,28 +242,28 @@ export function DashboardOpenViking({
                   : "default",
           },
           {
-            label: "Auto recall",
-            value: snapshot.autoRecall ? "Enabled" : "Off",
-            detail: "是否在回复前自动召回代表级上下文。",
+            label: t.autoRecallLabel,
+            value: snapshot.autoRecall ? t.enabled : t.off,
+            detail: t.autoRecallDetail,
           },
           {
-            label: "Auto capture",
-            value: snapshot.autoCapture ? "Enabled" : "Off",
-            detail: "是否在关键会话节点自动提交公开安全记忆。",
+            label: t.autoCaptureLabel,
+            value: snapshot.autoCapture ? t.enabled : t.off,
+            detail: t.autoCaptureDetail,
           },
           {
-            label: "Target URI",
+            label: t.targetUriLabel,
             value: snapshot.targetUri,
-            detail: "当前资源同步与召回默认使用的命名空间前缀。",
+            detail: t.targetUriDetail,
           },
         ]}
       />
 
       <DashboardSurfaceGrid columns={2}>
         <DashboardSurface
-          eyebrow="Sync"
+          eyebrow={t.syncEyebrow}
           meta={<span className="chip">{snapshot.recentSyncJobs.length} jobs</span>}
-          title="Recent sync jobs"
+          title={t.syncTitle}
         >
           <div className="row-list">
             {snapshot.recentSyncJobs.length ? (
@@ -272,22 +275,22 @@ export function DashboardOpenViking({
                       {job.itemCount} items · started {formatTimestamp(job.startedAt)}
                     </p>
                     <p className="footer-note">
-                      {job.finishedAt ? `Finished ${formatTimestamp(job.finishedAt)}` : "Still running"}
+                      {job.finishedAt ? `${t.finishedAt} ${formatTimestamp(job.finishedAt)}` : t.stillRunning}
                     </p>
-                    {job.error ? <p className="footer-note">Error: {job.error}</p> : null}
+                    {job.error ? <p className="footer-note">{t.errorLabel(job.error)}</p> : null}
                   </div>
                 </div>
               ))
             ) : (
-              <p className="muted">还没有任何 OpenViking sync job。</p>
+              <p className="muted">{t.noSyncJobs}</p>
             )}
           </div>
         </DashboardSurface>
 
         <DashboardSurface
-          eyebrow="Commit"
+          eyebrow={t.commitEyebrow}
           meta={<span className="chip">{snapshot.recentCommitTraces.length} traces</span>}
-          title="Recent commit traces"
+          title={t.commitTitle}
         >
           <div className="row-list">
             {snapshot.recentCommitTraces.length ? (
@@ -301,26 +304,26 @@ export function DashboardOpenViking({
                     <div className="chip-row">
                       <span className="chip">{formatTimestamp(trace.createdAt)}</span>
                       {typeof trace.memoriesExtracted === "number" ? (
-                        <span className="chip chip-safe">{trace.memoriesExtracted} memories</span>
+                        <span className="chip chip-safe">{t.memoriesChip(trace.memoriesExtracted)}</span>
                       ) : null}
                     </div>
                     {trace.sessionKey ? (
-                      <p className="footer-note">Session key: {trace.sessionKey}</p>
+                      <p className="footer-note">{t.sessionKeyLabel(trace.sessionKey)}</p>
                     ) : null}
-                    {trace.error ? <p className="footer-note">Error: {trace.error}</p> : null}
+                    {trace.error ? <p className="footer-note">{t.errorLabel(trace.error)}</p> : null}
                   </div>
                 </div>
               ))
             ) : (
-              <p className="muted">还没有任何 OpenViking commit trace。</p>
+              <p className="muted">{t.noCommitTraces}</p>
             )}
           </div>
         </DashboardSurface>
 
         <DashboardSurface
-          eyebrow="Recall"
+          eyebrow={t.recallEyebrow}
           meta={<span className="chip">{recallTraces.length} traces</span>}
-          title="Recent recall traces"
+          title={t.recallTitle}
         >
           <div className="row-list">
             {recallTraces.length ? (
@@ -338,15 +341,15 @@ export function DashboardOpenViking({
                 </div>
               ))
             ) : (
-              <p className="muted">还没有任何 recall provenance 记录。</p>
+              <p className="muted">{t.noRecallTraces}</p>
             )}
           </div>
         </DashboardSurface>
 
         <DashboardSurface
-          eyebrow="Memory preview"
+          eyebrow={t.memoryEyebrow}
           meta={<span className="chip">{memories.length} memories</span>}
-          title="Extracted memory preview"
+          title={t.memoryTitle}
         >
           <div className="row-list">
             {memories.length ? (
@@ -368,7 +371,7 @@ export function DashboardOpenViking({
                 </div>
               ))
             ) : (
-              <p className="muted">还没有任何可展示的公开安全记忆摘要。</p>
+              <p className="muted">{t.noMemories}</p>
             )}
           </div>
         </DashboardSurface>
@@ -434,3 +437,108 @@ function formatTimestamp(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
+
+const copy = {
+  zh: {
+    loadingTitle: "记忆控制台加载中",
+    loadingHeadline: "正在读取 OpenViking 的 sync、recall、commit 和 memory preview。",
+    loadingCopy: "完成后会优先展示健康状态和最近的运行痕迹。",
+    retryDone: "重试同步已完成。",
+    resynced: "代表公开知识已重新同步。",
+    syncError: "OpenViking 同步失败。",
+    panelEyebrow: "OpenViking Console",
+    panelSummary: "这里展示 OpenViking 最近的资源同步、recall provenance、session commit 和记忆摘要。",
+    panelTitle: "把 recall / commit / memory preview 变成 owner 可操作的控制面板",
+    heroKicker: "Memory runtime",
+    heroEnabled: "这层记忆已经接到代表工作流里。",
+    heroDisabled: "这层记忆目前处于关闭状态。",
+    agentIdDetail: "代表级的 session 和记忆命名空间标识。",
+    recallLimitLabel: "Recall limit",
+    recallLimitDetail: "默认一次回复可召回的上下文数量上限。",
+    captureModeLabel: "Capture mode",
+    captureModeDetail: "当前的自动记忆提取模式。",
+    syncedItemsLabel: "Synced items",
+    syncedItemsDetail: "最近一次知识同步写入的资源数量。",
+    syncing: "同步中...",
+    resync: "重新同步公开知识",
+    retrying: "重试中...",
+    retry: "重试失败同步",
+    openConsole: "打开 OpenViking 控制台",
+    autoRecallLabel: "Auto recall",
+    enabled: "启用",
+    off: "关闭",
+    autoRecallDetail: "是否在回复前自动召回代表级上下文。",
+    autoCaptureLabel: "Auto capture",
+    autoCaptureDetail: "是否在关键会话节点自动提交公开安全记忆。",
+    targetUriLabel: "Target URI",
+    targetUriDetail: "当前资源同步与召回默认使用的命名空间前缀。",
+    syncEyebrow: "Sync",
+    syncTitle: "最近 sync jobs",
+    finishedAt: "完成于",
+    stillRunning: "仍在运行",
+    errorLabel: (value: string) => `错误: ${value}`,
+    noSyncJobs: "还没有任何 OpenViking sync job。",
+    commitEyebrow: "Commit",
+    commitTitle: "最近 commit traces",
+    memoriesChip: (count: number) => `${count} memories`,
+    sessionKeyLabel: (value: string) => `Session key: ${value}`,
+    noCommitTraces: "还没有任何 OpenViking commit trace。",
+    recallEyebrow: "Recall",
+    recallTitle: "最近 recall traces",
+    noRecallTraces: "还没有任何 recall provenance 记录。",
+    memoryEyebrow: "Memory preview",
+    memoryTitle: "已提取记忆预览",
+    noMemories: "还没有任何可展示的公开安全记忆摘要。",
+  },
+  en: {
+    loadingTitle: "Loading memory console",
+    loadingHeadline: "Fetching OpenViking sync, recall, commit, and memory preview data.",
+    loadingCopy: "Health and recent runtime traces appear first.",
+    retryDone: "Retry sync completed.",
+    resynced: "Representative knowledge re-synced.",
+    syncError: "OpenViking sync failed.",
+    panelEyebrow: "OpenViking Console",
+    panelSummary: "This panel shows recent OpenViking resource sync, recall provenance, session commits, and memory summaries.",
+    panelTitle: "Turn recall, commit, and memory preview into an owner-operable control surface",
+    heroKicker: "Memory runtime",
+    heroEnabled: "This memory layer is active in the representative workflow.",
+    heroDisabled: "This memory layer is currently disabled.",
+    agentIdDetail: "Representative-level session and memory namespace identifier.",
+    recallLimitLabel: "Recall limit",
+    recallLimitDetail: "How many context items may be recalled before a response by default.",
+    captureModeLabel: "Capture mode",
+    captureModeDetail: "The current automatic memory extraction mode.",
+    syncedItemsLabel: "Synced items",
+    syncedItemsDetail: "Resources written in the most recent knowledge sync.",
+    syncing: "Syncing...",
+    resync: "Resync public knowledge",
+    retrying: "Retrying...",
+    retry: "Retry failed sync",
+    openConsole: "Open OpenViking Console",
+    autoRecallLabel: "Auto recall",
+    enabled: "Enabled",
+    off: "Off",
+    autoRecallDetail: "Whether representative-scoped context is recalled automatically before responses.",
+    autoCaptureLabel: "Auto capture",
+    autoCaptureDetail: "Whether public-safe memory is committed automatically at key workflow points.",
+    targetUriLabel: "Target URI",
+    targetUriDetail: "Namespace prefix used by sync and recall flows.",
+    syncEyebrow: "Sync",
+    syncTitle: "Recent sync jobs",
+    finishedAt: "Finished",
+    stillRunning: "Still running",
+    errorLabel: (value: string) => `Error: ${value}`,
+    noSyncJobs: "There are no OpenViking sync jobs yet.",
+    commitEyebrow: "Commit",
+    commitTitle: "Recent commit traces",
+    memoriesChip: (count: number) => `${count} memories`,
+    sessionKeyLabel: (value: string) => `Session key: ${value}`,
+    noCommitTraces: "There are no OpenViking commit traces yet.",
+    recallEyebrow: "Recall",
+    recallTitle: "Recent recall traces",
+    noRecallTraces: "There is no recall provenance yet.",
+    memoryEyebrow: "Memory preview",
+    memoryTitle: "Extracted memory preview",
+    noMemories: "There are no public-safe memory summaries to preview yet.",
+  },
+} as const;

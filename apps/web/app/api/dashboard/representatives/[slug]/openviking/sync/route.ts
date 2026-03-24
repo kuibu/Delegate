@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { syncRepresentativeOpenVikingResources } from "../../../../../../../lib/openviking";
+import { syncRepresentativeOpenVikingResources } from "@delegate/web-data";
 
 export async function POST(
   _request: Request,

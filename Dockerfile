@@ -17,6 +17,6 @@ RUN pnpm install --frozen-lockfile \
   && pnpm db:generate \
   && pnpm build
 
-EXPOSE 3000
+EXPOSE 3000 3001 3002
 
-CMD ["pnpm", "--filter", "@delegate/web", "start"]
+CMD ["pnpm", "--filter", "@delegate/dashboard", "start"]

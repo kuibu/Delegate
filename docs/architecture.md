@@ -44,10 +44,13 @@ flowchart TD
     RT --> MEM["OpenViking Context Layer"]
     RT --> BILL["Billing + Wallet Layer"]
     RT --> HAND["Handoff + Analytics Layer"]
-    HAND --> WEB["Owner Dashboard"]
-    KG --> WEB
-    MEM --> WEB
+    HAND --> DASH["Owner Dashboard"]
+    KG --> DASH
+    MEM --> DASH
+    KG --> REPS["Representative App"]
 ```
+
+Delegate also ships a separate marketing `Site` service, but it sits outside the runtime loop and acts as the top-of-funnel surface that links into the dashboard and representative app.
 
 ## Core runtime loop
 
@@ -164,7 +167,7 @@ The boundary is a first-class product feature, not a prompt convention.
 
 ## Recommended stack
 
-- `Next.js` for the public representative page and owner-facing dashboard
+- `Next.js` for three separate web services: marketing site, representative app, and owner dashboard
 - `grammY` for the Telegram runtime
 - `Prisma + Postgres` for persisted conversations, leads, handoffs, and billing state
 - shared `zod` schemas for the boundary between runtime, UI, and future APIs

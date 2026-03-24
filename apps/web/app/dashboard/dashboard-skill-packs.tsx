@@ -8,7 +8,9 @@ import {
   DashboardSignalStrip,
   DashboardSurface,
   DashboardSurfaceGrid,
-} from "../ui/control-plane";
+  pickCopy,
+  type Locale,
+} from "@delegate/web-ui";
 
 type DashboardSkillPack = {
   linkId: string;
@@ -47,17 +49,26 @@ type SearchResponse = {
   }>;
 };
 
-const groupActivationLabels = {
-  mention_only: "仅 mention",
-  reply_or_mention: "reply 或 mention",
-  always: "始终响应",
-} as const;
-
 export function DashboardSkillPacks({
   representativeSlug,
+  locale,
 }: {
   representativeSlug: string;
+  locale: Locale;
 }) {
+  const t = pickCopy(locale, copy);
+  const groupActivationLabels =
+    locale === "zh"
+      ? {
+          mention_only: "仅 mention",
+          reply_or_mention: "reply 或 mention",
+          always: "始终响应",
+        }
+      : {
+          mention_only: "mention only",
+          reply_or_mention: "reply or mention",
+          always: "always on",
+        };
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [results, setResults] = useState<SearchResponse["results"]>([]);
   const [query, setQuery] = useState("");
@@ -69,10 +80,10 @@ export function DashboardSkillPacks({
   useEffect(() => {
     void Promise.all([refreshSnapshot(representativeSlug, setSnapshot, setError), loadResults("")]).catch(
       (nextError: unknown) => {
-        setError(nextError instanceof Error ? nextError.message : "Failed to load dashboard data.");
+        setError(nextError instanceof Error ? nextError.message : t.loadError);
       },
     );
-  }, [representativeSlug]);
+  }, [representativeSlug, t.loadError]);
 
   const enabledCount = snapshot?.skillPacks.filter((skillPack) => skillPack.enabled).length ?? 0;
   const builtinCount =
@@ -82,26 +93,26 @@ export function DashboardSkillPacks({
   const signalCards = snapshot
     ? [
         {
-          label: "Tracked packs",
+          label: t.signalCards.trackedLabel,
           value: `${snapshot.skillPacks.length}`,
-          detail: "当前代表已经纳入治理范围的技能包总数。",
+          detail: t.signalCards.trackedDetail,
           tone: "accent" as const,
         },
         {
-          label: "Enabled",
+          label: t.signalCards.enabledLabel,
           value: `${enabledCount}`,
-          detail: "这些 pack 才真正进入代表运行时。",
+          detail: t.signalCards.enabledDetail,
           tone: "safe" as const,
         },
         {
           label: "ClawHub",
           value: `${clawHubCount}`,
-          detail: "来自 ClawHub 的扩展来源，需要显式启用。",
+          detail: t.signalCards.clawHubDetail,
         },
         {
-          label: "Search results",
+          label: t.signalCards.searchResultsLabel,
           value: `${results.length}`,
-          detail: "当前搜索面板返回的可安装候选。",
+          detail: t.signalCards.searchResultsDetail,
         },
       ]
     : [];
@@ -129,7 +140,7 @@ export function DashboardSkillPacks({
     setError(null);
     startTransition(() => {
       void loadResults(query).catch((nextError: unknown) => {
-        setError(nextError instanceof Error ? nextError.message : "Failed to search ClawHub.");
+        setError(nextError instanceof Error ? nextError.message : t.searchError);
       });
     });
   }
@@ -158,14 +169,10 @@ export function DashboardSkillPacks({
           refreshSnapshot(representativeSlug, setSnapshot, setError),
           loadResults(query),
         ]);
-        setMessage(`Installed ${skillPackSlug} for ${representativeSlug}.`);
+        setMessage(t.installedMessage(skillPackSlug, representativeSlug));
       })()
         .catch((nextError: unknown) => {
-          setError(
-            nextError instanceof Error
-              ? nextError.message
-              : "Failed to install the selected skill pack.",
-          );
+          setError(nextError instanceof Error ? nextError.message : t.installError);
         })
         .finally(() => {
           setBusyKey(null);
@@ -195,14 +202,10 @@ export function DashboardSkillPacks({
         }
 
         await refreshSnapshot(representativeSlug, setSnapshot, setError);
-        setMessage(`${nextEnabled ? "Enabled" : "Disabled"} ${label}.`);
+        setMessage(`${nextEnabled ? t.enabled : t.disabled} ${label}.`);
       })()
         .catch((nextError: unknown) => {
-          setError(
-            nextError instanceof Error
-              ? nextError.message
-              : "Failed to update representative skill pack state.",
-          );
+          setError(nextError instanceof Error ? nextError.message : t.toggleError);
         })
         .finally(() => {
           setBusyKey(null);
@@ -214,9 +217,9 @@ export function DashboardSkillPacks({
     return (
       <section className="section">
         <article className="dashboard-highlight-card">
-          <p className="panel-title">Loading skills</p>
-          <h3>正在读取代表已安装的 skill packs 和 ClawHub 搜索结果。</h3>
-          <p>完成后会先展示当前代表已追踪的 pack，再给出扩展入口。</p>
+          <p className="panel-title">{t.loadingTitle}</p>
+          <h3>{t.loadingHeadline}</h3>
+          <p>{t.loadingCopy}</p>
         </article>
       </section>
     );
@@ -224,22 +227,22 @@ export function DashboardSkillPacks({
 
   return (
     <DashboardPanelFrame
-      eyebrow="Skill Packs"
-      summary="这里只安装来源和元数据，不执行远程代码。每个 pack 都需要显式启用，才会进入代表运行时。"
-      title="从 ClawHub 发现技能包，再按代表边界启用"
+      eyebrow={t.panelEyebrow}
+      summary={t.panelSummary}
+      title={t.panelTitle}
     >
       <div className="dashboard-panel-hero">
         <article className="dashboard-highlight-card dashboard-highlight-card-primary">
-          <p className="panel-title">Representative boundary</p>
+          <p className="panel-title">{t.heroKicker}</p>
           <h3>{snapshot.representative.displayName}</h3>
           <p>{snapshot.representative.roleSummary}</p>
           <div className="chip-row">
-            <span className="chip">{snapshot.skillPacks.length} packs tracked</span>
+            <span className="chip">{t.trackedPacks(snapshot.skillPacks.length)}</span>
             <span className="chip chip-safe">
               {groupActivationLabels[snapshot.representative.groupActivation]}
             </span>
             <span className="chip">
-              {snapshot.representative.humanInLoop ? "human in loop" : "ai only"}
+              {snapshot.representative.humanInLoop ? t.humanLoopOn : t.humanLoopOff}
             </span>
           </div>
         </article>
@@ -253,25 +256,25 @@ export function DashboardSkillPacks({
       <DashboardSignalStrip
         cards={[
           {
-            label: "Built in",
+            label: t.builtInLabel,
             value: `${builtinCount}`,
-            detail: "内建能力包，默认更稳定更可控。",
+            detail: t.builtInDetail,
           },
           {
-            label: "Group activation",
+            label: t.groupActivationLabel,
             value: groupActivationLabels[snapshot.representative.groupActivation],
-            detail: "群组里默认采用的谨慎触发策略。",
+            detail: t.groupActivationDetail,
             tone: "safe" as const,
           },
           {
-            label: "Public mode",
-            value: snapshot.representative.publicMode ? "Public" : "Private",
-            detail: "是否以公开代表模式对外开放。",
+            label: t.publicModeLabel,
+            value: snapshot.representative.publicMode ? t.publicLabel : t.privateLabel,
+            detail: t.publicModeDetail,
           },
           {
-            label: "Human loop",
-            value: snapshot.representative.humanInLoop ? "Enabled" : "Off",
-            detail: "高价值升级是否可以转入人工接手。",
+            label: t.humanLoopLabel,
+            value: snapshot.representative.humanInLoop ? t.enabled : t.off,
+            detail: t.humanLoopDetail,
             tone: snapshot.representative.humanInLoop ? ("safe" as const) : "default",
           },
         ]}
@@ -279,9 +282,9 @@ export function DashboardSkillPacks({
 
       <DashboardSurfaceGrid>
         <DashboardSurface
-          eyebrow="Current workspace"
-          meta={<span className="chip chip-safe">{enabledCount} enabled</span>}
-          title="Installed on this representative"
+          eyebrow={t.currentWorkspaceEyebrow}
+          meta={<span className="chip chip-safe">{t.enabledChip(enabledCount)}</span>}
+          title={t.currentWorkspaceTitle}
         >
           <div className="row-list">
             {snapshot.skillPacks.length ? (
@@ -302,7 +305,7 @@ export function DashboardSkillPacks({
                   <div className="button-row button-row-stretch">
                     {skillPack.sourceUrl ? (
                       <a className="button-secondary" href={skillPack.sourceUrl} target="_blank" rel="noreferrer">
-                        View source
+                        {t.viewSource}
                       </a>
                     ) : null}
                     <button
@@ -314,24 +317,24 @@ export function DashboardSkillPacks({
                       type="button"
                     >
                       {busyKey === `toggle:${skillPack.linkId}`
-                        ? "Saving..."
+                        ? t.saving
                         : skillPack.enabled
-                          ? "Disable"
-                          : "Enable"}
+                          ? t.disable
+                          : t.enable}
                     </button>
                   </div>
                 </div>
               ))
             ) : (
-              <p className="muted">No tracked skill packs yet.</p>
+              <p className="muted">{t.noTrackedPacks}</p>
             )}
           </div>
         </DashboardSurface>
 
         <DashboardSurface
-          eyebrow="Expansion"
+          eyebrow={t.expansionEyebrow}
           meta={<span className="chip">{results.length} results</span>}
-          title="Discover on ClawHub"
+          title={t.expansionTitle}
         >
 
           <form className="search-form" onSubmit={handleSearchSubmit}>
@@ -339,11 +342,11 @@ export function DashboardSkillPacks({
               className="text-input"
               name="query"
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search representative skill packs"
+              placeholder={t.searchPlaceholder}
               value={query}
             />
             <button className="button-primary" disabled={isPending} type="submit">
-              {isPending ? "Searching..." : "Search"}
+              {isPending ? t.searching : t.search}
             </button>
           </form>
 
@@ -368,7 +371,7 @@ export function DashboardSkillPacks({
                   <div className="button-row button-row-stretch">
                     {result.sourceUrl ? (
                       <a className="button-secondary" href={result.sourceUrl} target="_blank" rel="noreferrer">
-                        Open
+                        {t.open}
                       </a>
                     ) : null}
                     <button
@@ -380,10 +383,10 @@ export function DashboardSkillPacks({
                       type="button"
                     >
                       {alreadyTracked
-                        ? "Tracked"
+                        ? t.tracked
                         : busyKey === `install:${result.slug}`
-                          ? "Installing..."
-                          : "Install"}
+                          ? t.installing
+                          : t.install}
                     </button>
                   </div>
                 </div>
@@ -424,3 +427,118 @@ async function extractError(response: Response): Promise<string> {
   }
   return `${response.status} ${response.statusText}`;
 }
+
+const copy = {
+  zh: {
+    loadError: "加载 dashboard 数据失败。",
+    searchError: "搜索 ClawHub 失败。",
+    installedMessage: (slug: string, rep: string) => `已为 ${rep} 安装 ${slug}。`,
+    installError: "安装技能包失败。",
+    signalCards: {
+      trackedLabel: "Tracked packs",
+      trackedDetail: "当前代表已经纳入治理范围的技能包总数。",
+      enabledLabel: "Enabled",
+      enabledDetail: "这些 pack 才真正进入代表运行时。",
+      clawHubDetail: "来自 ClawHub 的扩展来源，需要显式启用。",
+      searchResultsLabel: "Search results",
+      searchResultsDetail: "当前搜索面板返回的可安装候选。",
+    },
+    enabled: "启用",
+    disabled: "停用",
+    toggleError: "更新技能包状态失败。",
+    loadingTitle: "技能加载中",
+    loadingHeadline: "正在读取代表已安装的 skill packs 和 ClawHub 搜索结果。",
+    loadingCopy: "完成后会先展示当前代表已追踪的 pack，再给出扩展入口。",
+    panelEyebrow: "Skill Packs",
+    panelSummary: "这里只安装来源和元数据，不执行远程代码。每个 pack 都需要显式启用，才会进入代表运行时。",
+    panelTitle: "从 ClawHub 发现技能包，再按代表边界启用",
+    heroKicker: "Representative boundary",
+    trackedPacks: (count: number) => `${count} packs tracked`,
+    humanLoopOn: "human in loop",
+    humanLoopOff: "ai only",
+    builtInLabel: "Built in",
+    builtInDetail: "内建能力包，默认更稳定更可控。",
+    groupActivationLabel: "Group activation",
+    groupActivationDetail: "群组里默认采用的谨慎触发策略。",
+    publicModeLabel: "Public mode",
+    publicLabel: "Public",
+    privateLabel: "Private",
+    publicModeDetail: "是否以公开代表模式对外开放。",
+    humanLoopLabel: "Human loop",
+    off: "关闭",
+    humanLoopDetail: "高价值升级是否可以转入人工接手。",
+    currentWorkspaceEyebrow: "Current workspace",
+    enabledChip: (count: number) => `${count} enabled`,
+    currentWorkspaceTitle: "Installed on this representative",
+    viewSource: "查看来源",
+    saving: "保存中...",
+    disable: "停用",
+    enable: "启用",
+    noTrackedPacks: "还没有任何已追踪的技能包。",
+    expansionEyebrow: "Expansion",
+    expansionTitle: "在 ClawHub 上发现",
+    searchPlaceholder: "搜索代表技能包",
+    searching: "搜索中...",
+    search: "搜索",
+    open: "打开",
+    tracked: "已追踪",
+    installing: "安装中...",
+    install: "安装",
+  },
+  en: {
+    loadError: "Failed to load dashboard data.",
+    searchError: "Failed to search ClawHub.",
+    installedMessage: (slug: string, rep: string) => `Installed ${slug} for ${rep}.`,
+    installError: "Failed to install the selected skill pack.",
+    signalCards: {
+      trackedLabel: "Tracked packs",
+      trackedDetail: "The total number of packs already governed by this representative.",
+      enabledLabel: "Enabled",
+      enabledDetail: "Only these packs actually enter the representative runtime.",
+      clawHubDetail: "Expansion sources discovered from ClawHub that still require explicit enablement.",
+      searchResultsLabel: "Search results",
+      searchResultsDetail: "Installable candidates returned by the current search.",
+    },
+    enabled: "Enabled",
+    disabled: "Disabled",
+    toggleError: "Failed to update representative skill pack state.",
+    loadingTitle: "Loading skills",
+    loadingHeadline: "Fetching tracked skill packs and ClawHub search results.",
+    loadingCopy: "The dashboard will show what this representative already governs before showing expansion candidates.",
+    panelEyebrow: "Skill Packs",
+    panelSummary: "Delegate installs source metadata here, not remote execution. Every pack must be explicitly enabled before it enters the representative runtime.",
+    panelTitle: "Discover skill packs on ClawHub, then enable them inside representative boundaries",
+    heroKicker: "Representative boundary",
+    trackedPacks: (count: number) => `${count} packs tracked`,
+    humanLoopOn: "human in loop",
+    humanLoopOff: "ai only",
+    builtInLabel: "Built in",
+    builtInDetail: "Builtin packs are usually the most stable and controllable.",
+    groupActivationLabel: "Group activation",
+    groupActivationDetail: "The conservative default policy used inside groups.",
+    publicModeLabel: "Public mode",
+    publicLabel: "Public",
+    privateLabel: "Private",
+    publicModeDetail: "Whether this representative is publicly available.",
+    humanLoopLabel: "Human loop",
+    off: "Off",
+    humanLoopDetail: "Whether high-value escalations can move into direct owner handling.",
+    currentWorkspaceEyebrow: "Current workspace",
+    enabledChip: (count: number) => `${count} enabled`,
+    currentWorkspaceTitle: "Installed on this representative",
+    viewSource: "View source",
+    saving: "Saving...",
+    disable: "Disable",
+    enable: "Enable",
+    noTrackedPacks: "No tracked skill packs yet.",
+    expansionEyebrow: "Expansion",
+    expansionTitle: "Discover on ClawHub",
+    searchPlaceholder: "Search representative skill packs",
+    searching: "Searching...",
+    search: "Search",
+    open: "Open",
+    tracked: "Tracked",
+    installing: "Installing...",
+    install: "Install",
+  },
+} as const;

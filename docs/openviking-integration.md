@@ -166,7 +166,7 @@ Expected local verification:
 - `pnpm docker:up`
 - `curl http://localhost:1933/health`
 - `curl http://localhost:8020/health`
-- `curl http://localhost:3000/api/dashboard/openviking/health`
+- `curl http://localhost:3001/api/dashboard/openviking/health`
 
 For real memory sync and recall, also set one of:
 

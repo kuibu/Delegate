@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useState, useTransition } from "react";
+import { buildLocalizedHref, pickCopy, type Locale } from "@delegate/web-ui";
 
 type RepresentativeDirectoryItem = {
   id: string;
@@ -18,12 +19,17 @@ export function DashboardRepresentativeDirectory({
   activeSlug,
   activeView,
   initialRepresentatives,
+  locale,
+  representativeBaseUrl,
 }: {
   activeSlug: string;
   activeView: "overview" | "setup" | "skills" | "memory";
   initialRepresentatives: RepresentativeDirectoryItem[];
+  locale: Locale;
+  representativeBaseUrl: string;
 }) {
   const router = useRouter();
+  const t = pickCopy(locale, copy);
   const [representatives, setRepresentatives] = useState(initialRepresentatives);
   const [ownerName, setOwnerName] = useState("");
   const [representativeName, setRepresentativeName] = useState("");
@@ -55,7 +61,7 @@ export function DashboardRepresentativeDirectory({
 
         if (!response.ok) {
           const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(payload?.error ?? "Failed to create representative.");
+          throw new Error(payload?.error ?? t.createError);
         }
 
         const created = (await response.json()) as {
@@ -83,14 +89,14 @@ export function DashboardRepresentativeDirectory({
         setRepresentativeName("");
         setSlug("");
         setTagline("");
-        setMessage(`Representative ${created.name} created.`);
-        router.push(`/dashboard?rep=${created.slug}&view=setup`);
+        setMessage(t.createdMessage(created.name));
+        router.push(`/dashboard?rep=${created.slug}&view=setup&lang=${locale}`);
         router.refresh();
       })().catch((nextError: unknown) => {
         setError(
           nextError instanceof Error
             ? nextError.message
-            : "Failed to create representative.",
+            : t.createError,
         );
       });
     });
@@ -100,10 +106,10 @@ export function DashboardRepresentativeDirectory({
     <section className="dashboard-rail-stack">
       <div className="dashboard-rail-header">
         <div>
-          <p className="eyebrow">Workspace</p>
-          <h2>代表、切换、发布</h2>
+          <p className="eyebrow">{t.workspaceEyebrow}</p>
+          <h2>{t.workspaceTitle}</h2>
         </div>
-        <p className="section-copy">左侧只负责选择工作区，右侧才是当前任务页。</p>
+        <p className="section-copy">{t.workspaceCopy}</p>
       </div>
 
       {message ? <div className="status-banner status-success">{message}</div> : null}
@@ -112,29 +118,29 @@ export function DashboardRepresentativeDirectory({
       <article className="dashboard-rail-card">
         <div className="setup-section-header">
           <div>
-            <h3>Create representative</h3>
-            <p>创建后直接进入 setup，不用在超长页面里重新找入口。</p>
+            <h3>{t.createTitle}</h3>
+            <p>{t.createCopy}</p>
           </div>
-          <span className="chip">Telegram only</span>
+          <span className="chip">{t.telegramOnly}</span>
         </div>
 
         <form className="setup-stack" onSubmit={handleSubmit}>
           <label className="field-stack">
-            <span>Owner name</span>
+            <span>{t.ownerName}</span>
             <input
               className="text-input"
               onChange={(event) => setOwnerName(event.target.value)}
-              placeholder="Lin"
+              placeholder={locale === "zh" ? "Lin" : "Lin"}
               value={ownerName}
             />
           </label>
 
           <label className="field-stack">
-            <span>Representative name</span>
+            <span>{t.representativeName}</span>
             <input
               className="text-input"
               onChange={(event) => setRepresentativeName(event.target.value)}
-              placeholder="Lin 的 Telegram 对外代表"
+              placeholder={t.representativePlaceholder}
               value={representativeName}
             />
           </label>
@@ -150,18 +156,18 @@ export function DashboardRepresentativeDirectory({
           </label>
 
           <label className="field-stack">
-            <span>Tagline</span>
+            <span>{t.tagline}</span>
             <input
               className="text-input"
               onChange={(event) => setTagline(event.target.value)}
-              placeholder="用公开知识回答问题、筛选合作线索、收集需求，并在需要时转真人。"
+              placeholder={t.taglinePlaceholder}
               value={tagline}
             />
           </label>
 
           <div className="button-row button-row-stretch">
             <button className="button-primary button-block" disabled={isPending} type="submit">
-              {isPending ? "Creating..." : "Create and open setup"}
+              {isPending ? t.creating : t.createAction}
             </button>
           </div>
         </form>
@@ -170,10 +176,10 @@ export function DashboardRepresentativeDirectory({
       <article className="dashboard-rail-card">
         <div className="setup-section-header">
           <div>
-            <h3>Published representatives</h3>
-            <p>切换代表时保留当前 tab，不打断当前工作流。</p>
+            <h3>{t.publishedTitle}</h3>
+            <p>{t.publishedCopy}</p>
           </div>
-          <span className="chip">{representatives.length} reps</span>
+          <span className="chip">{t.repCount(representatives.length)}</span>
         </div>
 
         <div className="directory-list">
@@ -194,13 +200,16 @@ export function DashboardRepresentativeDirectory({
                 <div className="button-row button-row-stretch">
                   <Link
                     className={isActive ? "button-primary button-block" : "button-secondary button-block"}
-                    href={`/dashboard?rep=${representative.slug}&view=${activeView}`}
+                    href={`/dashboard?rep=${representative.slug}&view=${activeView}&lang=${locale}`}
                   >
-                    {isActive ? "Current workspace" : "Open workspace"}
+                    {isActive ? t.currentWorkspace : t.openWorkspace}
                   </Link>
-                  <Link className="button-secondary button-block" href={`/reps/${representative.slug}`}>
-                    Public page
-                  </Link>
+                  <a
+                    className="button-secondary button-block"
+                    href={buildLocalizedHref(`${representativeBaseUrl}/reps/${representative.slug}`, locale)}
+                  >
+                    {t.publicPage}
+                  </a>
                 </div>
               </article>
             );
@@ -210,3 +219,77 @@ export function DashboardRepresentativeDirectory({
     </section>
   );
 }
+
+const copy: Record<
+  Locale,
+  {
+    createError: string;
+    createdMessage: (name: string) => string;
+    workspaceEyebrow: string;
+    workspaceTitle: string;
+    workspaceCopy: string;
+    createTitle: string;
+    createCopy: string;
+    telegramOnly: string;
+    ownerName: string;
+    representativeName: string;
+    representativePlaceholder: string;
+    tagline: string;
+    taglinePlaceholder: string;
+    creating: string;
+    createAction: string;
+    publishedTitle: string;
+    publishedCopy: string;
+    repCount: (count: number) => string;
+    currentWorkspace: string;
+    openWorkspace: string;
+    publicPage: string;
+  }
+> = {
+  zh: {
+    createError: "创建代表失败。",
+    createdMessage: (name) => `已创建代表 ${name}。`,
+    workspaceEyebrow: "Workspace",
+    workspaceTitle: "代表、切换、发布",
+    workspaceCopy: "左侧只负责选择工作区，右侧才是当前任务页。",
+    createTitle: "创建代表",
+    createCopy: "创建后直接进入 setup，不用在超长页面里重新找入口。",
+    telegramOnly: "仅 Telegram",
+    ownerName: "Owner name",
+    representativeName: "Representative name",
+    representativePlaceholder: "Lin 的 Telegram 对外代表",
+    tagline: "Tagline",
+    taglinePlaceholder: "用公开知识回答问题、筛选合作线索、收集需求，并在需要时转真人。",
+    creating: "创建中...",
+    createAction: "创建并打开 setup",
+    publishedTitle: "已发布代表",
+    publishedCopy: "切换代表时保留当前 tab，不打断当前工作流。",
+    repCount: (count) => `${count} 个 reps`,
+    currentWorkspace: "当前工作区",
+    openWorkspace: "打开工作区",
+    publicPage: "公开页",
+  },
+  en: {
+    createError: "Failed to create representative.",
+    createdMessage: (name) => `Representative ${name} created.`,
+    workspaceEyebrow: "Workspace",
+    workspaceTitle: "Representatives, switching, and publishing",
+    workspaceCopy: "The left rail only chooses the workspace. The right side stays focused on the current task.",
+    createTitle: "Create representative",
+    createCopy: "Create one and jump straight into setup instead of searching through a long settings page.",
+    telegramOnly: "Telegram only",
+    ownerName: "Owner name",
+    representativeName: "Representative name",
+    representativePlaceholder: "Lin's Telegram representative",
+    tagline: "Tagline",
+    taglinePlaceholder: "Answers public questions, qualifies leads, collects demand, and hands off when needed.",
+    creating: "Creating...",
+    createAction: "Create and open setup",
+    publishedTitle: "Published representatives",
+    publishedCopy: "Switch representatives without losing your current tab or workflow context.",
+    repCount: (count) => `${count} reps`,
+    currentWorkspace: "Current workspace",
+    openWorkspace: "Open workspace",
+    publicPage: "Public page",
+  },
+};

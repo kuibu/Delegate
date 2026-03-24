@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import {
   createRepresentative,
   listRepresentativeDirectoryItems,
-} from "../../../../lib/representative-setup";
+} from "@delegate/web-data";
 
 export async function GET() {
   try {

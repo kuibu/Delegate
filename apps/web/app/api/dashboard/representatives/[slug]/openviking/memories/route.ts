@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getRepresentativeOpenVikingMemoryPreview } from "../../../../../../../lib/openviking";
+import { getRepresentativeOpenVikingMemoryPreview } from "@delegate/web-data";
 
 export async function GET(
   _request: Request,

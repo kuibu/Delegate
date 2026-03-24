@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getOpenVikingHealthSnapshot } from "../../../../../lib/openviking";
+import { getOpenVikingHealthSnapshot } from "@delegate/web-data";
 
 export async function GET() {
   try {

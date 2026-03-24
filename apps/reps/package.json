@@ -1,5 +1,5 @@
 {
-  "name": "@delegate/dashboard",
+  "name": "@delegate/reps",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,15 +10,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@delegate/registry": "workspace:*",
-    "@delegate/openviking": "workspace:*",
+    "@delegate/domain": "workspace:*",
     "@delegate/web-data": "workspace:*",
     "@delegate/web-ui": "workspace:*",
-    "@prisma/client": "^6.19.2",
-    "@delegate/domain": "workspace:*",
     "next": "^16.2.1",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "zod": "^4.3.6"
+    "react-dom": "^19.2.0"
   }
 }
