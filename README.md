@@ -57,6 +57,7 @@ packages/
   web-ui/       Shared design system and control-plane UI primitives
 docs/
   architecture.md
+  codex-prompt-architecture-gap-closure.md
   delegate-architecture-decisions.md
   openclaw-adoption.md
   openviking-integration.md
@@ -171,11 +172,14 @@ More detail lives in [docs/openviking-integration.md](./docs/openviking-integrat
 
 The forward-looking architecture decisions, including the isolated compute plane and capability-gate direction, live in [docs/delegate-architecture-decisions.md](./docs/delegate-architecture-decisions.md).
 The concrete Phase A compute-plane delivery checklist lives in [docs/v2-isolated-compute-plane-plan.md](./docs/v2-isolated-compute-plane-plan.md).
+The implementation matrix and ready-to-paste Codex prompts for closing the remaining architecture gaps live in [docs/codex-prompt-architecture-gap-closure.md](./docs/codex-prompt-architecture-gap-closure.md).
 
-Phase B currently ships one narrow execution slice:
+The current governed compute slice now ships:
 
-- `exec` only
-- Docker-isolated commands
+- `exec / read / write / process / browser`
+- Docker-isolated execution
 - policy-driven `allow / ask / deny`
+- approval creation and resolution for risky requests
 - stdout/stderr artifact persistence to MinIO
-- approval request creation for risky commands
+- owner dashboard compute lane with session, approval, artifact, and ledger visibility
+- Telegram `/compute` integration for representative-facing compute requests
