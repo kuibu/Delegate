@@ -636,6 +636,16 @@ button.skill-row:hover {
   overflow-x: auto;
 }
 
+.artifact-preview-image {
+  display: block;
+  width: 100%;
+  max-height: 560px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(15, 28, 35, 0.9);
+}
+
 .setup-stack {
   display: flex;
   flex-direction: column;

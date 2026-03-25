@@ -118,6 +118,11 @@ type ComputeArtifactsSnapshot = {
     objectKey: string;
     mimeType: string;
     sizeBytes: number;
+    isPinned: boolean;
+    pinnedAt?: string;
+    pinnedBy?: string;
+    downloadCount: number;
+    lastDownloadedAt?: string;
     summary?: string;
     createdAt: string;
     retentionUntil?: string;
@@ -135,6 +140,11 @@ type ComputeArtifactDetail = {
     mimeType: string;
     sizeBytes: number;
     sha256: string;
+    isPinned: boolean;
+    pinnedAt?: string | null;
+    pinnedBy?: string | null;
+    downloadCount: number;
+    lastDownloadedAt?: string | null;
     retentionUntil?: string | null;
     summary?: string | null;
     createdAt: string;
@@ -400,6 +410,43 @@ export function DashboardCompute({
         setMessage(
           mcpForm.bindingId ? t.messages.mcpUpdated : t.messages.mcpCreated,
         );
+      })()
+        .catch((nextError: unknown) => {
+          setError(nextError instanceof Error ? nextError.message : t.messages.error);
+        })
+        .finally(() => {
+          setBusyKey(null);
+        });
+    });
+  }
+
+  async function handleToggleArtifactPin(artifactId: string, pinned: boolean) {
+    setBusyKey(`artifact:${artifactId}:${pinned ? "pin" : "unpin"}`);
+    setMessage(null);
+    setError(null);
+
+    startTransition(() => {
+      void (async () => {
+        const response = await fetch(
+          `/api/dashboard/representatives/${representativeSlug}/compute/artifacts/${artifactId}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              pinned,
+              pinnedBy: "owner-dashboard",
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(await extractError(response));
+        }
+
+        await refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+        setMessage(pinned ? t.messages.artifactPinned : t.messages.artifactUnpinned);
       })()
         .catch((nextError: unknown) => {
           setError(nextError instanceof Error ? nextError.message : t.messages.error);
@@ -811,7 +858,9 @@ export function DashboardCompute({
                     <div className="chip-row">
                       <span className="chip">{artifact.mimeType}</span>
                       <span className="chip">{formatBytes(artifact.sizeBytes)}</span>
+                      <span className="chip">{t.downloadCountChip(artifact.downloadCount)}</span>
                       <span className="chip">{formatTimestamp(artifact.createdAt, locale)}</span>
+                      {artifact.isPinned ? <span className="chip chip-safe">{t.pinnedChip}</span> : null}
                       {artifact.retentionUntil ? (
                         <span className="chip">
                           {t.retentionChip(formatTimestamp(artifact.retentionUntil, locale))}
@@ -842,6 +891,13 @@ export function DashboardCompute({
         >
           {artifactDetail ? (
             <div className="row-list">
+              {(() => {
+                const artifactPreviewUrl = artifactDetail.artifact.mimeType.startsWith("image/")
+                  ? `/api/dashboard/representatives/${representativeSlug}/compute/artifacts/${artifactDetail.artifact.id}/download?inline=1`
+                  : null;
+
+                return (
+                  <>
               <div className="skill-row">
                 <div>
                   <strong>{artifactDetail.artifact.kind}</strong>
@@ -850,10 +906,27 @@ export function DashboardCompute({
                     <span className="chip">{artifactDetail.artifact.mimeType}</span>
                     <span className="chip">{formatBytes(artifactDetail.artifact.sizeBytes)}</span>
                     <span className="chip">{artifactDetail.artifact.sha256.slice(0, 12)}</span>
+                    <span className="chip">{t.downloadCountChip(artifactDetail.artifact.downloadCount)}</span>
+                    {artifactDetail.artifact.isPinned ? (
+                      <span className="chip chip-safe">{t.pinnedChip}</span>
+                    ) : null}
                   </div>
+                  {artifactDetail.artifact.lastDownloadedAt ? (
+                    <p className="footer-note">
+                      {t.lastDownloadedLabel(
+                        formatTimestamp(artifactDetail.artifact.lastDownloadedAt, locale),
+                      )}
+                    </p>
+                  ) : null}
                 </div>
               </div>
-              {artifactDetail.contentText ? (
+              {artifactPreviewUrl ? (
+                <img
+                  alt={`${artifactDetail.artifact.kind} preview`}
+                  className="artifact-preview-image"
+                  src={artifactPreviewUrl}
+                />
+              ) : artifactDetail.contentText ? (
                 <pre className="artifact-preview">{artifactDetail.contentText}</pre>
               ) : (
                 <p className="muted">{t.noArtifactPreview}</p>
@@ -865,8 +938,35 @@ export function DashboardCompute({
                 >
                   {t.downloadArtifact}
                 </a>
+                <button
+                  className="button-secondary"
+                  disabled={
+                    isPending ||
+                    busyKey === `artifact:${artifactDetail.artifact.id}:pin` ||
+                    busyKey === `artifact:${artifactDetail.artifact.id}:unpin`
+                  }
+                  onClick={() =>
+                    void handleToggleArtifactPin(
+                      artifactDetail.artifact.id,
+                      !artifactDetail.artifact.isPinned,
+                    )
+                  }
+                  type="button"
+                >
+                  {busyKey === `artifact:${artifactDetail.artifact.id}:pin` ||
+                  busyKey === `artifact:${artifactDetail.artifact.id}:unpin`
+                    ? artifactDetail.artifact.isPinned
+                      ? t.unpinningArtifact
+                      : t.pinningArtifact
+                    : artifactDetail.artifact.isPinned
+                      ? t.unpinArtifact
+                      : t.pinArtifact}
+                </button>
                 {artifactDetail.truncated ? <span className="chip">{t.previewTruncated}</span> : null}
               </div>
+                  </>
+                );
+              })()}
             </div>
           ) : (
             <p className="muted">{t.noArtifactSelected}</p>
@@ -1086,9 +1186,16 @@ const copy = {
     artifactDetailEyebrow: "Artifact Detail",
     artifactDetailTitle: "直接查看 artifact 内容，而不是只看 object key",
     retentionChip: (value: string) => `retains until ${value}`,
+    pinnedChip: "已置顶",
+    downloadCountChip: (count: number) => `下载 ${count}`,
+    lastDownloadedLabel: (value: string) => `最近下载于 ${value}`,
     noArtifactSelected: "先从左侧 artifact 列表里选择一个输出。",
     noArtifactPreview: "这个 artifact 当前没有可直接内联展示的文本预览。",
     downloadArtifact: "下载 artifact",
+    pinArtifact: "置顶 artifact",
+    unpinArtifact: "取消置顶",
+    pinningArtifact: "置顶中...",
+    unpinningArtifact: "取消中...",
     previewTruncated: "预览已截断",
     ledgerEyebrow: "Billing Ledger",
     ledgerTitle: "看清每次执行到底烧掉了多少 credits",
@@ -1100,6 +1207,8 @@ const copy = {
       rejected: "审批已拒绝，相关 execution 已取消。",
       mcpCreated: "新的 MCP binding 已保存。现在这个代表可以把远程 capability server 当成受控能力来调用。",
       mcpUpdated: "MCP binding 已更新。",
+      artifactPinned: "Artifact 已置顶，会保留在对象存储里供后续复用。",
+      artifactUnpinned: "Artifact 已取消置顶，并恢复默认保留策略。",
       error: "处理审批失败。",
     },
   },
@@ -1199,9 +1308,16 @@ const copy = {
     artifactDetailEyebrow: "Artifact Detail",
     artifactDetailTitle: "Inspect artifact content directly instead of just reading the object key",
     retentionChip: (value: string) => `retains until ${value}`,
+    pinnedChip: "pinned",
+    downloadCountChip: (count: number) => `${count} downloads`,
+    lastDownloadedLabel: (value: string) => `Last downloaded ${value}`,
     noArtifactSelected: "Select an artifact from the list to inspect it here.",
     noArtifactPreview: "This artifact does not currently have an inline text preview.",
     downloadArtifact: "Download artifact",
+    pinArtifact: "Pin artifact",
+    unpinArtifact: "Unpin artifact",
+    pinningArtifact: "Pinning...",
+    unpinningArtifact: "Unpinning...",
     previewTruncated: "Preview truncated",
     ledgerEyebrow: "Billing Ledger",
     ledgerTitle: "See how many credits each execution actually burned",
@@ -1213,6 +1329,8 @@ const copy = {
       rejected: "Approval rejected. The linked execution has been canceled.",
       mcpCreated: "A new MCP binding has been saved.",
       mcpUpdated: "The MCP binding has been updated.",
+      artifactPinned: "The artifact is pinned and will stay available beyond the default retention window.",
+      artifactUnpinned: "The artifact has been unpinned and returned to the default retention policy.",
       error: "Failed to resolve approval.",
     },
   },

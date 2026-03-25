@@ -99,6 +99,33 @@ export async function persistJsonArtifact(params: {
   });
 }
 
+export async function persistScreenshotArtifact(params: {
+  representativeId: string;
+  representativeSlug: string;
+  contactId?: string | null | undefined;
+  conversationId?: string | null | undefined;
+  sessionId: string;
+  executionId: string;
+  retentionDays: number;
+  body: Buffer;
+  mimeType?: "image/png" | "image/jpeg";
+  summary?: string;
+}) {
+  return persistBufferArtifact({
+    representativeId: params.representativeId,
+    representativeSlug: params.representativeSlug,
+    contactId: params.contactId,
+    conversationId: params.conversationId,
+    sessionId: params.sessionId,
+    executionId: params.executionId,
+    kind: "SCREENSHOT",
+    body: params.body,
+    mimeType: params.mimeType ?? "image/png",
+    retentionDays: params.retentionDays,
+    ...(params.summary ? { summary: params.summary } : {}),
+  });
+}
+
 async function persistTextArtifact(params: {
   representativeId: string;
   representativeSlug: string;
@@ -126,14 +153,14 @@ async function persistTextArtifact(params: {
   });
 }
 
-async function persistBufferArtifact(params: {
+export async function persistBufferArtifact(params: {
   representativeId: string;
   representativeSlug: string;
   contactId?: string | null | undefined;
   conversationId?: string | null | undefined;
   sessionId: string;
   executionId: string;
-  kind: "STDOUT" | "STDERR" | "JSON" | "TRACE";
+  kind: "STDOUT" | "STDERR" | "FILE" | "ARCHIVE" | "SCREENSHOT" | "JSON" | "TRACE";
   body: Buffer;
   mimeType: string;
   retentionDays: number;
@@ -147,7 +174,14 @@ async function persistBufferArtifact(params: {
     conversationId: params.conversationId,
     sessionId: params.sessionId,
     executionId: params.executionId,
-    artifactKind: params.kind.toLowerCase() as "stdout" | "stderr" | "json" | "trace",
+    artifactKind: params.kind.toLowerCase() as
+      | "stdout"
+      | "stderr"
+      | "file"
+      | "archive"
+      | "screenshot"
+      | "json"
+      | "trace",
     artifactId,
   });
 

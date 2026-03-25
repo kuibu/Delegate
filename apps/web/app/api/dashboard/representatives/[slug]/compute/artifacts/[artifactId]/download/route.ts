@@ -3,10 +3,11 @@ import { NextResponse } from "next/server";
 import { getRepresentativeComputeArtifactDownload } from "@delegate/web-data";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ slug: string; artifactId: string }> },
 ) {
   const { slug, artifactId } = await params;
+  const inline = new URL(request.url).searchParams.get("inline") === "1";
 
   try {
     const artifact = await getRepresentativeComputeArtifactDownload(slug, artifactId);
@@ -18,7 +19,7 @@ export async function GET(
       status: 200,
       headers: {
         "Content-Type": artifact.mimeType,
-        "Content-Disposition": `attachment; filename="${artifact.fileName}"`,
+        "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${artifact.fileName}"`,
       },
     });
   } catch (error) {

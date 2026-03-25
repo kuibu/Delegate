@@ -22,6 +22,7 @@ export type ExecutionBillingSummary = {
   estimatedCredits?: number;
   actualCredits?: number;
   computeCostCents?: number;
+  browserCostCents?: number;
   storageCostCents?: number;
   conversationBudgetRemainingCredits?: number | null;
   ownerBalanceCredits?: number | null;
@@ -85,6 +86,9 @@ export async function applyExecutionBilling(params: {
   storageCredits: number;
   computeCostCents: number;
   storageCostCents: number;
+  capability: CapabilityKind;
+  wallMs: number;
+  artifactBytes: number;
   finishedAt: Date;
 }) {
   return prisma.$transaction(async (tx) => {
@@ -110,7 +114,11 @@ export async function applyExecutionBilling(params: {
     let remainingConversationCredits = conversation?.computeBudgetRemainingCredits ?? null;
     let remainingOwnerBalanceCredits = wallet?.balanceCredits ?? null;
     let remainingSponsorPoolCredits = wallet?.sponsorPoolCredit ?? null;
-    let creditsLeftToCharge = params.computeCredits + params.storageCredits;
+    const totalCreditsToCharge = params.computeCredits + params.storageCredits;
+    let creditsLeftToCharge = totalCreditsToCharge;
+    let debitedFromConversation = 0;
+    let debitedFromOwner = 0;
+    let debitedFromSponsor = 0;
 
     if (
       typeof remainingConversationCredits === "number" &&
@@ -120,6 +128,7 @@ export async function applyExecutionBilling(params: {
       const debit = Math.min(remainingConversationCredits, creditsLeftToCharge);
       remainingConversationCredits -= debit;
       creditsLeftToCharge -= debit;
+      debitedFromConversation += debit;
     }
 
     if (
@@ -130,6 +139,7 @@ export async function applyExecutionBilling(params: {
       const debit = Math.min(remainingOwnerBalanceCredits, creditsLeftToCharge);
       remainingOwnerBalanceCredits -= debit;
       creditsLeftToCharge -= debit;
+      debitedFromOwner += debit;
     }
 
     if (
@@ -140,6 +150,7 @@ export async function applyExecutionBilling(params: {
       const debit = Math.min(remainingSponsorPoolCredits, creditsLeftToCharge);
       remainingSponsorPoolCredits -= debit;
       creditsLeftToCharge -= debit;
+      debitedFromSponsor += debit;
     }
 
     if (conversation?.id) {
@@ -179,14 +190,11 @@ export async function applyExecutionBilling(params: {
         sessionId: params.sessionId,
         toolExecutionId: params.toolExecutionId,
         kind: "COMPUTE_MINUTES",
-        quantity: params.computeCredits,
-        unit: "credit",
+        quantity: Math.max(params.wallMs / 60000, params.wallMs > 0 ? 1 / 60 : 0),
+        unit: "minute",
         costCents: params.computeCostCents,
-        creditDelta: -params.computeCredits,
-        notes:
-          creditsLeftToCharge > 0
-            ? `partial_charge_unsettled:${creditsLeftToCharge}`
-            : "compute_usage_charge",
+        creditDelta: 0,
+        notes: "compute_usage",
       },
     });
 
@@ -198,17 +206,78 @@ export async function applyExecutionBilling(params: {
         sessionId: params.sessionId,
         toolExecutionId: params.toolExecutionId,
         kind: "STORAGE_BYTES",
-        quantity: params.storageCredits,
-        unit: "credit",
+        quantity: params.artifactBytes,
+        unit: "byte",
         costCents: params.storageCostCents,
-        creditDelta: -params.storageCredits,
+        creditDelta: 0,
         notes: "artifact_storage_charge",
       },
     });
 
+    if (params.capability === "browser") {
+      await tx.ledgerEntry.create({
+        data: {
+          representativeId: params.representativeId,
+          contactId: params.contactId ?? null,
+          conversationId: params.conversationId ?? null,
+          sessionId: params.sessionId,
+          toolExecutionId: params.toolExecutionId,
+          kind: "BROWSER_MINUTES",
+          quantity: Math.max(params.wallMs / 60000, params.wallMs > 0 ? 1 / 60 : 0),
+          unit: "minute",
+          costCents: params.computeCostCents,
+          creditDelta: 0,
+          notes: "browser_usage",
+        },
+      });
+    }
+
+    const debitEntries = [
+      {
+        source: "conversation_budget",
+        amount: debitedFromConversation,
+      },
+      {
+        source: "owner_wallet",
+        amount: debitedFromOwner,
+      },
+      {
+        source: "sponsor_pool",
+        amount: debitedFromSponsor,
+      },
+    ].filter((entry) => entry.amount > 0);
+
+    if (!debitEntries.length && totalCreditsToCharge > 0) {
+      debitEntries.push({
+        source: "unsettled",
+        amount: totalCreditsToCharge,
+      });
+    }
+
+    await Promise.all(
+      debitEntries.map((entry) =>
+        tx.ledgerEntry.create({
+          data: {
+            representativeId: params.representativeId,
+            contactId: params.contactId ?? null,
+            conversationId: params.conversationId ?? null,
+            sessionId: params.sessionId,
+            toolExecutionId: params.toolExecutionId,
+            kind: "PLAN_DEBIT",
+            quantity: entry.amount,
+            unit: "credit",
+            costCents: 0,
+            creditDelta: -entry.amount,
+            notes: `${entry.source}_debit`,
+          },
+        }),
+      ),
+    );
+
     return {
-      actualCredits: params.computeCredits + params.storageCredits,
+      actualCredits: totalCreditsToCharge,
       computeCostCents: params.computeCostCents,
+      browserCostCents: params.capability === "browser" ? params.computeCostCents : 0,
       storageCostCents: params.storageCostCents,
       conversationBudgetRemainingCredits: remainingConversationCredits,
       ownerBalanceCredits: remainingOwnerBalanceCredits,

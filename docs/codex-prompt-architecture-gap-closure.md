@@ -19,8 +19,8 @@ Delegate already has a meaningful middle state:
 - OpenAI Responses-backed reply generation with deterministic fallback
 - OpenViking-backed public-safe memory layer
 - ClawHub-backed skill discovery and provenance
-- Playwright-backed deterministic browser lane
-- governed compute plane with approvals, artifacts, and dual-ledger seed
+- Playwright-backed deterministic browser lane with screenshot/json artifacts and dashboard preview
+- governed compute plane with reusable leases, approvals, artifacts, and richer dual-ledger accounting
 - lifecycle hook bus for model, handoff, and compute audit points
 - owner dashboard control plane
 
@@ -29,9 +29,8 @@ Delegate does **not** yet have the full target stack described in the architectu
 - no Anthropic secondary model lane
 - no native Claude/OpenAI computer-use lane
 - no Temporal orchestration
-- no reusable compute-lease model yet
 - no scoped subagents
-- no org-managed permission layer
+- no org/customer-managed permission layer
 
 Treat the matrix below as source of truth for "what is done vs. what is still next".
 
@@ -50,16 +49,16 @@ This matters because every future capability lane must inherit the same conversa
 | # | Area | Current status | What is already in repo | Next step | Why it is not fully done yet | Priority |
 |---|------|----------------|-------------------------|-----------|------------------------------|----------|
 | 1 | Model access layer | Partial, foundation landed | Public runtime now has an `OpenAI Responses` answer lane, structured context assembly, usage ledger hooks, and deterministic fallback | Add Anthropic/Claude as the secondary lane, sharpen provider cooldown/fallback, and harden model cost accounting | The repo intentionally shipped the smallest trustworthy model path before adding a second provider lane | P1 |
-| 2 | General compute plane | Partial, strong foundation | Docker-isolated broker, capability policy, approval flow, artifact persistence, dual-ledger debit path, Telegram `/compute` entry | Turn logical `ComputeSession` into a real reusable lease model or runner abstraction, then prepare microVM upgrade path | Current implementation uses `docker run --rm` per execution because it was the fastest safe way to close approval/artifact/billing loops | P0 |
-| 3 | Browser / computer use | Partial, deterministic lane landed | A governed `browser` capability now runs through an isolated Playwright lane with approval, artifacts, and billing | Add richer browser session management, screenshot/download UX, and native Claude/OpenAI computer-use lanes behind approvals | The current slice proves governed browser execution, but not the higher-level native computer-use stack yet | P1 |
+| 2 | General compute plane | Partial, strong foundation | Docker-isolated broker, reusable compute leases, capability policy, approval flow, artifact persistence, richer debit path, Telegram `/compute` entry | Keep the reusable lease model, then prepare runner abstraction hardening and microVM upgrade path | Docker-backed leases are now real, but the runner stack is still single-backend and not microVM-ready yet | P1 |
+| 3 | Browser / computer use | Partial, richer lane landed | A governed `browser` capability now runs through an isolated Playwright lane with approval, artifacts, screenshot/json outputs, and dashboard preview support | Add richer browser session management, multi-step browser workflows, and native Claude/OpenAI computer-use lanes behind approvals | The current slice proves governed browser execution and artifact UX, but not the higher-level native computer-use stack yet | P1 |
 | 4 | Permission system | Partial, managed overlays landed | `allow / ask / deny`, capability rules, path/domain/cost/paid-plan gates, dashboard-editable compute defaults, managed overlay profiles with channel / plan-tier conditions, and conversation-scoped compute entitlements | Add richer resource scopes, customer/org policy overlays, and broader approval-aware capability binding across future transports | The product still has no org/IAM layer, and policy is still representative-centric rather than customer/org managed | P1 |
 | 5 | Hooks and audit | Partial, explicit bus landed | Lifecycle hook bus now exists for `PreToolUse`, `PostToolUse`, `SessionEnd`, `PreHandoff`, and model reply/context audit points | Expand hooks into retention, memory filtering, billing budget gates, and owner-facing webhookable summaries | The first hook slice focused on making lifecycle boundaries explicit before adding programmable policies | P1 |
 | 6 | Subagents / multi-agent | Not started | Structured collectors and compute broker exist, but there are no scoped subagents | Introduce explicit `triage-agent`, `compute-agent`, `browser-agent`, `quote-agent`, and `handoff-agent` with isolated budgets and tool scopes | This belongs to the next networked phase, not the current Founder Representative wedge | P2 |
 | 7 | Context management | Partial, structured assembler landed | Postgres truth + OpenViking recall/commit + artifact store + ephemeral compute state are present, and the model lane now assembles contract/snapshot/collector/recent-turn/recall segments with token estimates | Add richer context editing, tool-result compaction, and adaptive recall/token budgeting | Advanced pruning is still heuristic and there is no Claude-style context editing or token-aware multi-provider stack yet | P1 |
-| 8 | Files and artifacts | Partial, strong | Object storage, retention, representative/contact/session attribution, detail/download APIs, dashboard artifact viewer | Expand beyond stdout/stderr into screenshots, generated docs, archives, pinned artifacts, and unified material/file workflows | Compute outputs were the smallest high-value slice to ship first | P1 |
+| 8 | Files and artifacts | Partial, strong | Object storage, retention, representative/contact/session attribution, detail/download APIs, dashboard artifact viewer, pinned artifacts, download tracking, and artifact egress ledger entries | Expand beyond stdout/stderr into screenshots, generated docs, archives, richer filtering, and unified material/file workflows | Compute outputs and artifact governance shipped first; broader deliverable/file ergonomics are still ahead | P1 |
 | 9 | Memory | Partial, strong | Public-safe OpenViking memory, filtering, provenance, recall traces, commit traces, separation from artifacts and Postgres truth | Add memory promotion rules, stronger safety classification, and tool-like memory access semantics for the future model runtime | The current design intentionally keeps memory conservative and bounded until the model layer is in place | P1 |
 | 10 | MCP and capability transport | Partial, first remote path landed | ClawHub discovery/provenance, internal capability services, remote MCP execution, allowlists, provenance, policy binding, and approval defaults exist | Expand transport coverage, richer provenance, retry semantics, and stronger dashboard/approval ergonomics for remote capability execution | The first safe MCP path is in place, but it is still a narrow `streamable_http` lane without broader transport/runtime management | P1 |
-| 11 | Billing | Partial, strong seed | Wallet, sponsor pool, conversation compute budget, compute/storage ledger, Telegram Stars plans | Add model cost accounting, browser/minutes/egress accounting, MCP cost accounting, and a productized `Compute Pass` | Internal compute/storage accounting landed before model/browser/MCP cost layers existed | P1 |
+| 11 | Billing | Partial, stronger foundation | Wallet, sponsor pool, conversation compute budget, compute/storage/egress ledger, Telegram Stars plans, and split usage-vs-debit execution billing | Add model cost accounting, browser/minutes accounting, MCP cost accounting, and a productized `Compute Pass` | Internal compute/storage/egress accounting landed before model/browser/MCP cost layers existed | P1 |
 | 12 | Final target stack | Partial overall | OpenViking, Postgres, object storage, Docker compute, capability policy, owner dashboard are live | Close rows `1, 3, 5, 7, 10, 11` and then add Temporal + secrets manager | The repo is at an intentional middle state: `public representative + governed compute`, not the full end-state | Reference |
 
 ## Key files by area
@@ -95,17 +94,16 @@ Do **not** try to close all 12 rows in one pass.
 
 Recommended order:
 
-1. `P0` Reusable compute lease model + runner abstraction
-2. `P1-C` Richer billing and file/artifact productization
-3. `P1-D` Richer browser session management and native computer-use preparation
-4. `P2-A` Scoped subagents
-5. `P2-B` Temporal and broader agent-network infrastructure
+1. `P1-D` Richer browser session management and native computer-use preparation
+2. `P1-E` Model billing expansion and provider secondary lane hardening
+3. `P2-A` Scoped subagents
+4. `P2-B` Temporal and broader agent-network infrastructure
 
 Why this order:
 
-- Row `2` is now the highest-leverage missing layer because compute is still modeled as a session but executed as one-off containers
-- Row `11` becomes much more meaningful once sessions have a real reusable lease lifecycle and richer artifact semantics
-- Row `3` should deepen only after the shared lease/session substrate exists
+- Row `2` is now strong enough that browser/native computer-use can deepen on top of a real lease/session substrate
+- Row `11` now has a better base, so the next billing work should focus on model/browser/MCP cost layers instead of storage-only seed accounting
+- Row `3` is the next natural product-facing step after reusable leases and artifact governance landed
 - Row `6` should still wait until compute, billing, and capability boundaries are more stable
 
 ## Codex prompt rules
@@ -219,8 +217,9 @@ Replace the current minimal browser capability with a real governed browser stac
 Current repo state:
 - compute broker exists
 - approvals, artifacts, and billing exist
-- browser capability is currently a sandboxed fetch-style lane
-- this is not sufficient for the intended Delegate architecture
+- browser capability now runs through an isolated Playwright lane
+- screenshot/json artifacts and dashboard preview support exist
+- this is still not sufficient for the intended Delegate architecture
 
 Goal:
 Implement a dual browser strategy foundation:
@@ -230,9 +229,9 @@ Implement a dual browser strategy foundation:
 Implement end to end:
 1. browser-runner service or browser lane inside compute broker
 2. session-scoped browser isolation
-3. screenshot/download artifact persistence
+3. build on screenshot/download artifact persistence
 4. approval gating for authenticated/destructive flows
-5. dashboard visibility for browser artifacts
+5. deepen dashboard visibility for browser artifacts and browser session state
 6. docs and verification
 
 Constraints:
@@ -380,12 +379,13 @@ Upgrade Delegate's artifact layer from stdout/stderr-centric storage into a broa
 
 Current repo state:
 - object storage exists
-- stdout/stderr artifacts are persisted
+- stdout/stderr/json artifacts are persisted
 - detail and download APIs exist
 - dashboard artifact viewer exists
+- pinned artifacts and download tracking exist
 
 Goal:
-Expand the artifact system toward a real representative file/output layer.
+Expand the artifact system from governed compute outputs into a broader representative file/output layer.
 
 Implement end to end:
 1. support additional artifact kinds such as:
@@ -394,7 +394,7 @@ Implement end to end:
    - generated document
    - archive
 2. improve metadata and retention handling
-3. support pinned artifacts or owner-preserved artifacts
+3. build on pinned artifacts or owner-preserved artifacts with better workflows
 4. improve dashboard browsing/filtering/downloading
 5. document how public materials vs compute outputs are distinguished
 
@@ -477,7 +477,8 @@ Expand Delegate's dual-ledger system so it covers the full architecture, not jus
 
 Current repo state:
 - wallet, sponsor pool, and Telegram Stars plans exist
-- compute and storage debit entries exist
+- compute, storage, and artifact-egress usage accounting exist
+- execution billing now splits usage records from debit records
 - conversation compute budget exists
 - there is no model-cost accounting layer yet
 - there is no productized Compute Pass yet

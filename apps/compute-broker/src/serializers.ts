@@ -270,6 +270,11 @@ export function serializeArtifact(artifact: {
   mimeType: string;
   sizeBytes: number;
   sha256: string;
+  isPinned: boolean;
+  pinnedAt: Date | null;
+  pinnedBy: string | null;
+  downloadCount: number;
+  lastDownloadedAt: Date | null;
   retentionUntil: Date | null;
   summary: string | null;
   createdAt: Date;
@@ -287,6 +292,11 @@ export function serializeArtifact(artifact: {
     mimeType: artifact.mimeType,
     sizeBytes: artifact.sizeBytes,
     sha256: artifact.sha256,
+    isPinned: artifact.isPinned,
+    pinnedAt: artifact.pinnedAt?.toISOString() ?? null,
+    pinnedBy: artifact.pinnedBy,
+    downloadCount: artifact.downloadCount,
+    lastDownloadedAt: artifact.lastDownloadedAt?.toISOString() ?? null,
     retentionUntil: artifact.retentionUntil?.toISOString() ?? null,
     summary: artifact.summary,
     createdAt: artifact.createdAt.toISOString(),

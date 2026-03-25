@@ -292,9 +292,23 @@ export const artifactSnapshotSchema = z.object({
   mimeType: z.string(),
   sizeBytes: z.number().int().nonnegative(),
   sha256: z.string(),
+  isPinned: z.boolean().default(false),
+  pinnedAt: z.string().datetime().nullable(),
+  pinnedBy: z.string().nullable(),
+  downloadCount: z.number().int().nonnegative().default(0),
+  lastDownloadedAt: z.string().datetime().nullable(),
   retentionUntil: z.string().datetime().nullable(),
   summary: z.string().nullable(),
   createdAt: z.string().datetime(),
+});
+
+export const updateArtifactRequestSchema = z.object({
+  pinned: z.boolean(),
+  pinnedBy: z.string().trim().min(1).optional(),
+});
+
+export const updateArtifactResponseSchema = z.object({
+  artifact: artifactSnapshotSchema,
 });
 
 export const toolExecutionSnapshotSchema = z.object({
@@ -329,6 +343,7 @@ export const executeToolResponseSchema = z.object({
       estimatedCredits: z.number().int().nonnegative().optional(),
       actualCredits: z.number().int().nonnegative().optional(),
       computeCostCents: z.number().int().nonnegative().optional(),
+      browserCostCents: z.number().int().nonnegative().optional(),
       storageCostCents: z.number().int().nonnegative().optional(),
       conversationBudgetRemainingCredits: z.number().int().nullable().optional(),
       ownerBalanceCredits: z.number().int().nullable().optional(),
@@ -410,6 +425,8 @@ export type ApprovalRequestSnapshot = z.infer<typeof approvalRequestSnapshotSche
 export type ResolveApprovalRequest = z.infer<typeof resolveApprovalRequestSchema>;
 export type ResolveApprovalResponse = z.infer<typeof resolveApprovalResponseSchema>;
 export type ArtifactSnapshot = z.infer<typeof artifactSnapshotSchema>;
+export type UpdateArtifactRequest = z.infer<typeof updateArtifactRequestSchema>;
+export type UpdateArtifactResponse = z.infer<typeof updateArtifactResponseSchema>;
 export type ExecuteToolResponse = z.infer<typeof executeToolResponseSchema>;
 export type ListArtifactsResponse = z.infer<typeof listArtifactsResponseSchema>;
 export type ListApprovalsResponse = z.infer<typeof listApprovalsResponseSchema>;

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildPlaywrightBrowseCommand } from "../src/browser";
+import {
+  buildPlaywrightBrowseCommand,
+  parsePlaywrightBrowseArtifactPayload,
+} from "../src/browser";
 
 describe("buildPlaywrightBrowseCommand", () => {
   it("builds a Playwright-backed browser command", () => {
@@ -14,5 +17,36 @@ describe("buildPlaywrightBrowseCommand", () => {
     expect(command).toContain('require(\'"\'"\'playwright\'"\'"\')');
     expect(command).toContain("page.goto");
     expect(command).toContain("https://example.com");
+    expect(command).toContain("page.screenshot");
+    expect(command).toContain("type: '\"'\"'jpeg'\"'\"'");
+    expect(command).toContain("screenshotBase64");
+  });
+
+  it("parses structured browser output", () => {
+    const payload = parsePlaywrightBrowseArtifactPayload(
+      JSON.stringify({
+        title: "Example Domain",
+        finalUrl: "https://example.com/",
+        textSnippet: "Example Domain This domain is for use in illustrative examples.",
+        contentSnippet: "<html><body>Example Domain</body></html>",
+        links: [{ text: "More information", href: "https://www.iana.org/domains/example" }],
+        screenshotBase64: "cG5n",
+        screenshotMimeType: "image/jpeg",
+      }),
+    );
+
+    expect(payload).toEqual({
+      title: "Example Domain",
+      finalUrl: "https://example.com/",
+      textSnippet: "Example Domain This domain is for use in illustrative examples.",
+      contentSnippet: "<html><body>Example Domain</body></html>",
+      links: [{ text: "More information", href: "https://www.iana.org/domains/example" }],
+      screenshotBase64: "cG5n",
+      screenshotMimeType: "image/jpeg",
+    });
+  });
+
+  it("returns null for malformed browser output", () => {
+    expect(parsePlaywrightBrowseArtifactPayload("not-json")).toBeNull();
   });
 });

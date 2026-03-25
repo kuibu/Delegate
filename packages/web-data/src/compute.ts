@@ -1,11 +1,17 @@
+import { posix as pathPosix } from "node:path";
+
 import { Prisma } from "@prisma/client";
 import {
+  updateArtifactRequestSchema,
+  updateArtifactResponseSchema,
   upsertMcpBindingRequestSchema,
   type ArtifactDetailResponse,
   type McpBindingSnapshot,
   type ResolveApprovalResponse,
+  type UpdateArtifactResponse,
   type UpsertMcpBindingRequest,
 } from "@delegate/compute-protocol";
+import { resolveArtifactRetentionUntil } from "@delegate/artifacts";
 
 import { readArtifactObject } from "./artifact-store";
 import { prisma } from "./prisma";
@@ -184,6 +190,11 @@ export type RepresentativeComputeArtifactSnapshot = {
     objectKey: string;
     mimeType: string;
     sizeBytes: number;
+    isPinned: boolean;
+    pinnedAt?: string;
+    pinnedBy?: string;
+    downloadCount: number;
+    lastDownloadedAt?: string;
     summary?: string;
     createdAt: string;
     retentionUntil?: string;
@@ -314,6 +325,13 @@ export async function getRepresentativeComputeArtifacts(
       objectKey: artifact.objectKey,
       mimeType: artifact.mimeType,
       sizeBytes: artifact.sizeBytes,
+      isPinned: artifact.isPinned,
+      downloadCount: artifact.downloadCount,
+      ...(artifact.pinnedAt ? { pinnedAt: artifact.pinnedAt.toISOString() } : {}),
+      ...(artifact.pinnedBy ? { pinnedBy: artifact.pinnedBy } : {}),
+      ...(artifact.lastDownloadedAt
+        ? { lastDownloadedAt: artifact.lastDownloadedAt.toISOString() }
+        : {}),
       ...(artifact.summary ? { summary: artifact.summary } : {}),
       createdAt: artifact.createdAt.toISOString(),
       ...(artifact.retentionUntil ? { retentionUntil: artifact.retentionUntil.toISOString() } : {}),
@@ -369,6 +387,11 @@ export async function getRepresentativeComputeArtifactDetail(
       mimeType: artifact.mimeType,
       sizeBytes: artifact.sizeBytes,
       sha256: artifact.sha256,
+      isPinned: artifact.isPinned,
+      pinnedAt: artifact.pinnedAt?.toISOString() ?? null,
+      pinnedBy: artifact.pinnedBy,
+      downloadCount: artifact.downloadCount,
+      lastDownloadedAt: artifact.lastDownloadedAt?.toISOString() ?? null,
       retentionUntil: artifact.retentionUntil?.toISOString() ?? null,
       summary: artifact.summary,
       createdAt: artifact.createdAt.toISOString(),
@@ -394,11 +417,94 @@ export async function getRepresentativeComputeArtifactDownload(
 
   const { buffer } = await readArtifactObject(artifact.objectKey);
 
+  const now = new Date();
+  const egressCostCents = Math.max(1, Math.ceil(buffer.byteLength / 65536));
+  await prisma.$transaction([
+    prisma.artifact.update({
+      where: { id: artifact.id },
+      data: {
+        downloadCount: {
+          increment: 1,
+        },
+        lastDownloadedAt: now,
+      },
+    }),
+    prisma.ledgerEntry.create({
+      data: {
+        representativeId: artifact.representativeId,
+        contactId: artifact.contactId,
+        conversationId: artifact.conversationId,
+        sessionId: artifact.sessionId,
+        toolExecutionId: artifact.toolExecutionId,
+        kind: "ARTIFACT_EGRESS",
+        quantity: buffer.byteLength,
+        unit: "byte",
+        costCents: egressCostCents,
+        creditDelta: 0,
+        notes: "artifact_download_egress",
+      },
+    }),
+  ]);
+
   return {
     fileName: buildArtifactFileName(artifact),
     mimeType: artifact.mimeType,
     buffer,
   };
+}
+
+export async function updateRepresentativeComputeArtifact(
+  representativeSlug: string,
+  artifactId: string,
+  rawInput: unknown,
+): Promise<UpdateArtifactResponse | null> {
+  const input = updateArtifactRequestSchema.parse(rawInput);
+  const artifact = await getRepresentativeArtifactRecord(representativeSlug, artifactId);
+
+  if (!artifact) {
+    return null;
+  }
+
+  const nextRetentionUntil = input.pinned
+    ? null
+    : resolveArtifactRetentionUntil(
+        artifact.createdAt,
+        artifact.representative.computeArtifactRetentionDays,
+      );
+  const updated = await prisma.artifact.update({
+    where: { id: artifact.id },
+    data: {
+      isPinned: input.pinned,
+      pinnedAt: input.pinned ? new Date() : null,
+      pinnedBy: input.pinned ? input.pinnedBy ?? "owner-dashboard" : null,
+      retentionUntil: nextRetentionUntil,
+    },
+  });
+
+  return updateArtifactResponseSchema.parse({
+    artifact: {
+      id: updated.id,
+      representativeId: updated.representativeId,
+      contactId: updated.contactId,
+      conversationId: updated.conversationId,
+      sessionId: updated.sessionId,
+      toolExecutionId: updated.toolExecutionId,
+      kind: updated.kind.toLowerCase(),
+      bucket: updated.bucket,
+      objectKey: updated.objectKey,
+      mimeType: updated.mimeType,
+      sizeBytes: updated.sizeBytes,
+      sha256: updated.sha256,
+      isPinned: updated.isPinned,
+      pinnedAt: updated.pinnedAt?.toISOString() ?? null,
+      pinnedBy: updated.pinnedBy,
+      downloadCount: updated.downloadCount,
+      lastDownloadedAt: updated.lastDownloadedAt?.toISOString() ?? null,
+      retentionUntil: updated.retentionUntil?.toISOString() ?? null,
+      summary: updated.summary,
+      createdAt: updated.createdAt.toISOString(),
+    },
+  });
 }
 
 export async function resolveRepresentativeComputeApproval(
@@ -670,6 +776,7 @@ async function getRepresentativeArtifactRecord(representativeSlug: string, artif
         select: {
           slug: true,
           displayName: true,
+          computeArtifactRetentionDays: true,
         },
       },
     },
@@ -749,12 +856,18 @@ function buildArtifactFileName(artifact: {
   objectKey: string;
   mimeType: string;
 }) {
+  const objectName = pathPosix.basename(artifact.objectKey);
+  const objectExtension = objectName.includes(".") ? objectName.split(".").pop() : undefined;
   const extension =
     artifact.mimeType.includes("json")
       ? "json"
       : artifact.mimeType.includes("text/")
         ? "txt"
-        : artifact.objectKey.split(".").pop() || "bin";
+        : artifact.mimeType === "image/jpeg"
+          ? "jpg"
+          : artifact.mimeType === "image/png"
+            ? "png"
+            : objectExtension || "bin";
   return `${artifact.kind.toLowerCase()}-${artifact.id}.${extension}`;
 }
 
