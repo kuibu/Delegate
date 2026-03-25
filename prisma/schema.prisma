@@ -95,6 +95,9 @@ enum EventType {
   BROWSER_NAVIGATION_RECORDED
   BROWSER_SESSION_CLOSED
   BILLING_LEDGER_RECORDED
+  WORKFLOW_ENQUEUED
+  WORKFLOW_COMPLETED
+  WORKFLOW_FAILED
 }
 
 enum CapabilityKind {
@@ -181,6 +184,19 @@ enum BrowserSessionStatus {
 enum BrowserNavigationStatus {
   SUCCEEDED
   FAILED
+}
+
+enum WorkflowKind {
+  HANDOFF_FOLLOW_UP
+  APPROVAL_EXPIRATION
+}
+
+enum WorkflowStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELED
 }
 
 enum LedgerEntryKind {
@@ -306,6 +322,7 @@ model Representative {
   skillPackLinks    RepresentativeSkillPack[]
   mcpBindings       RepresentativeMcpBinding[]
   chatSessions      ChatSession[]
+  workflowRuns      WorkflowRun[]
 }
 
 model KnowledgePack {
@@ -423,6 +440,7 @@ model Contact {
   recallTraces     ConversationRecallTrace[]
   computeTrustTier String?
   lastApprovalGrantedAt DateTime?
+  workflowRuns     WorkflowRun[]
 
   @@unique([representativeId, telegramUserId])
 }
@@ -461,6 +479,7 @@ model Conversation {
   ledgerEntries    LedgerEntry[]
   browserSessions  BrowserSession[]
   browserNavigations BrowserNavigation[]
+  workflowRuns     WorkflowRun[]
 
   @@unique([representativeId, telegramChatId, contactId])
 }
@@ -519,6 +538,7 @@ model HandoffRequest {
   contact              Contact          @relation(fields: [contactId], references: [id])
   conversation         Conversation?    @relation(fields: [conversationId], references: [id])
   intakeSubmission     IntakeSubmission? @relation(fields: [intakeSubmissionId], references: [id])
+  workflowRuns         WorkflowRun[]
 
   @@index([representativeId, status, createdAt])
 }
@@ -693,6 +713,7 @@ model ApprovalRequest {
   contact               Contact?       @relation(fields: [contactId], references: [id])
   conversation          Conversation?  @relation(fields: [conversationId], references: [id])
   session               ComputeSession? @relation(fields: [sessionId], references: [id])
+  workflowRuns          WorkflowRun[]
 
   @@index([representativeId, status, requestedAt])
 }
@@ -726,6 +747,38 @@ model Artifact {
 
   @@index([representativeId, createdAt])
   @@index([sessionId, createdAt])
+}
+
+model WorkflowRun {
+  id               String         @id @default(cuid())
+  representativeId String
+  contactId        String?
+  conversationId   String?
+  handoffRequestId String?
+  approvalRequestId String?
+  kind             WorkflowKind
+  status           WorkflowStatus @default(QUEUED)
+  dedupeKey        String         @unique
+  scheduledAt      DateTime
+  startedAt        DateTime?
+  completedAt      DateTime?
+  failedAt         DateTime?
+  lastError        String?
+  input            Json
+  output           Json?
+  attemptCount     Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  representative   Representative @relation(fields: [representativeId], references: [id])
+  contact          Contact?       @relation(fields: [contactId], references: [id])
+  conversation     Conversation?  @relation(fields: [conversationId], references: [id])
+  handoffRequest   HandoffRequest? @relation(fields: [handoffRequestId], references: [id])
+  approvalRequest  ApprovalRequest? @relation(fields: [approvalRequestId], references: [id])
+
+  @@index([representativeId, scheduledAt])
+  @@index([status, scheduledAt])
+  @@index([handoffRequestId])
+  @@index([approvalRequestId])
 }
 
 model BrowserSession {

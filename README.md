@@ -20,6 +20,7 @@ This repository starts with the narrowest useful wedge:
 - A deterministic policy engine that decides whether to answer, collect intake, hand off, or charge
 - An OpenAI Responses-backed answer lane with deterministic fallback when model credentials are missing or calls fail
 - A Telegram `/compute` lane that can create sandboxed sessions, run `exec / read / write / process / browser` requests, and surface approval outcomes back to chat
+- A workflow runner that processes approval expiry and owner follow-up as the first durable workflow slice
 - Three distinct Next.js surfaces: a marketing site, a public representative app, and an owner dashboard
 - Telegram Stars invoice handling that writes back into conversations, wallet state, and owner inbox
 - A Prisma schema, initial Postgres migration, and deterministic demo seed for the core product entities
@@ -46,6 +47,7 @@ apps/
   reps/         Public representative pages
   site/         Marketing website
   web/          Owner dashboard control plane
+  workflow-runner/ Durable timer and follow-up workflow service
 packages/
   artifacts/    Artifact object-key and retention helpers
   capability-policy/ Capability gate evaluation primitives
@@ -56,6 +58,7 @@ packages/
   runtime/      Inquiry classification and action-gate policy engine
   web-data/     Shared dashboard/public-page data access helpers
   web-ui/       Shared design system and control-plane UI primitives
+  workflows/    Shared workflow kinds, inputs, and scheduling helpers
 docs/
   architecture.md
   codex-prompt-architecture-gap-closure.md
@@ -86,6 +89,7 @@ pnpm registry:search:clawhub "qualification"
 - `dashboard`
 - `reps`
 - `compute-broker`
+- `workflow-runner`
 - `artifact-store`
 - `artifact-store-init`
 - `openviking`
@@ -98,6 +102,7 @@ Local URLs:
 - dashboard: `http://localhost:3001/dashboard?view=overview`
 - representative app: `http://localhost:3002/reps/lin-founder-rep`
 - compute broker: `http://localhost:4010/health`
+- workflow runner: `http://localhost:4020/health`
 - artifact store API: `http://localhost:9000`
 - artifact store console: `http://localhost:9001`
 - OpenViking API: `http://localhost:1933`
@@ -154,6 +159,12 @@ The current model lane also ships a structured context assembler and lifecycle t
 - active collector state and recent-turn working context
 - OpenViking recall trimmed by input budget
 - lifecycle hook traces for model context assembly, model reply completion, handoff preparation, tool preflight, tool completion, and session termination
+
+The first durable workflow slice is also live:
+
+- approval requests can expire automatically after their timeout window
+- owner handoff requests can enqueue timed follow-up reminders
+- workflow truth stays in Postgres and is surfaced in the dashboard overview
 
 If you only want the database container for local non-Docker app development, use:
 

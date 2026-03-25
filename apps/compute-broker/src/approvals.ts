@@ -1,4 +1,10 @@
+import { approvalExpirationDedupeKey, scheduleApprovalExpiration } from "@delegate/workflows";
 import { prisma } from "./prisma";
+
+const approvalTimeoutMinutes = parseInt(
+  process.env.WORKFLOW_APPROVAL_TIMEOUT_MINUTES?.trim() || "30",
+  10,
+);
 
 export async function createApprovalRequestForExecution(params: {
   representativeId: string;
@@ -44,6 +50,54 @@ export async function createApprovalRequestForExecution(params: {
       },
     },
   });
+
+  const dedupeKey = approvalExpirationDedupeKey(approval.id);
+  const existingWorkflow = await prisma.workflowRun.findUnique({
+    where: {
+      dedupeKey,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!existingWorkflow) {
+    const scheduledAt = scheduleApprovalExpiration(
+      new Date(),
+      approvalTimeoutMinutes,
+    );
+    const workflow = await prisma.workflowRun.create({
+      data: {
+        representativeId: params.representativeId,
+        contactId: params.contactId ?? null,
+        conversationId: params.conversationId ?? null,
+        approvalRequestId: approval.id,
+        kind: "APPROVAL_EXPIRATION",
+        status: "QUEUED",
+        dedupeKey,
+        scheduledAt,
+        input: {
+          approvalId: approval.id,
+          timeoutMinutes: approvalTimeoutMinutes,
+        },
+      },
+    });
+
+    await prisma.eventAudit.create({
+      data: {
+        representativeId: params.representativeId,
+        contactId: params.contactId ?? null,
+        conversationId: params.conversationId ?? null,
+        type: "WORKFLOW_ENQUEUED",
+        payload: {
+          workflowRunId: workflow.id,
+          workflowKind: "approval_expiration",
+          approvalRequestId: approval.id,
+          scheduledAt: scheduledAt.toISOString(),
+        },
+      },
+    });
+  }
 
   return approval;
 }

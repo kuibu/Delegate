@@ -23,12 +23,13 @@ Delegate already has a meaningful middle state:
 - governed compute plane with reusable leases, approvals, artifacts, and richer dual-ledger accounting
 - lifecycle hook bus for model, handoff, and compute audit points
 - scoped `triage / quote / handoff / compute / browser` subagent boundaries in runtime routing and model context assembly
+- a lightweight durable workflow runner for approval expiration and owner follow-up timers
 - owner dashboard control plane
 
 Delegate does **not** yet have the full target stack described in the architecture decisions doc. In particular:
 
 - no native Claude/OpenAI computer-use lane
-- no Temporal orchestration
+- no Temporal orchestration yet
 - no org/customer-managed permission layer
 
 Treat the matrix below as source of truth for "what is done vs. what is still next".
@@ -74,6 +75,10 @@ Use these as the main anchors for future implementation:
   - `apps/compute-broker/src/runner.ts`
   - `apps/compute-broker/src/billing.ts`
   - `apps/compute-broker/src/policy.ts`
+- Durable workflows:
+  - `apps/workflow-runner/src/runner.ts`
+  - `apps/workflow-runner/src/index.ts`
+  - `packages/workflows/src/index.ts`
 - Memory/context:
   - `apps/bot/src/openviking-runtime.ts`
   - `packages/openviking/src/client.ts`
@@ -93,14 +98,14 @@ Do **not** try to close all 12 rows in one pass.
 
 Recommended order:
 
-1. `P2-B` Temporal and broader agent-network infrastructure
+1. `P2-B follow-on` Temporal migration and broader agent-network infrastructure
 
 Why this order:
 
-- Row `6` now has a first scoped subagent layer, so the next bottleneck shifts toward durable orchestration and broader agent-network plumbing
+- Row `6` now has a first scoped subagent layer, and the repo now has a lightweight workflow runner, so the next bottleneck shifts toward deciding where Temporal should replace in-repo timers instead of re-deriving durable workflow state from scratch
 - Row `11` now has a better base, including model COGS, so the next billing work should focus on browser/MCP cost layers instead of model-only gaps
 - Native computer-use prep should now build on the new browser session lane, not restart browser infrastructure from scratch
-- Row `6` is intentionally still shallow: subagents are scoped boundaries today, not yet durable workflows or networked agents
+- Row `6` is intentionally still shallow: subagents are scoped boundaries today, and durable workflows currently cover only approval expiration and handoff follow-up, not broader networked agent orchestration
 
 ## Codex prompt rules
 
@@ -522,7 +527,8 @@ Current repo state:
 - governed compute exists
 - OpenViking exists
 - artifact layer exists
-- model runtime, MCP transport, and Temporal are still incomplete or absent
+- a lightweight workflow runner already handles approval expiration and handoff follow-up
+- model runtime and MCP transport have first safe slices, but Temporal is still absent
 
 Goal:
 Close the highest-leverage remaining integration gaps after the lower-level slices are landed.

@@ -32,6 +32,11 @@ type DashboardOverviewSnapshot = {
     value: string;
     detail: string;
   }>;
+  workflowMetrics: Array<{
+    label: string;
+    value: string;
+    detail: string;
+  }>;
   handoffRequests: Array<{
     id: string;
     who: string;
@@ -53,6 +58,14 @@ type DashboardOverviewSnapshot = {
     createdAt: string;
     paidAt?: string;
     invoiceLink?: string;
+  }>;
+  recentWorkflows: Array<{
+    id: string;
+    kind: "handoff_follow_up" | "approval_expiration";
+    status: "queued" | "running" | "completed" | "failed" | "canceled";
+    scheduledAt: string;
+    completedAt?: string;
+    detail: string;
   }>;
 };
 
@@ -216,6 +229,26 @@ export function DashboardOverview({
         </div>
       ) : null}
 
+      {snapshot.workflowMetrics.length ? (
+        <div className="dashboard-subsection-stack">
+          <div className="dashboard-inline-section-heading">
+            <div>
+              <p className="eyebrow">{t.workflowEyebrow}</p>
+              <h3>{t.workflowTitle}</h3>
+            </div>
+            <p className="section-copy">{t.workflowCopy}</p>
+          </div>
+          <DashboardSignalStrip
+            cards={snapshot.workflowMetrics.map((metric) => ({
+              label: metric.label,
+              value: metric.value,
+              detail: metric.detail,
+              tone: "accent" as const,
+            }))}
+          />
+        </div>
+      ) : null}
+
       <DashboardSurfaceGrid>
         <DashboardSurface
           eyebrow={t.handoffEyebrow}
@@ -294,6 +327,34 @@ export function DashboardOverview({
               ))
             ) : (
               <p className="muted">{t.noInvoices}</p>
+            )}
+          </div>
+        </DashboardSurface>
+
+        <DashboardSurface
+          eyebrow={t.workflowEyebrow}
+          meta={<span className="chip">{t.workflowChip(snapshot.recentWorkflows.length)}</span>}
+          title={t.workflowQueueTitle}
+        >
+          <div className="row-list">
+            {snapshot.recentWorkflows.length ? (
+              snapshot.recentWorkflows.map((workflow) => (
+                <div className="skill-row" key={workflow.id}>
+                  <div>
+                    <strong>{workflow.kind}</strong>
+                    <p>{workflow.detail}</p>
+                    <div className="chip-row">
+                      <span className="chip">{workflow.status}</span>
+                      <span className="chip">{formatTimestamp(workflow.scheduledAt, locale)}</span>
+                      {workflow.completedAt ? (
+                        <span className="chip chip-safe">{formatTimestamp(workflow.completedAt, locale)}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="muted">{t.noWorkflows}</p>
             )}
           </div>
         </DashboardSurface>
@@ -420,6 +481,9 @@ const copy = {
     activeHandoffsChip: (count: number) => `${count} active handoffs`,
     openVikingTitle: "记忆层也应该像收件箱一样可观测。",
     openVikingCopy: "capture、commit、resource sync 和 recall 必须进入 owner 的日常读数，而不是藏在日志里。",
+    workflowEyebrow: "Workflow backbone",
+    workflowTitle: "跨时间的事情，要能排队、超时、补跑，而不是靠人记得。",
+    workflowCopy: "approval 过期和 handoff 跟进现在会进入耐久工作流，不再只是一次性函数调用。",
     handoffEyebrow: "Handoff inbox",
     activeChip: (count: number) => `${count} active`,
     handoffTitle: "人工转接收件箱",
@@ -432,6 +496,9 @@ const copy = {
     billingTitle: "最近 Stars 付款",
     openInvoice: "查看发票",
     noInvoices: "还没有任何 Stars invoice 记录。",
+    workflowChip: (count: number) => `${count} 条 workflows`,
+    workflowQueueTitle: "最近工作流",
+    noWorkflows: "当前还没有耐久工作流记录。",
   },
   en: {
     signalCards: {
@@ -458,6 +525,9 @@ const copy = {
     activeHandoffsChip: (count: number) => `${count} active handoffs`,
     openVikingTitle: "The memory layer should be as observable as the inbox.",
     openVikingCopy: "Capture, commit, resource sync, and recall belong in daily owner metrics instead of hidden logs.",
+    workflowEyebrow: "Workflow backbone",
+    workflowTitle: "Anything that spans time should queue, expire, and recover instead of relying on memory.",
+    workflowCopy: "Approval expiry and handoff follow-up now flow through a durable workflow lane instead of one-off function calls.",
     handoffEyebrow: "Handoff inbox",
     activeChip: (count: number) => `${count} active`,
     handoffTitle: "Human handoff inbox",
@@ -470,5 +540,8 @@ const copy = {
     billingTitle: "Recent Stars payments",
     openInvoice: "View invoice",
     noInvoices: "There are no Stars invoices yet.",
+    workflowChip: (count: number) => `${count} workflows`,
+    workflowQueueTitle: "Recent workflows",
+    noWorkflows: "There are no durable workflow records yet.",
   },
 } as const;

@@ -1,5 +1,9 @@
 import type { PlanTier } from "@delegate/domain";
 import type { ModelContextSegmentTrace } from "@delegate/lifecycle-hooks";
+import {
+  handoffFollowUpDedupeKey,
+  scheduleHandoffFollowUp,
+} from "@delegate/workflows";
 import type {
   ConversationPlan,
   ConversationUsage,
@@ -79,6 +83,8 @@ type ConversationAuditScope = Pick<
   ConversationContextRecord,
   "representativeId" | "representativeSlug" | "contactId" | "conversationId"
 >;
+
+type TransactionClient = Prisma.TransactionClient;
 
 type StoredPlan = {
   id: string;
@@ -718,6 +724,14 @@ export async function maybeCreateHandoffRequest(params: {
       },
     });
 
+    await enqueueHandoffFollowUpWorkflowTx(tx, {
+      representativeId: params.context.representativeId,
+      representativeSlug: params.context.representativeSlug,
+      contactId: params.context.contactId,
+      conversationId: params.context.conversationId,
+      handoffId: handoff.id,
+    });
+
     return {
       id: handoff.id,
       status: handoff.status,
@@ -755,10 +769,10 @@ export async function recordHandoffPrepared(params: {
       contactId: params.context.contactId,
       conversationId: params.context.conversationId,
       type: EventType.HANDOFF_PREPARED,
-        payload: {
-          subagentId: params.subagentId ?? null,
-          intent: params.intent,
-          nextStep: params.nextStep,
+      payload: {
+        subagentId: params.subagentId ?? null,
+        intent: params.intent,
+        nextStep: params.nextStep,
         summary: params.summary,
         ownerAction: params.ownerAction,
         priority: params.priority,
@@ -1014,6 +1028,14 @@ export async function submitStructuredCollector(params: {
       });
     }
 
+    await enqueueHandoffFollowUpWorkflowTx(tx, {
+      representativeId: params.context.representativeId,
+      representativeSlug: params.context.representativeSlug,
+      contactId: params.context.contactId,
+      conversationId: params.context.conversationId,
+      handoffId: handoff.id,
+    });
+
     return {
       handoffId: handoff.id,
       summary: summary || "Structured intake completed.",
@@ -1074,6 +1096,77 @@ export async function createPlanInvoice(params: {
     title: invoice.title,
     starsAmount: invoice.starsAmount,
   };
+}
+
+async function enqueueHandoffFollowUpWorkflowTx(
+  tx: TransactionClient,
+  params: {
+    representativeId: string;
+    representativeSlug: string;
+    contactId: string;
+    conversationId: string;
+    handoffId: string;
+  },
+) {
+  const dedupeKey = handoffFollowUpDedupeKey(params.handoffId);
+  const existing = await tx.workflowRun.findUnique({
+    where: {
+      dedupeKey,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (existing) {
+    return existing.id;
+  }
+
+  const representative = await tx.representative.findUnique({
+    where: {
+      id: params.representativeId,
+    },
+    select: {
+      handoffWindowHours: true,
+    },
+  });
+
+  const handoffWindowHours = representative?.handoffWindowHours ?? 24;
+  const scheduledAt = scheduleHandoffFollowUp(new Date(), handoffWindowHours);
+  const workflow = await tx.workflowRun.create({
+    data: {
+      representativeId: params.representativeId,
+      contactId: params.contactId,
+      conversationId: params.conversationId,
+      handoffRequestId: params.handoffId,
+      kind: "HANDOFF_FOLLOW_UP",
+      status: "QUEUED",
+      dedupeKey,
+      scheduledAt,
+      input: {
+        handoffId: params.handoffId,
+        handoffWindowHours,
+      },
+    },
+  });
+
+  await tx.eventAudit.create({
+    data: {
+      representativeId: params.representativeId,
+      contactId: params.contactId,
+      conversationId: params.conversationId,
+      type: EventType.WORKFLOW_ENQUEUED,
+      payload: {
+        workflowRunId: workflow.id,
+        workflowKind: "handoff_follow_up",
+        representativeSlug: params.representativeSlug,
+        handoffId: params.handoffId,
+        scheduledAt: scheduledAt.toISOString(),
+      },
+    },
+  });
+
+  return workflow.id;
 }
 
 export async function markInvoiceDeliveryFailed(invoiceId: string): Promise<void> {

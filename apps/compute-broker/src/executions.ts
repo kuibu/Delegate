@@ -318,6 +318,20 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
           },
         });
 
+        await tx.workflowRun.updateMany({
+          where: {
+            approvalRequestId: approval.id,
+            status: "QUEUED",
+          },
+          data: {
+            status: "CANCELED",
+            completedAt: resolvedAt,
+            output: {
+              outcome: "canceled_after_manual_rejection",
+            },
+          },
+        });
+
         return {
           updatedApproval: nextApproval,
           updatedExecution: nextExecution,
@@ -358,6 +372,19 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
           approvalRequestId: approval.id,
           resolution: "approved",
           toolExecutionId: approval.toolExecutionId ?? null,
+        },
+      },
+    }),
+    prisma.workflowRun.updateMany({
+      where: {
+        approvalRequestId: approval.id,
+        status: "QUEUED",
+      },
+      data: {
+        status: "CANCELED",
+        completedAt: resolvedAt,
+        output: {
+          outcome: "canceled_after_manual_approval",
         },
       },
     }),

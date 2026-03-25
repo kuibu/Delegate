@@ -17,6 +17,10 @@ x-app-environment: &app-environment
   COMPUTE_BROWSER_PLAYWRIGHT_VERSION: ${COMPUTE_BROWSER_PLAYWRIGHT_VERSION:-1.58.2}
   COMPUTE_BROWSER_MAX_COMMAND_SECONDS: ${COMPUTE_BROWSER_MAX_COMMAND_SECONDS:-120}
   COMPUTE_HOST_WORKSPACE_ROOT: ${COMPUTE_HOST_WORKSPACE_ROOT:-/Users/a/repos/Delegate}
+  WORKFLOW_RUNNER_PORT: ${WORKFLOW_RUNNER_PORT:-4020}
+  WORKFLOW_RUNNER_POLL_MS: ${WORKFLOW_RUNNER_POLL_MS:-5000}
+  WORKFLOW_RUNNER_BATCH_SIZE: ${WORKFLOW_RUNNER_BATCH_SIZE:-10}
+  WORKFLOW_APPROVAL_TIMEOUT_MINUTES: ${WORKFLOW_APPROVAL_TIMEOUT_MINUTES:-30}
   ARTIFACT_STORE_ENDPOINT: ${ARTIFACT_STORE_ENDPOINT:-http://artifact-store:9000}
   ARTIFACT_STORE_BUCKET: ${ARTIFACT_STORE_BUCKET:-delegate-compute-artifacts}
   ARTIFACT_STORE_ACCESS_KEY: ${ARTIFACT_STORE_ACCESS_KEY:-delegate}
@@ -227,6 +231,30 @@ services:
           "node",
           "-e",
           "fetch('http://127.0.0.1:4010/health').then((res)=>{if(!res.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  workflow-runner:
+    <<: *app-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: >
+      sh -lc "pnpm --filter @delegate/workflow-runner start"
+    ports:
+      - "4020:4020"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4020/health').then((res)=>{if(!res.ok)process.exit(1)}).catch(()=>process.exit(1))",
         ]
       interval: 10s
       timeout: 5s

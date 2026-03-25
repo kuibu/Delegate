@@ -1,5 +1,5 @@
 {
-  "name": "@delegate/compute-broker",
+  "name": "@delegate/workflow-runner",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,16 +10,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.914.0",
-    "@delegate/artifacts": "workspace:*",
-    "@delegate/capability-policy": "workspace:*",
-    "@delegate/compute-protocol": "workspace:*",
-    "@delegate/lifecycle-hooks": "workspace:*",
     "@delegate/workflows": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.27.1",
     "@prisma/client": "^6.19.2",
-    "dotenv": "^17.2.3",
-    "zod": "^4.3.6"
+    "dotenv": "^17.2.3"
   },
   "devDependencies": {
     "vitest": "^4.1.0"

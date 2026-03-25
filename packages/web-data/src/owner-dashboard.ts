@@ -33,6 +33,11 @@ export type DashboardOverviewSnapshot = {
     value: string;
     detail: string;
   }>;
+  workflowMetrics: Array<{
+    label: string;
+    value: string;
+    detail: string;
+  }>;
   handoffRequests: Array<{
     id: string;
     who: string;
@@ -55,6 +60,14 @@ export type DashboardOverviewSnapshot = {
     paidAt?: string;
     invoiceLink?: string;
   }>;
+  recentWorkflows: Array<{
+    id: string;
+    kind: "handoff_follow_up" | "approval_expiration";
+    status: "queued" | "running" | "completed" | "failed" | "canceled";
+    scheduledAt: string;
+    completedAt?: string;
+    detail: string;
+  }>;
 };
 
 const overviewArgs = Prisma.validator<Prisma.RepresentativeDefaultArgs>()({
@@ -75,6 +88,10 @@ const overviewArgs = Prisma.validator<Prisma.RepresentativeDefaultArgs>()({
       include: {
         contact: true,
       },
+      orderBy: [{ createdAt: "desc" }],
+      take: 8,
+    },
+    workflowRuns: {
       orderBy: [{ createdAt: "desc" }],
       take: 8,
     },
@@ -108,7 +125,10 @@ export async function getDashboardOverviewSnapshot(
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
-    const [[todayConversationCount, openHandoffCount, paidInvoiceCount], openVikingMetrics] =
+    const [
+      [todayConversationCount, openHandoffCount, paidInvoiceCount, queuedWorkflowCount, failedWorkflowCount],
+      openVikingMetrics,
+    ] =
       await Promise.all([
         prisma.$transaction([
           prisma.conversation.count({
@@ -133,6 +153,18 @@ export async function getDashboardOverviewSnapshot(
               status: {
                 in: [InvoiceStatus.PAID, InvoiceStatus.FULFILLED],
               },
+            },
+          }),
+          prisma.workflowRun.count({
+            where: {
+              representativeId: representative.id,
+              status: "QUEUED",
+            },
+          }),
+          prisma.workflowRun.count({
+            where: {
+              representativeId: representative.id,
+              status: "FAILED",
             },
           }),
         ]),
@@ -247,6 +279,32 @@ export async function getDashboardOverviewSnapshot(
             },
           ]
         : [],
+      workflowMetrics: [
+        {
+          label: locale === "zh" ? "待执行工作流" : "Queued workflows",
+          value: String(queuedWorkflowCount),
+          detail:
+            queuedWorkflowCount > 0
+              ? locale === "zh"
+                ? "包含审批超时与 handoff 跟进这类跨时间任务"
+                : "Includes approval expiry and handoff follow-up jobs."
+              : locale === "zh"
+                ? "当前没有等待中的耐久工作流"
+                : "No durable workflow jobs are currently queued.",
+        },
+        {
+          label: locale === "zh" ? "失败工作流" : "Failed workflows",
+          value: String(failedWorkflowCount),
+          detail:
+            failedWorkflowCount > 0
+              ? locale === "zh"
+                ? "需要检查失败原因并决定是否重试"
+                : "Inspect failures and decide whether to retry."
+              : locale === "zh"
+                ? "最近没有 workflow 失败"
+                : "No recent workflow failures.",
+        },
+      ],
       handoffRequests: representative.handoffRequests.map((handoff) => ({
         id: handoff.id,
         who: handoff.contact.displayName ?? handoff.contact.username ?? handoff.contact.telegramUserId,
@@ -268,6 +326,28 @@ export async function getDashboardOverviewSnapshot(
         createdAt: invoice.createdAt.toISOString(),
         ...(invoice.paidAt ? { paidAt: invoice.paidAt.toISOString() } : {}),
         ...(invoice.invoiceLink ? { invoiceLink: invoice.invoiceLink } : {}),
+      })),
+      recentWorkflows: representative.workflowRuns.map((workflowRun) => ({
+        id: workflowRun.id,
+        kind: workflowRun.kind === "HANDOFF_FOLLOW_UP" ? "handoff_follow_up" : "approval_expiration",
+        status: normalizeWorkflowStatus(workflowRun.status),
+        scheduledAt: workflowRun.scheduledAt.toISOString(),
+        ...(workflowRun.completedAt ? { completedAt: workflowRun.completedAt.toISOString() } : {}),
+        detail:
+          typeof workflowRun.lastError === "string" && workflowRun.lastError.length > 0
+            ? workflowRun.lastError
+            : typeof workflowRun.output === "object" &&
+                workflowRun.output &&
+                "outcome" in workflowRun.output &&
+                typeof workflowRun.output.outcome === "string"
+              ? workflowRun.output.outcome
+              : workflowRun.kind === "HANDOFF_FOLLOW_UP"
+                ? locale === "zh"
+                  ? "等待 owner 跟进 handoff"
+                  : "Waiting for owner handoff follow-up."
+                : locale === "zh"
+                  ? "等待审批超时检查"
+                  : "Waiting for approval expiry check.",
       })),
     };
   } catch (error) {
@@ -320,6 +400,22 @@ export async function setHandoffRequestStatus(params: {
       nextStatus: params.status,
     });
 
+    if (params.status === "accepted" || params.status === "declined" || params.status === "closed") {
+      await prisma.workflowRun.updateMany({
+        where: {
+          handoffRequestId: updated.id,
+          status: "QUEUED",
+        },
+        data: {
+          status: "CANCELED",
+          completedAt: new Date(),
+          output: {
+            outcome: "canceled_after_handoff_resolution",
+          },
+        },
+      });
+    }
+
     return {
       id: updated.id,
       who: updated.contact.displayName ?? updated.contact.username ?? updated.contact.telegramUserId,
@@ -357,6 +453,7 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
         balanceCredits: 240,
       },
       openVikingMetrics: [],
+      workflowMetrics: [],
       handoffRequests: [
         {
           id: "demo-handoff-acme",
@@ -425,6 +522,23 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
           createdAt: hoursAgo(2),
           paidAt: hoursAgo(1),
           invoiceLink: "https://t.me/invoice/sponsor-pool",
+        },
+      ],
+      recentWorkflows: [
+        {
+          id: "demo-workflow-handoff",
+          kind: "handoff_follow_up",
+          status: "queued",
+          scheduledAt: hoursAgo(-18),
+          detail: "owner_follow_up_due",
+        },
+        {
+          id: "demo-workflow-approval",
+          kind: "approval_expiration",
+          status: "completed",
+          scheduledAt: hoursAgo(3),
+          completedAt: hoursAgo(2.5),
+          detail: "approval_expired",
         },
       ],
     };
@@ -561,6 +675,36 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
           { label: "Sync failures", value: "0", detail: "There are no failed sync jobs in the demo right now." },
           { label: "Health", value: "healthy", detail: "OpenViking demo health check is healthy." },
         ];
+  demoFallbackOverviewSnapshot.workflowMetrics =
+    locale === "zh"
+      ? [
+          { label: "待执行工作流", value: "1", detail: "还有 1 条 handoff 跟进任务等待触发" },
+          { label: "失败工作流", value: "0", detail: "最近没有 workflow 失败" },
+        ]
+      : [
+          { label: "Queued workflows", value: "1", detail: "1 handoff follow-up job is still waiting to fire." },
+          { label: "Failed workflows", value: "0", detail: "No recent workflow failures." },
+        ];
+  demoFallbackOverviewSnapshot.recentWorkflows = [
+    {
+      id: "demo-workflow-handoff",
+      kind: "handoff_follow_up",
+      status: "queued",
+      scheduledAt:
+        demoFallbackOverviewSnapshot.recentWorkflows[0]?.scheduledAt ?? new Date().toISOString(),
+      detail: "owner_follow_up_due",
+    },
+    {
+      id: "demo-workflow-approval",
+      kind: "approval_expiration",
+      status: "completed",
+      scheduledAt:
+        demoFallbackOverviewSnapshot.recentWorkflows[1]?.scheduledAt ?? new Date().toISOString(),
+      completedAt:
+        demoFallbackOverviewSnapshot.recentWorkflows[1]?.completedAt ?? new Date().toISOString(),
+      detail: "approval_expired",
+    },
+  ];
 
   return demoFallbackOverviewSnapshot;
 }
@@ -590,6 +734,8 @@ function cloneDashboardOverviewSnapshot(
     openVikingMetrics: snapshot.openVikingMetrics.map((metric) => ({ ...metric })),
     handoffRequests: snapshot.handoffRequests.map((request) => ({ ...request })),
     recentInvoices: snapshot.recentInvoices.map((invoice) => ({ ...invoice })),
+    workflowMetrics: snapshot.workflowMetrics.map((metric) => ({ ...metric })),
+    recentWorkflows: snapshot.recentWorkflows.map((workflow) => ({ ...workflow })),
   };
 }
 
@@ -639,6 +785,23 @@ function normalizeHandoffStatus(
     case HandoffStatus.OPEN:
     default:
       return "open";
+  }
+}
+
+function normalizeWorkflowStatus(
+  value: RepresentativeOverviewRecord["workflowRuns"][number]["status"],
+): DashboardOverviewSnapshot["recentWorkflows"][number]["status"] {
+  switch (value) {
+    case "RUNNING":
+      return "running";
+    case "COMPLETED":
+      return "completed";
+    case "FAILED":
+      return "failed";
+    case "CANCELED":
+      return "canceled";
+    default:
+      return "queued";
   }
 }
 
