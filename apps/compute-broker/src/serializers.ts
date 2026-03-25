@@ -1,10 +1,13 @@
 import {
   approvalRequestSnapshotSchema,
   artifactSnapshotSchema,
+  browserNavigationSnapshotSchema,
+  browserSessionSnapshotSchema,
   capabilityPolicyProfileSchema,
   computeSessionSnapshotSchema,
   mcpBindingSnapshotSchema,
   toolExecutionSnapshotSchema,
+  type BrowserTransportKind,
   type ComputeFilesystemMode,
   type McpTransportKind,
   type ComputeNetworkMode,
@@ -93,6 +96,24 @@ export function mapFilesystemModeFromDb(value: string) {
 
 export function mapMcpTransportKindFromDb(value: string) {
   return value.toLowerCase() as McpTransportKind;
+}
+
+export function mapBrowserTransportKindFromDb(value: string) {
+  return value.toLowerCase() as BrowserTransportKind;
+}
+
+export function mapBrowserTransportKindToDb(
+  value: "playwright" | "openai_computer" | "claude_computer_use",
+) {
+  return value.toUpperCase() as "PLAYWRIGHT" | "OPENAI_COMPUTER" | "CLAUDE_COMPUTER_USE";
+}
+
+export function mapBrowserSessionStatusFromDb(value: string) {
+  return value.toLowerCase() as "active" | "failed" | "closed";
+}
+
+export function mapBrowserNavigationStatusFromDb(value: string) {
+  return value.toLowerCase() as "succeeded" | "failed";
 }
 
 export function serializeSession(session: {
@@ -186,6 +207,78 @@ export function serializeExecution(execution: {
     bytesRead: execution.bytesRead,
     bytesWritten: execution.bytesWritten,
     createdAt: execution.createdAt.toISOString(),
+  });
+}
+
+export function serializeBrowserNavigation(navigation: {
+  id: string;
+  toolExecutionId: string;
+  status: string;
+  transportKind: string;
+  requestedUrl: string;
+  finalUrl: string | null;
+  pageTitle: string | null;
+  textSnippet: string | null;
+  screenshotArtifactId: string | null;
+  jsonArtifactId: string | null;
+  errorMessage: string | null;
+  createdAt: Date;
+}) {
+  return browserNavigationSnapshotSchema.parse({
+    id: navigation.id,
+    toolExecutionId: navigation.toolExecutionId,
+    status: mapBrowserNavigationStatusFromDb(navigation.status),
+    transportKind: mapBrowserTransportKindFromDb(navigation.transportKind),
+    requestedUrl: navigation.requestedUrl,
+    finalUrl: navigation.finalUrl,
+    pageTitle: navigation.pageTitle,
+    textSnippet: navigation.textSnippet,
+    screenshotArtifactId: navigation.screenshotArtifactId,
+    jsonArtifactId: navigation.jsonArtifactId,
+    errorMessage: navigation.errorMessage,
+    createdAt: navigation.createdAt.toISOString(),
+  });
+}
+
+export function serializeBrowserSession(session: {
+  id: string;
+  computeSessionId: string;
+  representativeId: string;
+  contactId: string | null;
+  conversationId: string | null;
+  status: string;
+  transportKind: string;
+  profilePath: string | null;
+  currentUrl: string | null;
+  currentTitle: string | null;
+  lastToolExecutionId: string | null;
+  lastNavigationAt: Date | null;
+  closedAt: Date | null;
+  failureReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  visitCount: number;
+  latestNavigation?: ReturnType<typeof serializeBrowserNavigation> | null;
+}) {
+  return browserSessionSnapshotSchema.parse({
+    id: session.id,
+    computeSessionId: session.computeSessionId,
+    representativeId: session.representativeId,
+    contactId: session.contactId,
+    conversationId: session.conversationId,
+    status: mapBrowserSessionStatusFromDb(session.status),
+    transportKind: mapBrowserTransportKindFromDb(session.transportKind),
+    profilePath: session.profilePath,
+    currentUrl: session.currentUrl,
+    currentTitle: session.currentTitle,
+    lastToolExecutionId: session.lastToolExecutionId,
+    lastNavigationAt: session.lastNavigationAt?.toISOString() ?? null,
+    closedAt: session.closedAt?.toISOString() ?? null,
+    failureReason: session.failureReason,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: session.updatedAt.toISOString(),
+    visitCount: session.visitCount,
+    latestNavigation: session.latestNavigation ?? null,
   });
 }
 

@@ -1,4 +1,6 @@
 export type PlaywrightBrowseArtifactPayload = {
+  transportKind: "playwright";
+  profilePath: string;
   title: string;
   finalUrl: string;
   textSnippet: string;
@@ -17,13 +19,18 @@ export function buildPlaywrightBrowseCommand(params: {
 }): string {
   const script = [
     "const normalize = (value) => value.replace(/\\s+/g, ' ').trim();",
+    "const { promises: fs } = require('node:fs');",
     "void (async () => {",
     "  const { chromium } = require('playwright');",
-    "  const browser = await chromium.launch({",
+    "  const sessionRoot = process.env.DELEGATE_SESSION_ROOT || '/delegate-session';",
+    "  const profilePath = `${sessionRoot}/browser-profile`;",
+    "  await fs.mkdir(profilePath, { recursive: true });",
+    "  const context = await chromium.launchPersistentContext(profilePath, {",
     "    headless: true,",
+    "    viewport: { width: 1440, height: 960 },",
     "    args: ['--no-sandbox', '--disable-dev-shm-usage'],",
     "  });",
-    "  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });",
+    "  const page = context.pages()[0] || (await context.newPage());",
     `  await page.goto(${JSON.stringify(params.url)}, { waitUntil: 'domcontentloaded', timeout: 15000 });`,
     "  await page.waitForTimeout(750);",
     "  const title = await page.title();",
@@ -33,8 +40,8 @@ export function buildPlaywrightBrowseCommand(params: {
     "  const links = await page.locator('a[href]').evaluateAll((nodes) => nodes.slice(0, 12).map((node) => ({ text: (node.textContent || '').trim().slice(0, 120), href: node.href })));",
     "  const screenshotRaw = await page.screenshot({ type: 'jpeg', quality: 65, fullPage: false, encoding: 'base64' });",
     "  const screenshotBase64 = typeof screenshotRaw === 'string' ? screenshotRaw : screenshotRaw.toString('base64');",
-    "  console.log(JSON.stringify({ title, finalUrl, textSnippet, contentSnippet, links, screenshotBase64, screenshotMimeType: 'image/jpeg' }, null, 2));",
-    "  await browser.close();",
+    "  console.log(JSON.stringify({ transportKind: 'playwright', profilePath, title, finalUrl, textSnippet, contentSnippet, links, screenshotBase64, screenshotMimeType: 'image/jpeg' }, null, 2));",
+    "  await context.close();",
     "})().catch((error) => {",
     "  console.error(error.stack || error.message || String(error));",
     "  process.exit(1);",
@@ -64,6 +71,8 @@ export function parsePlaywrightBrowseArtifactPayload(stdout: string): Playwright
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
     if (
+      parsed.transportKind !== "playwright" ||
+      typeof parsed.profilePath !== "string" ||
       typeof parsed.title !== "string" ||
       typeof parsed.finalUrl !== "string" ||
       typeof parsed.textSnippet !== "string" ||
@@ -85,6 +94,8 @@ export function parsePlaywrightBrowseArtifactPayload(stdout: string): Playwright
       .slice(0, 12);
 
     return {
+      transportKind: parsed.transportKind,
+      profilePath: parsed.profilePath,
       title: parsed.title,
       finalUrl: parsed.finalUrl,
       textSnippet: parsed.textSnippet,

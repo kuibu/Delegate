@@ -21,6 +21,7 @@ import {
   buildPlaywrightBrowseCommand,
   parsePlaywrightBrowseArtifactPayload,
 } from "./browser";
+import { recordBrowserNavigation } from "./browser-sessions";
 import { computeBrokerConfig } from "./config";
 import { ensureComputeSessionLease } from "./leases";
 import {
@@ -85,6 +86,27 @@ type ExecutionPlan = {
   command: string;
   networkMode: PolicyExecutionContext["profile"]["networkMode"];
   filesystemMode: PolicyExecutionContext["profile"]["filesystemMode"];
+};
+
+type BrowserCaptureSummary = {
+  transportKind: "playwright" | "openai_computer" | "claude_computer_use";
+  profilePath?: string;
+  title?: string;
+  finalUrl?: string;
+  textSnippet?: string;
+  screenshotArtifactId?: string;
+  jsonArtifactId?: string;
+};
+
+type RuntimeExecutionResult = {
+  exitCode: number;
+  wallMs: number;
+  bytesRead: number;
+  artifacts: Awaited<ReturnType<typeof persistExecutionArtifacts>>;
+  failureSummary?: string | undefined;
+  browserCapture?: BrowserCaptureSummary | undefined;
+  transport: "docker" | "mcp";
+  remoteUrl?: string | undefined;
 };
 
 export async function executeTool(sessionId: string, rawInput: unknown) {
@@ -521,6 +543,27 @@ async function runAllowedExecution(params: {
     },
   });
 
+  if (executionDescriptor.capability === "browser") {
+    await recordBrowserNavigation({
+      representativeId: params.context.session.representativeId,
+      representativeSlug: params.context.session.representative.slug,
+      contactId: params.context.session.contactId ?? null,
+      conversationId: params.context.session.conversationId ?? null,
+      computeSessionId: leasedSession.id,
+      toolExecutionId: execution.id,
+      transportKind: runtimeResult.browserCapture?.transportKind ?? "playwright",
+      requestedUrl: params.input.url ?? executionDescriptor.requestedCommand ?? "https://invalid.local/",
+      finalUrl: runtimeResult.browserCapture?.finalUrl,
+      pageTitle: runtimeResult.browserCapture?.title,
+      textSnippet: runtimeResult.browserCapture?.textSnippet,
+      screenshotArtifactId: runtimeResult.browserCapture?.screenshotArtifactId,
+      jsonArtifactId: runtimeResult.browserCapture?.jsonArtifactId,
+      errorMessage: runtimeResult.exitCode === 0 ? null : runtimeResult.failureSummary,
+      profilePath: runtimeResult.browserCapture?.profilePath ?? null,
+      status: runtimeResult.exitCode === 0 ? "succeeded" : "failed",
+    });
+  }
+
   const computeCostCents = Math.max(1, Math.ceil(runtimeResult.wallMs / 1000));
   const storageCostCents = totalArtifactBytes > 0 ? Math.max(1, Math.ceil(totalArtifactBytes / 65536)) : 0;
   const computeCredits = estimateCreditUsage({
@@ -626,7 +669,7 @@ async function runContainerExecution(params: {
   leasedSession: LeasedSessionRecord;
   executionId: string;
   input: NormalizedExecutionInput;
-}) {
+}): Promise<RuntimeExecutionResult> {
   const executionPlan = buildExecutionPlan(params.context, params.input);
   const runnerResult = await runRunnerExecution({
     runnerType: mapRunnerTypeFromDb(params.leasedSession.runnerType),
@@ -648,7 +691,7 @@ async function runContainerExecution(params: {
     executionId: params.executionId,
   });
 
-  const artifacts =
+  const artifactResult =
     executionPlan.capability === "browser"
       ? await persistBrowserExecutionArtifacts({
           representativeId: params.context.session.representativeId,
@@ -661,24 +704,28 @@ async function runContainerExecution(params: {
           stdout: runnerResult.stdout,
           stderr: runnerResult.stderr,
         })
-      : await persistExecutionArtifacts({
-          representativeId: params.context.session.representativeId,
-          representativeSlug: params.context.session.representative.slug,
-          contactId: params.context.session.contactId ?? null,
-          conversationId: params.context.session.conversationId ?? null,
-          sessionId: params.context.session.id,
-          executionId: params.executionId,
-          retentionDays: params.context.profile.artifactRetentionDays,
-          stdout: runnerResult.stdout,
-          stderr: runnerResult.stderr,
-        });
+      : {
+          artifacts: await persistExecutionArtifacts({
+            representativeId: params.context.session.representativeId,
+            representativeSlug: params.context.session.representative.slug,
+            contactId: params.context.session.contactId ?? null,
+            conversationId: params.context.session.conversationId ?? null,
+            sessionId: params.context.session.id,
+            executionId: params.executionId,
+            retentionDays: params.context.profile.artifactRetentionDays,
+            stdout: runnerResult.stdout,
+            stderr: runnerResult.stderr,
+          }),
+          browserCapture: undefined,
+        };
 
   return {
     exitCode: runnerResult.exitCode,
     wallMs: runnerResult.wallMs,
     bytesRead: Buffer.byteLength(runnerResult.stdout, "utf8"),
-    artifacts,
+    artifacts: artifactResult.artifacts,
     failureSummary: runnerResult.stderr || runnerResult.stdout,
+    browserCapture: artifactResult.browserCapture,
     transport: "docker" as const,
     remoteUrl: undefined,
   };
@@ -697,14 +744,16 @@ async function persistBrowserExecutionArtifacts(params: {
 }) {
   const parsed = parsePlaywrightBrowseArtifactPayload(params.stdout);
   if (!parsed) {
-    return persistExecutionArtifacts(params);
+    return {
+      artifacts: await persistExecutionArtifacts(params),
+      browserCapture: undefined,
+    };
   }
 
   const artifacts = [];
   const summary = [parsed.title, parsed.finalUrl].filter(Boolean).join(" · ").slice(0, 240);
 
-  artifacts.push(
-    await persistJsonArtifact({
+  const jsonArtifact = await persistJsonArtifact({
       representativeId: params.representativeId,
       representativeSlug: params.representativeSlug,
       contactId: params.contactId,
@@ -720,11 +769,10 @@ async function persistBrowserExecutionArtifacts(params: {
         links: parsed.links,
       },
       summary,
-    }),
-  );
+    });
+  artifacts.push(jsonArtifact);
 
-  artifacts.push(
-    await persistScreenshotArtifact({
+  const screenshotArtifact = await persistScreenshotArtifact({
       representativeId: params.representativeId,
       representativeSlug: params.representativeSlug,
       contactId: params.contactId,
@@ -735,8 +783,8 @@ async function persistBrowserExecutionArtifacts(params: {
       body: Buffer.from(parsed.screenshotBase64, "base64"),
       mimeType: parsed.screenshotMimeType,
       summary,
-    }),
-  );
+    });
+  artifacts.push(screenshotArtifact);
 
   if (params.stderr.length > 0) {
     const stderrArtifacts = await persistExecutionArtifacts({
@@ -747,7 +795,18 @@ async function persistBrowserExecutionArtifacts(params: {
     artifacts.push(...stderrArtifacts);
   }
 
-  return artifacts;
+  return {
+    artifacts,
+    browserCapture: {
+      transportKind: parsed.transportKind,
+      profilePath: parsed.profilePath,
+      title: parsed.title,
+      finalUrl: parsed.finalUrl,
+      textSnippet: parsed.textSnippet,
+      screenshotArtifactId: screenshotArtifact.id,
+      jsonArtifactId: jsonArtifact.id,
+    },
+  };
 }
 
 async function runMcpExecution(params: {
@@ -755,7 +814,7 @@ async function runMcpExecution(params: {
   leasedSession: LeasedSessionRecord;
   executionId: string;
   input: NormalizedExecutionInput;
-}) {
+}): Promise<RuntimeExecutionResult> {
   const binding = await loadRepresentativeMcpBinding({
     representativeId: params.context.session.representativeId,
     bindingId: params.input.bindingId,
@@ -802,6 +861,7 @@ async function runMcpExecution(params: {
     bytesRead: Buffer.byteLength(JSON.stringify(payload), "utf8"),
     artifacts: [artifact],
     failureSummary: undefined,
+    browserCapture: undefined,
     transport: "mcp" as const,
     remoteUrl: binding.serverUrl,
   };

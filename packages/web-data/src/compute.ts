@@ -29,6 +29,24 @@ type ComputeSessionRecord = Prisma.ComputeSessionGetPayload<{
   include: typeof computeSessionInclude.include;
 }>;
 
+const browserSessionInclude = Prisma.validator<Prisma.BrowserSessionDefaultArgs>()({
+  include: {
+    navigations: {
+      orderBy: [{ createdAt: "desc" }],
+      take: 3,
+    },
+    _count: {
+      select: {
+        navigations: true,
+      },
+    },
+  },
+});
+
+type BrowserSessionRecord = Prisma.BrowserSessionGetPayload<{
+  include: typeof browserSessionInclude.include;
+}>;
+
 type RepresentativeIdentity = {
   id: string;
   slug: string;
@@ -119,6 +137,36 @@ export type RepresentativeComputeSnapshot = {
       }
     >;
   };
+  browserSessions: Array<{
+    id: string;
+    computeSessionId: string;
+    status: "active" | "failed" | "closed";
+    transportKind: "playwright" | "openai_computer" | "claude_computer_use";
+    profilePath?: string;
+    currentUrl?: string;
+    currentTitle?: string;
+    lastToolExecutionId?: string;
+    lastNavigationAt?: string;
+    closedAt?: string;
+    failureReason?: string;
+    createdAt: string;
+    updatedAt: string;
+    visitCount: number;
+    latestNavigation?: {
+      id: string;
+      toolExecutionId: string;
+      status: "succeeded" | "failed";
+      transportKind: "playwright" | "openai_computer" | "claude_computer_use";
+      requestedUrl: string;
+      finalUrl?: string;
+      pageTitle?: string;
+      textSnippet?: string;
+      screenshotArtifactId?: string;
+      jsonArtifactId?: string;
+      errorMessage?: string;
+      createdAt: string;
+    };
+  }>;
   sessions: Array<{
     id: string;
     status: string;
@@ -231,12 +279,18 @@ export async function getRepresentativeComputeSnapshot(
     return null;
   }
 
-  const [sessions, ledgerEntries] = await Promise.all([
+  const [sessions, browserSessions, ledgerEntries] = await Promise.all([
     prisma.computeSession.findMany({
       where: { representativeId: representative.id },
       ...computeSessionInclude,
       orderBy: [{ createdAt: "desc" }],
       take: 20,
+    }),
+    prisma.browserSession.findMany({
+      where: { representativeId: representative.id },
+      ...browserSessionInclude,
+      orderBy: [{ lastNavigationAt: "desc" }, { createdAt: "desc" }],
+      take: 12,
     }),
     prisma.ledgerEntry.findMany({
       where: { representativeId: representative.id },
@@ -247,6 +301,7 @@ export async function getRepresentativeComputeSnapshot(
 
   return {
     representative: serializeRepresentativeIdentity(representative),
+    browserSessions: browserSessions.map((session) => serializeBrowserSessionRecord(session)),
     sessions: sessions.map((session) => serializeComputeSession(session)),
     ledger: ledgerEntries.map((entry) => ({
       id: entry.id,
@@ -677,6 +732,55 @@ function serializeComputeSession(session: ComputeSessionRecord) {
               ? { requestedCommand: latestExecution.requestedCommand }
               : {}),
             createdAt: latestExecution.createdAt.toISOString(),
+          },
+        }
+      : {}),
+  };
+}
+
+function serializeBrowserSessionRecord(session: BrowserSessionRecord) {
+  const latestNavigation = session.navigations[0];
+
+  return {
+    id: session.id,
+    computeSessionId: session.computeSessionId,
+    status: session.status.toLowerCase() as "active" | "failed" | "closed",
+    transportKind: session.transportKind.toLowerCase() as
+      | "playwright"
+      | "openai_computer"
+      | "claude_computer_use",
+    ...(session.profilePath ? { profilePath: session.profilePath } : {}),
+    ...(session.currentUrl ? { currentUrl: session.currentUrl } : {}),
+    ...(session.currentTitle ? { currentTitle: session.currentTitle } : {}),
+    ...(session.lastToolExecutionId ? { lastToolExecutionId: session.lastToolExecutionId } : {}),
+    ...(session.lastNavigationAt ? { lastNavigationAt: session.lastNavigationAt.toISOString() } : {}),
+    ...(session.closedAt ? { closedAt: session.closedAt.toISOString() } : {}),
+    ...(session.failureReason ? { failureReason: session.failureReason } : {}),
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: session.updatedAt.toISOString(),
+    visitCount: session._count.navigations,
+    ...(latestNavigation
+      ? {
+          latestNavigation: {
+            id: latestNavigation.id,
+            toolExecutionId: latestNavigation.toolExecutionId,
+            status: latestNavigation.status.toLowerCase() as "succeeded" | "failed",
+            transportKind: latestNavigation.transportKind.toLowerCase() as
+              | "playwright"
+              | "openai_computer"
+              | "claude_computer_use",
+            requestedUrl: latestNavigation.requestedUrl,
+            ...(latestNavigation.finalUrl ? { finalUrl: latestNavigation.finalUrl } : {}),
+            ...(latestNavigation.pageTitle ? { pageTitle: latestNavigation.pageTitle } : {}),
+            ...(latestNavigation.textSnippet ? { textSnippet: latestNavigation.textSnippet } : {}),
+            ...(latestNavigation.screenshotArtifactId
+              ? { screenshotArtifactId: latestNavigation.screenshotArtifactId }
+              : {}),
+            ...(latestNavigation.jsonArtifactId
+              ? { jsonArtifactId: latestNavigation.jsonArtifactId }
+              : {}),
+            ...(latestNavigation.errorMessage ? { errorMessage: latestNavigation.errorMessage } : {}),
+            createdAt: latestNavigation.createdAt.toISOString(),
           },
         }
       : {}),

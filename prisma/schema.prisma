@@ -92,6 +92,8 @@ enum EventType {
   APPROVAL_REQUESTED
   APPROVAL_RESOLVED
   ARTIFACT_STORED
+  BROWSER_NAVIGATION_RECORDED
+  BROWSER_SESSION_CLOSED
   BILLING_LEDGER_RECORDED
 }
 
@@ -162,6 +164,23 @@ enum ArtifactKind {
   SCREENSHOT
   JSON
   TRACE
+}
+
+enum BrowserTransportKind {
+  PLAYWRIGHT
+  OPENAI_COMPUTER
+  CLAUDE_COMPUTER_USE
+}
+
+enum BrowserSessionStatus {
+  ACTIVE
+  FAILED
+  CLOSED
+}
+
+enum BrowserNavigationStatus {
+  SUCCEEDED
+  FAILED
 }
 
 enum LedgerEntryKind {
@@ -278,6 +297,8 @@ model Representative {
   intakeSubmissions IntakeSubmission[]
   invoices          Invoice[]
   ledgerEntries     LedgerEntry[]
+  browserSessions   BrowserSession[]
+  browserNavigations BrowserNavigation[]
   knowledgePack     KnowledgePack?
   memoryRecords     OpenVikingMemoryRecord[]
   pricingPlans      PricingPlan[]
@@ -397,6 +418,8 @@ model Contact {
   artifacts        Artifact[]
   approvalRequests ApprovalRequest[]
   ledgerEntries    LedgerEntry[]
+  browserSessions  BrowserSession[]
+  browserNavigations BrowserNavigation[]
   recallTraces     ConversationRecallTrace[]
   computeTrustTier String?
   lastApprovalGrantedAt DateTime?
@@ -436,6 +459,8 @@ model Conversation {
   intakeSubmissions IntakeSubmission[]
   invoices         Invoice[]
   ledgerEntries    LedgerEntry[]
+  browserSessions  BrowserSession[]
+  browserNavigations BrowserNavigation[]
 
   @@unique([representativeId, telegramChatId, contactId])
 }
@@ -610,6 +635,7 @@ model ComputeSession {
   conversation       Conversation?        @relation(fields: [conversationId], references: [id])
   policyProfile      CapabilityPolicyProfile? @relation(fields: [policyProfileId], references: [id])
   toolExecutions     ToolExecution[]
+  browserSession     BrowserSession?
   artifacts          Artifact[]
   approvalRequests   ApprovalRequest[]
   ledgerEntries      LedgerEntry[]
@@ -642,6 +668,7 @@ model ToolExecution {
   session          ComputeSession      @relation(fields: [sessionId], references: [id])
   mcpBinding       RepresentativeMcpBinding? @relation(fields: [mcpBindingId], references: [id])
   artifacts        Artifact[]
+  browserNavigation BrowserNavigation?
 
   @@index([sessionId, createdAt])
   @@index([status, createdAt])
@@ -699,6 +726,61 @@ model Artifact {
 
   @@index([representativeId, createdAt])
   @@index([sessionId, createdAt])
+}
+
+model BrowserSession {
+  id                String               @id @default(cuid())
+  representativeId  String
+  contactId         String?
+  conversationId    String?
+  computeSessionId  String               @unique
+  status            BrowserSessionStatus @default(ACTIVE)
+  transportKind     BrowserTransportKind @default(PLAYWRIGHT)
+  profilePath       String?
+  currentUrl        String?
+  currentTitle      String?
+  lastToolExecutionId String?
+  lastNavigationAt  DateTime?
+  closedAt          DateTime?
+  failureReason     String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  representative    Representative       @relation(fields: [representativeId], references: [id])
+  contact           Contact?             @relation(fields: [contactId], references: [id])
+  conversation      Conversation?        @relation(fields: [conversationId], references: [id])
+  computeSession    ComputeSession       @relation(fields: [computeSessionId], references: [id])
+  navigations       BrowserNavigation[]
+
+  @@index([representativeId, updatedAt])
+  @@index([conversationId, updatedAt])
+}
+
+model BrowserNavigation {
+  id                 String                  @id @default(cuid())
+  browserSessionId   String
+  representativeId   String
+  contactId          String?
+  conversationId     String?
+  toolExecutionId    String                  @unique
+  status             BrowserNavigationStatus
+  transportKind      BrowserTransportKind    @default(PLAYWRIGHT)
+  requestedUrl       String
+  finalUrl           String?
+  pageTitle          String?
+  textSnippet        String?
+  screenshotArtifactId String?
+  jsonArtifactId     String?
+  errorMessage       String?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  browserSession     BrowserSession          @relation(fields: [browserSessionId], references: [id])
+  representative     Representative          @relation(fields: [representativeId], references: [id])
+  contact            Contact?                @relation(fields: [contactId], references: [id])
+  conversation       Conversation?           @relation(fields: [conversationId], references: [id])
+  toolExecution      ToolExecution           @relation(fields: [toolExecutionId], references: [id])
+
+  @@index([browserSessionId, createdAt])
+  @@index([representativeId, createdAt])
 }
 
 model LedgerEntry {

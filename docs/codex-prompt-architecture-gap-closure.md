@@ -19,7 +19,7 @@ Delegate already has a meaningful middle state:
 - OpenAI Responses-backed reply generation with deterministic fallback
 - OpenViking-backed public-safe memory layer
 - ClawHub-backed skill discovery and provenance
-- Playwright-backed deterministic browser lane with screenshot/json artifacts and dashboard preview
+- Playwright-backed deterministic browser lane with screenshot/json artifacts, persistent browser session history, and dashboard preview
 - governed compute plane with reusable leases, approvals, artifacts, and richer dual-ledger accounting
 - lifecycle hook bus for model, handoff, and compute audit points
 - owner dashboard control plane
@@ -50,7 +50,7 @@ This matters because every future capability lane must inherit the same conversa
 |---|------|----------------|-------------------------|-----------|------------------------------|----------|
 | 1 | Model access layer | Partial, foundation landed | Public runtime now has an `OpenAI Responses` answer lane, structured context assembly, usage ledger hooks, and deterministic fallback | Add Anthropic/Claude as the secondary lane, sharpen provider cooldown/fallback, and harden model cost accounting | The repo intentionally shipped the smallest trustworthy model path before adding a second provider lane | P1 |
 | 2 | General compute plane | Partial, strong foundation | Docker-isolated broker, reusable compute leases, capability policy, approval flow, artifact persistence, richer debit path, Telegram `/compute` entry | Keep the reusable lease model, then prepare runner abstraction hardening and microVM upgrade path | Docker-backed leases are now real, but the runner stack is still single-backend and not microVM-ready yet | P1 |
-| 3 | Browser / computer use | Partial, richer lane landed | A governed `browser` capability now runs through an isolated Playwright lane with approval, artifacts, screenshot/json outputs, and dashboard preview support | Add richer browser session management, multi-step browser workflows, and native Claude/OpenAI computer-use lanes behind approvals | The current slice proves governed browser execution and artifact UX, but not the higher-level native computer-use stack yet | P1 |
+| 3 | Browser / computer use | Partial, browser session lane landed | A governed `browser` capability now runs through an isolated Playwright lane with approval, screenshot/json artifacts, persistent browser session history, and dashboard preview support | Add multi-step browser workflows and native Claude/OpenAI computer-use lanes behind approvals | The current slice proves governed browser execution, retained browser profiles, and browser-session observability, but not the higher-level native computer-use stack yet | P1 |
 | 4 | Permission system | Partial, managed overlays landed | `allow / ask / deny`, capability rules, path/domain/cost/paid-plan gates, dashboard-editable compute defaults, managed overlay profiles with channel / plan-tier conditions, and conversation-scoped compute entitlements | Add richer resource scopes, customer/org policy overlays, and broader approval-aware capability binding across future transports | The product still has no org/IAM layer, and policy is still representative-centric rather than customer/org managed | P1 |
 | 5 | Hooks and audit | Partial, explicit bus landed | Lifecycle hook bus now exists for `PreToolUse`, `PostToolUse`, `SessionEnd`, `PreHandoff`, and model reply/context audit points | Expand hooks into retention, memory filtering, billing budget gates, and owner-facing webhookable summaries | The first hook slice focused on making lifecycle boundaries explicit before adding programmable policies | P1 |
 | 6 | Subagents / multi-agent | Not started | Structured collectors and compute broker exist, but there are no scoped subagents | Introduce explicit `triage-agent`, `compute-agent`, `browser-agent`, `quote-agent`, and `handoff-agent` with isolated budgets and tool scopes | This belongs to the next networked phase, not the current Founder Representative wedge | P2 |
@@ -94,16 +94,16 @@ Do **not** try to close all 12 rows in one pass.
 
 Recommended order:
 
-1. `P1-D` Richer browser session management and native computer-use preparation
-2. `P1-E` Model billing expansion and provider secondary lane hardening
+1. `P1-E` Model billing expansion and provider secondary lane hardening
+2. `P1-D follow-on` Native computer-use preparation on top of the new browser session substrate
 3. `P2-A` Scoped subagents
 4. `P2-B` Temporal and broader agent-network infrastructure
 
 Why this order:
 
-- Row `2` is now strong enough that browser/native computer-use can deepen on top of a real lease/session substrate
+- Row `3` now has the retained browser-session substrate it needed, so the next bottleneck shifts back to model/provider economics and cost visibility
 - Row `11` now has a better base, so the next billing work should focus on model/browser/MCP cost layers instead of storage-only seed accounting
-- Row `3` is the next natural product-facing step after reusable leases and artifact governance landed
+- Native computer-use prep should now build on the new browser session lane, not restart browser infrastructure from scratch
 - Row `6` should still wait until compute, billing, and capability boundaries are more stable
 
 ## Codex prompt rules
@@ -218,7 +218,7 @@ Current repo state:
 - compute broker exists
 - approvals, artifacts, and billing exist
 - browser capability now runs through an isolated Playwright lane
-- screenshot/json artifacts and dashboard preview support exist
+- screenshot/json artifacts, retained browser sessions, and dashboard preview support exist
 - this is still not sufficient for the intended Delegate architecture
 
 Goal:

@@ -70,6 +70,13 @@ export const computeExecutionOutcomeSchema = z.enum([
   "blocked",
   "pending_approval",
 ]);
+export const browserTransportKindSchema = z.enum([
+  "playwright",
+  "openai_computer",
+  "claude_computer_use",
+]);
+export const browserSessionStatusSchema = z.enum(["active", "failed", "closed"]);
+export const browserNavigationStatusSchema = z.enum(["succeeded", "failed"]);
 
 export const capabilityPolicyRuleSchema = z.object({
   id: z.string(),
@@ -151,6 +158,42 @@ export const computeSessionSnapshotSchema = z.object({
   expiresAt: z.string().datetime().nullable(),
   endedAt: z.string().datetime().nullable(),
   failureReason: z.string().nullable(),
+});
+
+export const browserNavigationSnapshotSchema = z.object({
+  id: z.string(),
+  toolExecutionId: z.string(),
+  status: browserNavigationStatusSchema,
+  transportKind: browserTransportKindSchema,
+  requestedUrl: z.string().url(),
+  finalUrl: z.string().url().nullable(),
+  pageTitle: z.string().nullable(),
+  textSnippet: z.string().nullable(),
+  screenshotArtifactId: z.string().nullable(),
+  jsonArtifactId: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+
+export const browserSessionSnapshotSchema = z.object({
+  id: z.string(),
+  computeSessionId: z.string(),
+  representativeId: z.string(),
+  contactId: z.string().nullable(),
+  conversationId: z.string().nullable(),
+  status: browserSessionStatusSchema,
+  transportKind: browserTransportKindSchema,
+  profilePath: z.string().nullable(),
+  currentUrl: z.string().url().nullable(),
+  currentTitle: z.string().nullable(),
+  lastToolExecutionId: z.string().nullable(),
+  lastNavigationAt: z.string().datetime().nullable(),
+  closedAt: z.string().datetime().nullable(),
+  failureReason: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  visitCount: z.number().int().nonnegative(),
+  latestNavigation: browserNavigationSnapshotSchema.nullable(),
 });
 
 export const createComputeSessionResponseSchema = z.object({
@@ -407,11 +450,16 @@ export type ComputeRunnerType = z.infer<typeof computeRunnerTypeSchema>;
 export type ComputeNetworkMode = z.infer<typeof computeNetworkModeSchema>;
 export type ComputeFilesystemMode = z.infer<typeof computeFilesystemModeSchema>;
 export type ComputeExecutionOutcome = z.infer<typeof computeExecutionOutcomeSchema>;
+export type BrowserTransportKind = z.infer<typeof browserTransportKindSchema>;
+export type BrowserSessionStatus = z.infer<typeof browserSessionStatusSchema>;
+export type BrowserNavigationStatus = z.infer<typeof browserNavigationStatusSchema>;
 export type CapabilityPolicyRule = z.infer<typeof capabilityPolicyRuleSchema>;
 export type CapabilityPolicyProfile = z.infer<typeof capabilityPolicyProfileSchema>;
 export type CreateComputeSessionRequest = z.infer<typeof createComputeSessionRequestSchema>;
 export type ComputeSessionLease = z.infer<typeof computeSessionLeaseSchema>;
 export type ComputeSessionSnapshot = z.infer<typeof computeSessionSnapshotSchema>;
+export type BrowserNavigationSnapshot = z.infer<typeof browserNavigationSnapshotSchema>;
+export type BrowserSessionSnapshot = z.infer<typeof browserSessionSnapshotSchema>;
 export type CreateComputeSessionResponse = z.infer<typeof createComputeSessionResponseSchema>;
 export type TerminateComputeSessionRequest = z.infer<typeof terminateComputeSessionRequestSchema>;
 export type HeartbeatComputeSessionRequest = z.infer<typeof heartbeatComputeSessionRequestSchema>;

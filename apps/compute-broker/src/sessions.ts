@@ -16,6 +16,7 @@ import {
   serializeSession,
 } from "./serializers";
 import { computeLifecycleHooks } from "./lifecycle-hooks";
+import { closeBrowserSessionForComputeSession } from "./browser-sessions";
 
 export async function createComputeSession(rawInput: unknown) {
   const input = createComputeSessionRequestSchema.parse(rawInput);
@@ -218,6 +219,11 @@ export async function terminateComputeSession(sessionId: string, reason?: string
       endedAt,
       failureReason: session.status === "FAILED" ? session.failureReason : reason ?? session.failureReason,
     },
+  });
+
+  await closeBrowserSessionForComputeSession({
+    computeSessionId: sessionId,
+    reason: reason ?? "compute_session_terminated",
   });
 
   await prisma.eventAudit.create({

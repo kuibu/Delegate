@@ -55,6 +55,36 @@ type ComputeSnapshot = {
       sourceSkillPack?: string;
     }>;
   };
+  browserSessions: Array<{
+    id: string;
+    computeSessionId: string;
+    status: "active" | "failed" | "closed";
+    transportKind: "playwright" | "openai_computer" | "claude_computer_use";
+    profilePath?: string;
+    currentUrl?: string;
+    currentTitle?: string;
+    lastToolExecutionId?: string;
+    lastNavigationAt?: string;
+    closedAt?: string;
+    failureReason?: string;
+    createdAt: string;
+    updatedAt: string;
+    visitCount: number;
+    latestNavigation?: {
+      id: string;
+      toolExecutionId: string;
+      status: "succeeded" | "failed";
+      transportKind: "playwright" | "openai_computer" | "claude_computer_use";
+      requestedUrl: string;
+      finalUrl?: string;
+      pageTitle?: string;
+      textSnippet?: string;
+      screenshotArtifactId?: string;
+      jsonArtifactId?: string;
+      errorMessage?: string;
+      createdAt: string;
+    };
+  }>;
   sessions: Array<{
     id: string;
     status: string;
@@ -242,6 +272,9 @@ export function DashboardCompute({
         ["requested", "starting", "running", "idle"].includes(session.status),
       ).length
     : 0;
+  const activeBrowserSessions = snapshot
+    ? snapshot.browserSessions.filter((session) => session.status === "active").length
+    : 0;
   const failedSessions = snapshot
     ? snapshot.sessions.filter((session) => session.status === "failed").length
     : 0;
@@ -263,6 +296,12 @@ export function DashboardCompute({
           label: t.signalCards.artifacts,
           value: `${artifacts.length}`,
           detail: t.signalCards.artifactsDetail,
+        },
+        {
+          label: t.signalCards.browserSessions,
+          value: `${activeBrowserSessions}`,
+          detail: t.signalCards.browserSessionsDetail,
+          tone: activeBrowserSessions > 0 ? ("safe" as const) : ("default" as const),
         },
         {
           label: t.signalCards.autoApproveBudget,
@@ -837,6 +876,74 @@ export function DashboardCompute({
         </DashboardSurface>
 
         <DashboardSurface
+          eyebrow={t.browserSessionsEyebrow}
+          meta={<span className="chip">{t.browserSessionsChip(snapshot.browserSessions.length)}</span>}
+          title={t.browserSessionsTitle}
+        >
+          <div className="row-list">
+            {snapshot.browserSessions.length ? (
+              snapshot.browserSessions.map((browserSession) => (
+                <div className="skill-row" key={browserSession.id}>
+                  <div>
+                    <strong>
+                      {browserSession.currentTitle ??
+                        browserSession.latestNavigation?.pageTitle ??
+                        browserSession.currentUrl ??
+                        browserSession.latestNavigation?.requestedUrl ??
+                        browserSession.id}
+                    </strong>
+                    <p>
+                      {browserSession.transportKind} · {browserSession.status} · {t.visitCount(browserSession.visitCount)}
+                    </p>
+                    <div className="chip-row">
+                      <span className="chip">{t.browserComputeSession(browserSession.computeSessionId)}</span>
+                      {browserSession.lastNavigationAt ? (
+                        <span className="chip">
+                          {t.lastNavigationLabel(formatTimestamp(browserSession.lastNavigationAt, locale))}
+                        </span>
+                      ) : null}
+                      {browserSession.profilePath ? <span className="chip">{browserSession.profilePath}</span> : null}
+                    </div>
+                    {browserSession.currentUrl ? (
+                      <p className="footer-note">{browserSession.currentUrl}</p>
+                    ) : null}
+                    {browserSession.latestNavigation?.textSnippet ? (
+                      <p className="footer-note">{browserSession.latestNavigation.textSnippet}</p>
+                    ) : null}
+                    {browserSession.failureReason ? (
+                      <p className="footer-note">{t.failureReasonLabel(browserSession.failureReason)}</p>
+                    ) : null}
+                  </div>
+
+                  <div className="button-row">
+                    {browserSession.latestNavigation?.screenshotArtifactId ? (
+                      <button
+                        className="button-secondary"
+                        onClick={() => setSelectedArtifactId(browserSession.latestNavigation?.screenshotArtifactId ?? null)}
+                        type="button"
+                      >
+                        {t.openLatestScreenshot}
+                      </button>
+                    ) : null}
+                    {browserSession.latestNavigation?.jsonArtifactId ? (
+                      <button
+                        className="button-secondary"
+                        onClick={() => setSelectedArtifactId(browserSession.latestNavigation?.jsonArtifactId ?? null)}
+                        type="button"
+                      >
+                        {t.openLatestManifest}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="muted">{t.noBrowserSessions}</p>
+            )}
+          </div>
+        </DashboardSurface>
+
+        <DashboardSurface
           eyebrow={t.artifactsEyebrow}
           meta={<span className="chip">{t.artifactsChip(artifacts.length)}</span>}
           title={t.artifactsTitle}
@@ -1113,6 +1220,8 @@ const copy = {
       liveSessionsDetail: "仍然可以继续执行的会话数。",
       artifacts: "Artifacts",
       artifactsDetail: "已经落入对象存储的输出总数。",
+      browserSessions: "Browser sessions",
+      browserSessionsDetail: "当前保留状态和导航历史的 browser 会话数。",
       autoApproveBudget: "Auto-approve budget",
       autoApproveBudgetDetail: "当前代表级预算阈值，后续可用于轻量自动放行。",
       walletCredits: "Wallet credits",
@@ -1180,6 +1289,15 @@ const copy = {
     latestExecutionLabel: (status: string, value: string) => `最近执行 ${status} · ${value}`,
     failureReasonLabel: (value: string) => `Failure: ${value}`,
     noSessions: "还没有 compute session。",
+    browserSessionsEyebrow: "Browser Session Lane",
+    browserSessionsTitle: "追踪 browser profile、最近导航和最新截图入口",
+    browserSessionsChip: (count: number) => `${count} browser sessions`,
+    visitCount: (count: number) => `${count} visits`,
+    browserComputeSession: (value: string) => `Compute · ${value}`,
+    lastNavigationLabel: (value: string) => `最近导航 ${value}`,
+    openLatestScreenshot: "打开最新截图",
+    openLatestManifest: "打开最新 manifest",
+    noBrowserSessions: "还没有 browser session 历史。",
     artifactsEyebrow: "Artifact Store",
     artifactsTitle: "确认 stdout / stderr 等结果已经进入对象存储",
     artifactsChip: (count: number) => `${count} artifacts`,
@@ -1235,6 +1353,8 @@ const copy = {
       liveSessionsDetail: "Sessions that can still accept work.",
       artifacts: "Artifacts",
       artifactsDetail: "Outputs already persisted into object storage.",
+      browserSessions: "Browser sessions",
+      browserSessionsDetail: "Browser profiles that still carry navigation state and recent history.",
       autoApproveBudget: "Auto-approve budget",
       autoApproveBudgetDetail: "Representative-level budget threshold for future low-risk auto-approval.",
       walletCredits: "Wallet credits",
@@ -1302,6 +1422,15 @@ const copy = {
     latestExecutionLabel: (status: string, value: string) => `Latest execution ${status} · ${value}`,
     failureReasonLabel: (value: string) => `Failure: ${value}`,
     noSessions: "No compute sessions yet.",
+    browserSessionsEyebrow: "Browser Session Lane",
+    browserSessionsTitle: "Track browser profiles, recent navigations, and the latest visual capture",
+    browserSessionsChip: (count: number) => `${count} browser sessions`,
+    visitCount: (count: number) => `${count} visits`,
+    browserComputeSession: (value: string) => `Compute · ${value}`,
+    lastNavigationLabel: (value: string) => `Last navigation ${value}`,
+    openLatestScreenshot: "Open latest screenshot",
+    openLatestManifest: "Open latest manifest",
+    noBrowserSessions: "No browser sessions yet.",
     artifactsEyebrow: "Artifact Store",
     artifactsTitle: "Confirm stdout, stderr, and other outputs are persisted",
     artifactsChip: (count: number) => `${count} artifacts`,
