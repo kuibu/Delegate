@@ -11,6 +11,9 @@ import {
   formatStructuredCollectorPrompt,
   formatStructuredCollectorSummary,
   renderReplyPreview,
+  resolveCollectorSubagent,
+  resolveComputeSubagent,
+  resolveConversationSubagent,
   resolveTelegramGroupHandling,
   shouldStartStructuredCollector,
   type ConversationPlan,
@@ -343,6 +346,7 @@ bot.on("message:text", async (ctx) => {
         deepHelpUnlocked: false,
       },
   });
+  const planSubagent = resolveConversationSubagent(plan);
 
   const recalled = conversationContext
     ? await recallOpenVikingContext({
@@ -368,11 +372,13 @@ bot.on("message:text", async (ctx) => {
 
   if (conversationContext?.collectorState) {
     const collectorPlan = buildCollectorConversationPlan(conversationContext.collectorState);
+    const collectorSubagent = resolveCollectorSubagent(conversationContext.collectorState);
 
     await recordInboundTurn({
       context: conversationContext,
       plan: collectorPlan,
       text: normalizedText,
+      subagentId: collectorSubagent.id,
     });
 
     if (isCollectorCancelMessage(normalizedText)) {
@@ -391,6 +397,7 @@ bot.on("message:text", async (ctx) => {
         context: conversationContext,
         plan: collectorPlan,
         messageText: replyText,
+        subagentId: collectorSubagent.id,
       });
       await captureTurnToOpenViking({
         context: conversationContext,
@@ -433,6 +440,7 @@ bot.on("message:text", async (ctx) => {
         context: conversationContext,
         plan: collectorPlan,
         messageText: replyText,
+        subagentId: collectorSubagent.id,
       });
       await captureTurnToOpenViking({
         context: conversationContext,
@@ -446,6 +454,7 @@ bot.on("message:text", async (ctx) => {
           input: {
             kind: advanced.state.kind,
             stepIndex: advanced.state.stepIndex,
+            subagentId: collectorSubagent.id,
           },
           output: replyText,
           success: true,
@@ -484,6 +493,7 @@ bot.on("message:text", async (ctx) => {
       context: conversationContext,
       plan: collectorPlan,
       messageText: replyText,
+      subagentId: collectorSubagent.id,
     });
     await storeCollectorMemory({
       context: conversationContext,
@@ -502,6 +512,7 @@ bot.on("message:text", async (ctx) => {
         input: {
           kind: advanced.state.kind,
           answers: advanced.state.answers,
+          subagentId: collectorSubagent.id,
         },
         output: submitted.summary,
         success: true,
@@ -515,6 +526,7 @@ bot.on("message:text", async (ctx) => {
       context: conversationContext,
       plan,
       text: normalizedText,
+      subagentId: planSubagent.id,
     });
   }
 
@@ -545,6 +557,7 @@ bot.on("message:text", async (ctx) => {
       context: conversationContext,
       plan,
       messageText: replyText,
+      subagentId: planSubagent.id,
     });
     await captureTurnToOpenViking({
       context: conversationContext,
@@ -558,6 +571,7 @@ bot.on("message:text", async (ctx) => {
         input: {
           kind: collector.kind,
           intent: collector.intent,
+          subagentId: planSubagent.id,
         },
         output: replyText,
         success: true,
@@ -585,6 +599,7 @@ bot.on("message:text", async (ctx) => {
               contactId: conversationContext.contactId,
               conversationId: conversationContext.conversationId,
             },
+            subagentId: planSubagent.id,
             intent: plan.intent,
             nextStep: plan.nextStep,
             priority: prepared.priority,
@@ -628,6 +643,7 @@ bot.on("message:text", async (ctx) => {
     const generated = await generateRepresentativeReply({
       representative,
       plan,
+      subagent: planSubagent,
       userText: normalizedText,
       recalled,
       recentTurns,
@@ -643,6 +659,7 @@ bot.on("message:text", async (ctx) => {
           contactId: conversationContext.contactId,
           conversationId: conversationContext.conversationId,
         },
+        subagentId: planSubagent.id,
         provider: generated.provider ?? "openai",
         model: generated.model ?? "gpt-5-mini",
         estimatedInputTokens: generated.contextTrace.estimatedInputTokens,
@@ -690,6 +707,7 @@ bot.on("message:text", async (ctx) => {
             contactId: conversationContext.contactId,
             conversationId: conversationContext.conversationId,
           },
+          subagentId: planSubagent.id,
           provider: generated.provider,
           model: generated.model,
           success: true,
@@ -712,6 +730,7 @@ bot.on("message:text", async (ctx) => {
         input: {
           model: generated.model,
           intent: plan.intent,
+          subagentId: planSubagent.id,
         },
         output: replyText,
         success: true,
@@ -727,6 +746,7 @@ bot.on("message:text", async (ctx) => {
             contactId: conversationContext.contactId,
             conversationId: conversationContext.conversationId,
           },
+          subagentId: planSubagent.id,
           provider: generated.provider ?? "openai",
           model: generated.model ?? "gpt-5-mini",
           success: false,
@@ -742,6 +762,7 @@ bot.on("message:text", async (ctx) => {
           reason: generated.reason,
           state: generated.state,
           provider: generated.provider ?? null,
+          subagentId: planSubagent.id,
         },
         output: fallbackReplyText,
         success: false,
@@ -757,6 +778,7 @@ bot.on("message:text", async (ctx) => {
       context: conversationContext,
       plan,
       messageText: replyText,
+      subagentId: planSubagent.id,
     });
     await captureTurnToOpenViking({
       context: conversationContext,
@@ -1064,6 +1086,7 @@ async function handleComputeRequest(params: {
       chatId: params.ctx.chat.id,
       channel: Channel.PRIVATE_CHAT,
     }));
+  const computeSubagent = resolveComputeSubagent(parsed.capability);
 
   if (!conversationContext.compute.enabled) {
     const replyText = [
@@ -1077,6 +1100,7 @@ async function handleComputeRequest(params: {
       messageText: replyText,
       capability: parsed.capability,
       outcome: "compute_disabled",
+      subagentId: computeSubagent.id,
     });
     return;
   }
@@ -1085,6 +1109,7 @@ async function handleComputeRequest(params: {
     context: conversationContext,
     text: params.rawText,
     capability: parsed.capability,
+    subagentId: computeSubagent.id,
   });
 
   try {
@@ -1126,6 +1151,7 @@ async function handleComputeRequest(params: {
       messageText: replyText,
       capability: parsed.capability,
       outcome: execution.outcome,
+      subagentId: computeSubagent.id,
     });
     await captureTurnToOpenViking({
       context: conversationContext,
@@ -1139,6 +1165,7 @@ async function handleComputeRequest(params: {
         input: {
           capability: parsed.capability,
           target: parsed.displayTarget,
+          subagentId: computeSubagent.id,
         },
         output: replyText,
         success: execution.outcome === "completed",
@@ -1155,6 +1182,7 @@ async function handleComputeRequest(params: {
       messageText: replyText,
       capability: parsed.capability,
       outcome: "compute_error",
+      subagentId: computeSubagent.id,
     });
   }
 }

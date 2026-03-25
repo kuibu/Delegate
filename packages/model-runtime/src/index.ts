@@ -17,8 +17,12 @@ export async function generateRepresentativeReply(
   params: RepresentativeReplyInput,
 ): Promise<RepresentativeReplyResult> {
   const env = resolveModelRuntimeEnv();
+  const maxInputTokens = Math.min(
+    env.maxInputTokens,
+    params.subagent.budgetHints.maxInputTokens,
+  );
   const assembled = assembleRepresentativeReplyPrompt(params, {
-    maxInputTokens: env.maxInputTokens,
+    maxInputTokens,
   });
   if (env.state !== "ready") {
     return {

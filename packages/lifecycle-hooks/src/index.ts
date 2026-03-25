@@ -17,6 +17,7 @@ export type ModelContextSegmentTrace = {
 export type ModelContextAssembledEvent = {
   kind: "model_context_assembled";
   scope: LifecycleScope;
+  subagentId?: string;
   provider: string;
   model: string;
   estimatedInputTokens: number;
@@ -28,6 +29,7 @@ export type ModelContextAssembledEvent = {
 export type ModelReplyCompletedEvent = {
   kind: "model_reply_completed";
   scope: LifecycleScope;
+  subagentId?: string;
   provider: string;
   model: string;
   success: boolean;
@@ -42,6 +44,7 @@ export type ModelReplyCompletedEvent = {
 export type HandoffPreparedEvent = {
   kind: "handoff_prepared";
   scope: LifecycleScope;
+  subagentId?: string;
   intent: string;
   nextStep: string;
   priority: number;

@@ -1,6 +1,11 @@
 import type { KnowledgeDocument, Representative } from "@delegate/domain";
 import type { OpenVikingRecallItem } from "@delegate/openviking";
-import type { ConversationPlan, StructuredCollectorState } from "@delegate/runtime";
+import type {
+  ConversationPlan,
+  ResolvedSubagentRoute,
+  StructuredCollectorState,
+  SubagentContextScope,
+} from "@delegate/runtime";
 
 import type {
   ModelRuntimeRecentTurn,
@@ -9,9 +14,9 @@ import type {
   RepresentativeReplyPrompt,
 } from "./types";
 
-const MAX_RECENT_TURNS = 6;
-const MAX_RECALLED_ITEMS = 4;
-const MAX_KNOWLEDGE_ITEMS = 6;
+const DEFAULT_MAX_RECENT_TURNS = 6;
+const DEFAULT_MAX_RECALLED_ITEMS = 4;
+const DEFAULT_MAX_KNOWLEDGE_ITEMS = 6;
 
 type PromptSegment = {
   kind: string;
@@ -36,7 +41,7 @@ export function assembleRepresentativeReplyPrompt(
 
   return {
     prompt: {
-      instructions: buildInstructions(params.representative, params.plan),
+      instructions: buildInstructions(params.representative, params.plan, params.subagent),
       input: selectedSegments.included
         .map((segment) => segment.text)
         .join("\n\n"),
@@ -59,7 +64,11 @@ export function buildRepresentativeReplyPrompt(
   return assembleRepresentativeReplyPrompt(params, options).prompt;
 }
 
-function buildInstructions(representative: Representative, plan: ConversationPlan): string {
+function buildInstructions(
+  representative: Representative,
+  plan: ConversationPlan,
+  subagent: ResolvedSubagentRoute,
+): string {
   return [
     `You are ${representative.name}, the public Telegram representative for ${representative.ownerName}.`,
     "You are a public-facing representative, not a private assistant and not the owner.",
@@ -67,9 +76,20 @@ function buildInstructions(representative: Representative, plan: ConversationPla
     "Never imply access to private workspaces, private memory, local files, credentials, or hidden owner systems.",
     "Do not invent pricing promises, discounts, refunds, owner approval, or human handoff commitments.",
     `The policy engine already selected next_step=${plan.nextStep} for this turn.`,
+    buildSubagentInstructions(subagent),
     "Because this turn is already in the answer lane, produce a concise reply that directly helps the user and stays within the provided outline.",
     "Use the user's language when possible.",
     "Keep the reply suitable for Telegram: short paragraphs, compact bullets only when useful, and no markdown tables.",
+  ].join("\n");
+}
+
+function buildSubagentInstructions(subagent: ResolvedSubagentRoute): string {
+  return [
+    `Active subagent boundary: ${subagent.displayName} (${subagent.id}).`,
+    `Subagent mission: ${subagent.purpose}`,
+    `Allowed capabilities for this subagent: ${subagent.allowedCapabilities.join(", ") || "none"}.`,
+    `Context scopes for this subagent: ${subagent.contextScopes.join(", ") || "none"}.`,
+    "Do not drift into another subagent's role. If the user needs a different lane, stay within the provided reply outline and boundaries.",
   ].join("\n");
 }
 
@@ -110,6 +130,17 @@ function buildContractBlock(representative: Representative): string {
   ].join("\n");
 }
 
+function buildSubagentBlock(subagent: ResolvedSubagentRoute): string {
+  return [
+    "Scoped subagent boundary:",
+    `- Active subagent: ${subagent.id}`,
+    `- Purpose: ${subagent.purpose}`,
+    `- Allowed capabilities: ${subagent.allowedCapabilities.join(", ") || "none"}`,
+    `- Context scopes: ${subagent.contextScopes.join(", ") || "none"}`,
+    `- Budget hints: max_input_tokens=${subagent.budgetHints.maxInputTokens}, recent_turns=${subagent.budgetHints.maxRecentTurns}, knowledge_items=${subagent.budgetHints.maxKnowledgeItems}, recall_items=${subagent.budgetHints.maxRecallItems}`,
+  ].join("\n");
+}
+
 function buildCollectorStateBlock(collectorState: StructuredCollectorState | null | undefined): string | null {
   if (!collectorState) {
     return null;
@@ -130,8 +161,8 @@ function buildCollectorStateBlock(collectorState: StructuredCollectorState | nul
     .join("\n");
 }
 
-function buildRecentTurnsBlock(turns: ModelRuntimeRecentTurn[]): string | null {
-  const trimmed = turns.slice(-MAX_RECENT_TURNS);
+function buildRecentTurnsBlock(turns: ModelRuntimeRecentTurn[], limit: number): string | null {
+  const trimmed = turns.slice(-limit);
   if (!trimmed.length) {
     return null;
   }
@@ -149,8 +180,9 @@ function buildKnowledgeBlock(
   representative: Representative,
   plan: ConversationPlan,
   userText: string,
+  limit: number,
 ): string | null {
-  const docs = selectKnowledgeDocuments(representative, plan, userText);
+  const docs = selectKnowledgeDocuments(representative, plan, userText, limit);
   if (!docs.length) {
     return null;
   }
@@ -168,6 +200,7 @@ function selectKnowledgeDocuments(
   representative: Representative,
   plan: ConversationPlan,
   userText: string,
+  limit: number,
 ): KnowledgeDocument[] {
   const pool = [
     ...representative.knowledgePack.faq,
@@ -182,7 +215,7 @@ function selectKnowledgeDocuments(
       score: scoreDocument(doc, normalized, plan.intent),
     }))
     .sort((left, right) => right.score - left.score)
-    .slice(0, MAX_KNOWLEDGE_ITEMS)
+    .slice(0, limit)
     .map((entry) => entry.doc);
 }
 
@@ -213,8 +246,8 @@ function scoreDocument(doc: KnowledgeDocument, normalizedText: string, intent: C
   return score;
 }
 
-function buildRecalledContextBlock(recalled: OpenVikingRecallItem[]): string | null {
-  const trimmed = recalled.slice(0, MAX_RECALLED_ITEMS);
+function buildRecalledContextBlock(recalled: OpenVikingRecallItem[], limit: number): string | null {
+  const trimmed = recalled.slice(0, limit);
   if (!trimmed.length) {
     return null;
   }
@@ -229,8 +262,23 @@ function buildRecalledContextBlock(recalled: OpenVikingRecallItem[]): string | n
 }
 
 function buildPromptSegments(params: RepresentativeReplyInput): PromptSegment[] {
-  const knowledgeBlock = buildKnowledgeBlock(params.representative, params.plan, params.userText);
-  const recalledBlock = buildRecalledContextBlock(params.recalled);
+  const recentTurnLimit =
+    params.subagent.budgetHints.maxRecentTurns ?? DEFAULT_MAX_RECENT_TURNS;
+  const knowledgeItemLimit =
+    params.subagent.budgetHints.maxKnowledgeItems ?? DEFAULT_MAX_KNOWLEDGE_ITEMS;
+  const recallItemLimit =
+    params.subagent.budgetHints.maxRecallItems ?? DEFAULT_MAX_RECALLED_ITEMS;
+  const knowledgeBlock = scopeAllows(params.subagent, "public_knowledge")
+    ? buildKnowledgeBlock(
+        params.representative,
+        params.plan,
+        params.userText,
+        knowledgeItemLimit,
+      )
+    : null;
+  const recalledBlock = scopeAllows(params.subagent, "recalled_context")
+    ? buildRecalledContextBlock(params.recalled, recallItemLimit)
+    : null;
   const segments: PromptSegment[] = [
     {
       kind: "conversation_contract",
@@ -243,6 +291,11 @@ function buildPromptSegments(params: RepresentativeReplyInput): PromptSegment[] 
       text: buildRepresentativeSnapshot(params.representative, params.plan),
       priority: 100,
       required: true,
+    },
+    {
+      kind: "subagent_boundary",
+      text: buildSubagentBlock(params.subagent),
+      priority: 102,
     },
     {
       kind: "user_message",
@@ -258,7 +311,9 @@ function buildPromptSegments(params: RepresentativeReplyInput): PromptSegment[] 
     },
   ];
 
-  const collectorStateBlock = buildCollectorStateBlock(params.collectorState);
+  const collectorStateBlock = scopeAllows(params.subagent, "collector_state")
+    ? buildCollectorStateBlock(params.collectorState)
+    : null;
   if (collectorStateBlock) {
     segments.push({
       kind: "collector_state",
@@ -269,13 +324,15 @@ function buildPromptSegments(params: RepresentativeReplyInput): PromptSegment[] 
     });
   }
 
-  const recentTurnsBlock = buildRecentTurnsBlock(params.recentTurns);
+  const recentTurnsBlock = scopeAllows(params.subagent, "recent_turns")
+    ? buildRecentTurnsBlock(params.recentTurns, recentTurnLimit)
+    : null;
   if (recentTurnsBlock) {
     segments.push({
       kind: "recent_turns",
       text: recentTurnsBlock,
       priority: 80,
-      itemCount: Math.min(params.recentTurns.length, MAX_RECENT_TURNS),
+      itemCount: Math.min(params.recentTurns.length, recentTurnLimit),
     });
   }
 
@@ -293,7 +350,7 @@ function buildPromptSegments(params: RepresentativeReplyInput): PromptSegment[] 
       kind: "recalled_context",
       text: recalledBlock,
       priority: 70,
-      itemCount: Math.min(params.recalled.length, MAX_RECALLED_ITEMS),
+      itemCount: Math.min(params.recalled.length, recallItemLimit),
     });
   }
 
@@ -387,4 +444,11 @@ function parseRecalledUris(text: string): string[] {
       const uriEnd = line.indexOf(" [");
       return uriEnd === -1 ? line.slice(uriStart).trim() : line.slice(uriStart, uriEnd).trim();
     });
+}
+
+function scopeAllows(
+  subagent: ResolvedSubagentRoute,
+  scope: SubagentContextScope,
+): boolean {
+  return subagent.contextScopes.includes(scope);
 }

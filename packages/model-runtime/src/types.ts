@@ -1,6 +1,10 @@
 import type { Representative } from "@delegate/domain";
 import type { OpenVikingRecallItem } from "@delegate/openviking";
-import type { ConversationPlan, StructuredCollectorState } from "@delegate/runtime";
+import type {
+  ConversationPlan,
+  ResolvedSubagentRoute,
+  StructuredCollectorState,
+} from "@delegate/runtime";
 import type { ModelContextSegmentTrace } from "@delegate/lifecycle-hooks";
 
 export type ModelProvider = "openai" | "anthropic";
@@ -44,6 +48,7 @@ export type ModelRuntimeRecentTurn = {
 export type RepresentativeReplyInput = {
   representative: Representative;
   plan: ConversationPlan;
+  subagent: ResolvedSubagentRoute;
   userText: string;
   recalled: OpenVikingRecallItem[];
   recentTurns: ModelRuntimeRecentTurn[];

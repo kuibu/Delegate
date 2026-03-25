@@ -7,6 +7,9 @@ import {
   createConversationPlan,
   evaluateActionGate,
   formatStructuredCollectorPrompt,
+  resolveCollectorSubagent,
+  resolveComputeSubagent,
+  resolveConversationSubagent,
   resolveTelegramGroupHandling,
   renderReplyPreview,
   shouldStartStructuredCollector,
@@ -211,5 +214,68 @@ describe("structured collectors", () => {
     expect(completed.completed).toBe(true);
     expect(completed.state?.answers.timeWindows).toContain("周三下午");
     expect(completed.state?.answers.paidContext).toContain("付费咨询");
+  });
+});
+
+describe("scoped subagents", () => {
+  it("routes answer flows to the triage agent", () => {
+    const plan = createConversationPlan({
+      text: "你们是做什么的？",
+      channel: "private_chat",
+      representative: demoRepresentative,
+      usage: {
+        freeRepliesUsed: 0,
+        passUnlocked: false,
+        deepHelpUnlocked: false,
+      },
+    });
+
+    const subagent = resolveConversationSubagent(plan);
+
+    expect(subagent.id).toBe("triage-agent");
+    expect(subagent.allowedCapabilities).toContain("answer_faq");
+  });
+
+  it("routes intake collectors to the quote agent", () => {
+    const plan = createConversationPlan({
+      text: "我们想聊一个合作试点，可以先了解下吗？",
+      channel: "private_chat",
+      representative: demoRepresentative,
+      usage: {
+        freeRepliesUsed: 0,
+        passUnlocked: false,
+        deepHelpUnlocked: false,
+      },
+    });
+
+    const collector = beginStructuredCollector({
+      plan,
+      channel: "private_chat",
+    });
+    const subagent = resolveCollectorSubagent(collector);
+
+    expect(subagent.id).toBe("quote-agent");
+    expect(subagent.contextScopes).toContain("collector_state");
+  });
+
+  it("routes handoff asks to the handoff agent", () => {
+    const plan = createConversationPlan({
+      text: "我想直接和 founder 本人沟通一下",
+      channel: "private_chat",
+      representative: demoRepresentative,
+      usage: {
+        freeRepliesUsed: 0,
+        passUnlocked: false,
+        deepHelpUnlocked: false,
+      },
+    });
+
+    expect(resolveConversationSubagent(plan).id).toBe("handoff-agent");
+  });
+
+  it("splits browser and non-browser compute into different subagents", () => {
+    expect(resolveComputeSubagent("browser").id).toBe("browser-agent");
+    expect(resolveComputeSubagent("exec").id).toBe("compute-agent");
+    expect(resolveComputeSubagent("mcp").allowedCapabilities).toContain("mcp");
   });
 });

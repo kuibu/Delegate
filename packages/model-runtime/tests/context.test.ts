@@ -1,4 +1,5 @@
 import { demoRepresentative } from "@delegate/domain";
+import { getScopedSubagent } from "@delegate/runtime";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -21,6 +22,7 @@ describe("buildRepresentativeReplyPrompt", () => {
         reasons: ["Intent detected: faq.", "Public answer allowed."],
         responseOutline: ["Answer the user directly.", "Offer a safe next step."],
       },
+      subagent: getScopedSubagent("triage-agent"),
       userText: "你们是做什么的？",
       recentTurns: [
         {
@@ -43,8 +45,10 @@ describe("buildRepresentativeReplyPrompt", () => {
 
     expect(prompt.instructions).toContain("public-facing representative");
     expect(prompt.instructions).toContain("Never imply access to private workspaces");
+    expect(prompt.instructions).toContain("Active subagent boundary: Triage Agent");
     expect(prompt.input).toContain("Recalled public-safe context:");
     expect(prompt.input).toContain("Reply outline:");
+    expect(prompt.input).toContain("Scoped subagent boundary:");
   });
 
   it("tracks segment inclusion and trims lower-priority context when the budget is tight", () => {
@@ -59,6 +63,7 @@ describe("buildRepresentativeReplyPrompt", () => {
           reasons: ["Intent detected: pricing.", "Public answer allowed."],
           responseOutline: ["Answer the user directly.", "Offer a safe next step."],
         },
+        subagent: getScopedSubagent("quote-agent"),
         userText: "Can you tell me your pricing and send any case studies?",
         collectorState: {
           kind: "quote",
@@ -111,6 +116,7 @@ describe("buildRepresentativeReplyPrompt", () => {
         reasons: ["Intent detected: faq.", "Public answer allowed."],
         responseOutline: ["Answer the user directly.", "Offer a safe next step."],
       },
+      subagent: getScopedSubagent("triage-agent"),
       userText: "What does Delegate do?",
       recentTurns: [],
       recalled: [
@@ -131,6 +137,45 @@ describe("buildRepresentativeReplyPrompt", () => {
     expect(assembled.trace.selectedKnowledgeTitles.length).toBeGreaterThan(0);
     expect(assembled.trace.selectedKnowledgeTitles[0]).not.toContain("[");
     expect(assembled.trace.selectedKnowledgeTitles[0]).not.toContain("- ");
+  });
+
+  it("keeps handoff prompts out of public knowledge-heavy context", () => {
+    const assembled = assembleRepresentativeReplyPrompt({
+      representative: demoRepresentative,
+      plan: {
+        intent: "handoff",
+        audienceRole: "other",
+        action: "request_handoff",
+        nextStep: "handoff",
+        reasons: ["Intent detected: handoff.", "Human escalation required."],
+        responseOutline: ["Acknowledge the request.", "Prepare a clean owner handoff."],
+      },
+      subagent: getScopedSubagent("handoff-agent"),
+      userText: "我想直接和 founder 沟通一下。",
+      recentTurns: [
+        {
+          direction: "inbound",
+          messageText: "我想直接和 founder 沟通一下。",
+          intent: "handoff",
+        },
+      ],
+      recalled: [
+        {
+          uri: "viking://user/memories/events/delegate/lin-founder-rep/contact/demo",
+          contextType: "memory",
+          layer: "L1",
+          score: 0.72,
+          abstract: "The user previously asked for a human follow-up.",
+          overview: "Repeat request for direct founder contact.",
+        },
+      ],
+    });
+
+    expect(assembled.prompt.input).toContain("Scoped subagent boundary:");
+    expect(assembled.prompt.input).not.toContain("Public knowledge highlights:");
+    expect(assembled.trace.segments.some((segment) => segment.kind === "public_knowledge")).toBe(
+      false,
+    );
   });
 });
 

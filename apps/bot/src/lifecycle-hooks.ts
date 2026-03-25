@@ -18,6 +18,7 @@ export const botLifecycleHooks = createLifecycleHookBus(
           case "model_context_assembled":
             await recordModelContextAssembly({
               context: buildBotContext(event.scope),
+              ...(event.subagentId ? { subagentId: event.subagentId } : {}),
               provider: event.provider,
               model: event.model,
               estimatedInputTokens: event.estimatedInputTokens,
@@ -29,6 +30,7 @@ export const botLifecycleHooks = createLifecycleHookBus(
           case "model_reply_completed":
             await recordModelReplyCompleted({
               context: buildBotContext(event.scope),
+              ...(event.subagentId ? { subagentId: event.subagentId } : {}),
               provider: event.provider,
               model: event.model,
               success: event.success,
@@ -45,6 +47,7 @@ export const botLifecycleHooks = createLifecycleHookBus(
           case "handoff_prepared":
             await recordHandoffPrepared({
               context: buildBotContext(event.scope),
+              ...(event.subagentId ? { subagentId: event.subagentId } : {}),
               intent: event.intent,
               nextStep: event.nextStep,
               summary: event.summary,

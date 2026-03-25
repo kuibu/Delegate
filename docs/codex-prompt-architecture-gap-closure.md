@@ -22,13 +22,13 @@ Delegate already has a meaningful middle state:
 - Playwright-backed deterministic browser lane with screenshot/json artifacts, persistent browser session history, and dashboard preview
 - governed compute plane with reusable leases, approvals, artifacts, and richer dual-ledger accounting
 - lifecycle hook bus for model, handoff, and compute audit points
+- scoped `triage / quote / handoff / compute / browser` subagent boundaries in runtime routing and model context assembly
 - owner dashboard control plane
 
 Delegate does **not** yet have the full target stack described in the architecture decisions doc. In particular:
 
 - no native Claude/OpenAI computer-use lane
 - no Temporal orchestration
-- no scoped subagents
 - no org/customer-managed permission layer
 
 Treat the matrix below as source of truth for "what is done vs. what is still next".
@@ -52,7 +52,7 @@ This matters because every future capability lane must inherit the same conversa
 | 3 | Browser / computer use | Partial, stronger | A governed `browser` capability now runs through an isolated Playwright lane with approval, screenshot/json artifacts, persistent browser session history, dashboard preview support, and native computer-use preflight snapshots for OpenAI/Anthropic handoff readiness | Add multi-step browser workflows and actual native Claude/OpenAI computer-use loops behind approvals | The repo now prepares retained browser sessions for native handoff, but it does not execute provider-native action loops yet | P1 |
 | 4 | Permission system | Partial, managed overlays landed | `allow / ask / deny`, capability rules, path/domain/cost/paid-plan gates, dashboard-editable compute defaults, managed overlay profiles with channel / plan-tier conditions, and conversation-scoped compute entitlements | Add richer resource scopes, customer/org policy overlays, and broader approval-aware capability binding across future transports | The product still has no org/IAM layer, and policy is still representative-centric rather than customer/org managed | P1 |
 | 5 | Hooks and audit | Partial, explicit bus landed | Lifecycle hook bus now exists for `PreToolUse`, `PostToolUse`, `SessionEnd`, `PreHandoff`, and model reply/context audit points | Expand hooks into retention, memory filtering, billing budget gates, and owner-facing webhookable summaries | The first hook slice focused on making lifecycle boundaries explicit before adding programmable policies | P1 |
-| 6 | Subagents / multi-agent | Not started | Structured collectors and compute broker exist, but there are no scoped subagents | Introduce explicit `triage-agent`, `compute-agent`, `browser-agent`, `quote-agent`, and `handoff-agent` with isolated budgets and tool scopes | This belongs to the next networked phase, not the current Founder Representative wedge | P2 |
+| 6 | Subagents / multi-agent | Partial, first scoped layer landed | Runtime routing now resolves explicit `triage-agent`, `quote-agent`, `handoff-agent`, `compute-agent`, and `browser-agent` boundaries, and the model lane now assembles prompts with subagent-specific context scopes and token budgets | Add deeper budget enforcement, richer agent-to-agent orchestration, and dedicated browser/native-computer subagent loops | The first slice keeps subagents as execution boundaries inside one representative runtime; it does not yet create durable multi-agent orchestration | P2 |
 | 7 | Context management | Partial, structured assembler landed | Postgres truth + OpenViking recall/commit + artifact store + ephemeral compute state are present, and the model lane now assembles contract/snapshot/collector/recent-turn/recall segments with token estimates | Add richer context editing, tool-result compaction, and adaptive recall/token budgeting | Advanced pruning is still heuristic and there is no Claude-style context editing or token-aware multi-provider stack yet | P1 |
 | 8 | Files and artifacts | Partial, strong | Object storage, retention, representative/contact/session attribution, detail/download APIs, dashboard artifact viewer, pinned artifacts, download tracking, and artifact egress ledger entries | Expand beyond stdout/stderr into screenshots, generated docs, archives, richer filtering, and unified material/file workflows | Compute outputs and artifact governance shipped first; broader deliverable/file ergonomics are still ahead | P1 |
 | 9 | Memory | Partial, strong | Public-safe OpenViking memory, filtering, provenance, recall traces, commit traces, separation from artifacts and Postgres truth | Add memory promotion rules, stronger safety classification, and tool-like memory access semantics for the future model runtime | The current design intentionally keeps memory conservative and bounded until the model layer is in place | P1 |
@@ -93,15 +93,14 @@ Do **not** try to close all 12 rows in one pass.
 
 Recommended order:
 
-1. `P2-A` Scoped subagents
-2. `P2-B` Temporal and broader agent-network infrastructure
+1. `P2-B` Temporal and broader agent-network infrastructure
 
 Why this order:
 
-- Row `3` now has retained browser sessions, screenshot artifacts, and native preflight readiness for OpenAI/Anthropic handoff, so the next bottleneck shifts upward to orchestration and agent boundaries
+- Row `6` now has a first scoped subagent layer, so the next bottleneck shifts toward durable orchestration and broader agent-network plumbing
 - Row `11` now has a better base, including model COGS, so the next billing work should focus on browser/MCP cost layers instead of model-only gaps
 - Native computer-use prep should now build on the new browser session lane, not restart browser infrastructure from scratch
-- Row `6` should still wait until compute, billing, and capability boundaries are more stable
+- Row `6` is intentionally still shallow: subagents are scoped boundaries today, not yet durable workflows or networked agents
 
 ## Codex prompt rules
 

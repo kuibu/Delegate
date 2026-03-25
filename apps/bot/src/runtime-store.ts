@@ -318,6 +318,7 @@ export async function recordInboundTurn(params: {
   context: ConversationContextRecord;
   plan: ConversationPlan;
   text: string;
+  subagentId?: string;
 }): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await tx.conversationTurn.create({
@@ -339,6 +340,7 @@ export async function recordInboundTurn(params: {
         payload: {
           intent: params.plan.intent,
           nextStep: params.plan.nextStep,
+          subagentId: params.subagentId ?? null,
         },
       },
     });
@@ -349,6 +351,7 @@ export async function recordComputeInboundTurn(params: {
   context: ConversationContextRecord;
   text: string;
   capability: string;
+  subagentId?: string;
 }): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await tx.conversationTurn.create({
@@ -370,6 +373,7 @@ export async function recordComputeInboundTurn(params: {
         payload: {
           intent: "compute",
           capability: params.capability,
+          subagentId: params.subagentId ?? null,
         },
       },
     });
@@ -380,6 +384,7 @@ export async function recordOutboundReply(params: {
   context: ConversationContextRecord;
   plan: ConversationPlan;
   messageText: string;
+  subagentId?: string;
 }): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await tx.conversationTurn.create({
@@ -402,6 +407,7 @@ export async function recordOutboundReply(params: {
           intent: params.plan.intent,
           nextStep: params.plan.nextStep,
           suggestedPlan: params.plan.suggestedPlan ?? null,
+          subagentId: params.subagentId ?? null,
         },
       },
     });
@@ -525,6 +531,7 @@ export async function recordModelUsage(params: {
 
 export async function recordModelContextAssembly(params: {
   context: ConversationAuditScope;
+  subagentId?: string;
   provider: string;
   model: string;
   estimatedInputTokens: number;
@@ -541,6 +548,7 @@ export async function recordModelContextAssembly(params: {
       payload: {
         provider: params.provider,
         model: params.model,
+        subagentId: params.subagentId ?? null,
         estimatedInputTokens: params.estimatedInputTokens,
         segments: params.segments,
         selectedKnowledgeTitles: params.selectedKnowledgeTitles,
@@ -552,6 +560,7 @@ export async function recordModelContextAssembly(params: {
 
 export async function recordModelReplyCompleted(params: {
   context: ConversationAuditScope;
+  subagentId?: string;
   provider: string;
   model: string;
   success: boolean;
@@ -571,6 +580,7 @@ export async function recordModelReplyCompleted(params: {
       payload: {
         provider: params.provider,
         model: params.model,
+        subagentId: params.subagentId ?? null,
         success: params.success,
         reason: params.reason ?? null,
         responseId: params.responseId ?? null,
@@ -588,6 +598,7 @@ export async function recordComputeReply(params: {
   messageText: string;
   capability: string;
   outcome: string;
+  subagentId?: string;
 }): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await tx.conversationTurn.create({
@@ -610,6 +621,7 @@ export async function recordComputeReply(params: {
           intent: "compute",
           capability: params.capability,
           outcome: params.outcome,
+          subagentId: params.subagentId ?? null,
         },
       },
     });
@@ -730,6 +742,7 @@ export function buildHandoffPreparation(params: {
 
 export async function recordHandoffPrepared(params: {
   context: ConversationAuditScope;
+  subagentId?: string;
   intent: string;
   nextStep: string;
   summary: string;
@@ -742,9 +755,10 @@ export async function recordHandoffPrepared(params: {
       contactId: params.context.contactId,
       conversationId: params.context.conversationId,
       type: EventType.HANDOFF_PREPARED,
-      payload: {
-        intent: params.intent,
-        nextStep: params.nextStep,
+        payload: {
+          subagentId: params.subagentId ?? null,
+          intent: params.intent,
+          nextStep: params.nextStep,
         summary: params.summary,
         ownerAction: params.ownerAction,
         priority: params.priority,
