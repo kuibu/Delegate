@@ -1,4 +1,34 @@
+<p align="center">
+  <img src="./docs/assets/delegate-hero.png" alt="Delegate hero banner showing finance, legal, healthcare, and creator workflows" width="100%" />
+</p>
+
+<p align="center">
+  <a href="#zh-cn"><img alt="中文" src="https://img.shields.io/badge/中文-111827?style=for-the-badge" /></a>
+  <a href="#en"><img alt="English" src="https://img.shields.io/badge/English-2563EB?style=for-the-badge" /></a>
+</p>
+
 # Delegate
+
+<a id="zh-cn"></a>
+
+## 中文
+
+把 Delegate 想成一个“AI 接待前台”。
+
+当别人通过 Telegram、WhatsApp、飞书等渠道来找你时，系统会先由你的 AI 分身完成第一轮接待：
+
+- 能回答的，先回答
+- 该收费的，先收费
+- 需要你拍板的，先请示你
+- 需要人工接手的，再转给你
+
+它的目标不是替代你，而是先把高频、标准化、可定价的对话接住，让你只在真正需要亲自出面的时刻介入。
+
+<a id="en"></a>
+
+## English
+
+Think of Delegate as an AI front desk for your inbound conversations.
 
 Delegate is a Telegram-native public representative system. It is built for founders, advisors, creators, recruiters, and other inbound-heavy operators who need a safe, always-on business-facing representative instead of a private assistant clone.
 
