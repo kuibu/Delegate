@@ -4,6 +4,7 @@ import {
   browserNavigationSnapshotSchema,
   browserSessionSnapshotSchema,
   capabilityPolicyProfileSchema,
+  computeSubagentIdSchema,
   computeSessionSnapshotSchema,
   mcpBindingSnapshotSchema,
   toolExecutionSnapshotSchema,
@@ -121,6 +122,7 @@ export function serializeSession(session: {
   representativeId: string;
   contactId: string | null;
   conversationId: string | null;
+  subagentId: string | null;
   policyProfileId: string | null;
   requestedBy: string;
   status: string;
@@ -145,6 +147,9 @@ export function serializeSession(session: {
     representativeId: session.representativeId,
     contactId: session.contactId,
     conversationId: session.conversationId,
+    subagentId: session.subagentId
+      ? computeSubagentIdSchema.parse(session.subagentId)
+      : null,
     policyProfileId: session.policyProfileId,
     requestedBy: mapRequestedByFromDb(session.requestedBy),
     status: mapSessionStatusFromDb(session.status),
@@ -171,6 +176,7 @@ export function serializeExecution(execution: {
   sessionId: string;
   mcpBindingId: string | null;
   capability: string;
+  subagentId: string | null;
   status: string;
   requestedCommand: string | null;
   requestedPath: string | null;
@@ -190,6 +196,9 @@ export function serializeExecution(execution: {
     id: execution.id,
     sessionId: execution.sessionId,
     capability: mapCapabilityFromDb(execution.capability),
+    subagentId: execution.subagentId
+      ? computeSubagentIdSchema.parse(execution.subagentId)
+      : null,
     status: mapToolStatusFromDb(execution.status),
     requestedCommand: execution.requestedCommand,
     requestedPath: execution.requestedPath,

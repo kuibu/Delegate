@@ -8,6 +8,10 @@ export const capabilityKindSchema = z.enum([
   "browser",
   "mcp",
 ]);
+export const computeSubagentIdSchema = z.enum([
+  "compute-agent",
+  "browser-agent",
+]);
 export const capabilityPlanTierSchema = z.enum(["pass", "deep_help"]);
 export const policyDecisionSchema = z.enum(["allow", "ask", "deny"]);
 export const mcpTransportKindSchema = z.enum(["streamable_http"]);
@@ -125,15 +129,55 @@ export const capabilityPolicyProfileSchema = z.object({
   rules: z.array(capabilityPolicyRuleSchema).default([]),
 });
 
-export const createComputeSessionRequestSchema = z.object({
+const computeSubagentAllowedCapabilities = {
+  "compute-agent": ["exec", "read", "write", "process", "mcp"],
+  "browser-agent": ["browser"],
+} as const satisfies Record<z.infer<typeof computeSubagentIdSchema>, readonly z.infer<typeof capabilityKindSchema>[]>;
+
+function refineSubagentCapabilityBoundary<T extends z.ZodTypeAny>(
+  schema: T,
+  getShape: (value: z.infer<T>) => {
+    subagentId?: z.infer<typeof computeSubagentIdSchema>;
+    capabilities: z.infer<typeof capabilityKindSchema>[];
+  },
+) {
+  return schema.superRefine((value, ctx) => {
+    if (!value || typeof value !== "object") {
+      return;
+    }
+
+    const shape = getShape(value as z.infer<T>);
+    if (!shape.subagentId) {
+      return;
+    }
+
+    const allowed = new Set(computeSubagentAllowedCapabilities[shape.subagentId]);
+    for (const capability of shape.capabilities) {
+      if (!allowed.has(capability)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Subagent ${shape.subagentId} cannot execute capability ${capability}.`,
+          path: ["subagentId"],
+        });
+        break;
+      }
+    }
+  });
+}
+
+export const createComputeSessionRequestSchema = refineSubagentCapabilityBoundary(z.object({
   representativeId: z.string(),
   contactId: z.string().optional(),
   conversationId: z.string().optional(),
+  subagentId: computeSubagentIdSchema,
   requestedBy: computeRequestedBySchema,
   requestedCapabilities: z.array(capabilityKindSchema).min(1),
   reason: z.string().min(1),
   requestedBaseImage: z.string().optional(),
-});
+}), (value) => ({
+  subagentId: value.subagentId,
+  capabilities: value.requestedCapabilities,
+}));
 
 export const computeSessionLeaseSchema = z.object({
   sessionId: z.string(),
@@ -153,6 +197,7 @@ export const computeSessionSnapshotSchema = z.object({
   representativeId: z.string(),
   contactId: z.string().nullable(),
   conversationId: z.string().nullable(),
+  subagentId: computeSubagentIdSchema.nullable(),
   policyProfileId: z.string().nullable(),
   requestedBy: computeRequestedBySchema,
   status: computeSessionStatusSchema,
@@ -257,8 +302,9 @@ export const heartbeatComputeSessionResponseSchema = z.object({
   session: computeSessionSnapshotSchema,
 });
 
-export const toolExecutionRequestSchema = z.object({
+export const toolExecutionRequestSchema = refineSubagentCapabilityBoundary(z.object({
   capability: capabilityKindSchema,
+  subagentId: computeSubagentIdSchema,
   command: z.string().min(1).optional(),
   content: z.string().optional(),
   path: z.string().min(1).optional(),
@@ -271,7 +317,10 @@ export const toolExecutionRequestSchema = z.object({
   workingDirectory: z.string().min(1).optional(),
   estimatedCostCents: z.number().int().nonnegative().optional(),
   hasPaidEntitlement: z.boolean().default(false),
-});
+}), (value) => ({
+  subagentId: value.subagentId,
+  capabilities: [value.capability],
+}));
 
 export const mcpBindingSnapshotSchema = z.object({
   id: z.string(),
@@ -402,6 +451,7 @@ export const toolExecutionSnapshotSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
   capability: capabilityKindSchema,
+  subagentId: computeSubagentIdSchema.nullable(),
   status: toolExecutionStatusSchema,
   requestedCommand: z.string().nullable(),
   requestedPath: z.string().nullable(),
@@ -484,6 +534,7 @@ export const artifactDetailResponseSchema = z.object({
 });
 
 export type CapabilityKind = z.infer<typeof capabilityKindSchema>;
+export type ComputeSubagentId = z.infer<typeof computeSubagentIdSchema>;
 export type CapabilityPlanTier = z.infer<typeof capabilityPlanTierSchema>;
 export type PolicyDecision = z.infer<typeof policyDecisionSchema>;
 export type McpTransportKind = z.infer<typeof mcpTransportKindSchema>;
@@ -539,3 +590,18 @@ export type NativeComputerUsePreflightResponse = z.infer<
   typeof nativeComputerUsePreflightResponseSchema
 >;
 export type ArtifactDetailResponse = z.infer<typeof artifactDetailResponseSchema>;
+
+export function listCapabilitiesForComputeSubagent(subagentId: ComputeSubagentId): CapabilityKind[] {
+  return [...computeSubagentAllowedCapabilities[subagentId]];
+}
+
+export function isCapabilityAllowedForComputeSubagent(
+  subagentId: ComputeSubagentId,
+  capability: CapabilityKind,
+): boolean {
+  return listCapabilitiesForComputeSubagent(subagentId).includes(capability);
+}
+
+export function resolveComputeSubagentIdForCapability(capability: CapabilityKind): ComputeSubagentId {
+  return capability === "browser" ? "browser-agent" : "compute-agent";
+}

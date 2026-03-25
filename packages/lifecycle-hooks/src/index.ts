@@ -56,6 +56,7 @@ export type ToolPreflightEvent = {
   kind: "tool_preflight";
   scope: LifecycleScope;
   sessionId: string;
+  subagentId?: string;
   capability: string;
   decision: "allow" | "ask" | "deny";
   reason: string;
@@ -73,6 +74,7 @@ export type ToolCompletedEvent = {
   scope: LifecycleScope;
   sessionId: string;
   executionId: string;
+  subagentId?: string;
   capability: string;
   exitCode: number;
   wallMs: number;

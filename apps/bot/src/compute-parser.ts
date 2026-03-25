@@ -1,6 +1,6 @@
 import type { CapabilityKind, ToolExecutionRequest } from "@delegate/compute-protocol";
 
-export type ParsedComputeRequest = ToolExecutionRequest & {
+export type ParsedComputeRequest = Omit<ToolExecutionRequest, "subagentId"> & {
   displayTarget: string;
 };
 

@@ -1,5 +1,11 @@
 import { evaluateCapabilityPolicyStack } from "@delegate/capability-policy";
-import { toolExecutionRequestSchema } from "@delegate/compute-protocol";
+import {
+  computeSubagentIdSchema,
+  resolveComputeSubagentIdForCapability,
+  toolExecutionRequestSchema,
+  type CapabilityKind,
+  type ComputeSubagentId,
+} from "@delegate/compute-protocol";
 
 import { deriveConversationComputeEntitlements } from "./entitlements";
 import { loadRepresentativeMcpBinding, resolveMcpToolName } from "./mcp-bindings";
@@ -118,6 +124,16 @@ export async function evaluateExecutionRequest(sessionId: string, rawInput: unkn
     },
   );
 
+  const sessionSubagentId = resolveSessionComputeSubagentId(
+    context.session.subagentId,
+    input.capability,
+  );
+  assertExecutionSubagentRoute({
+    sessionSubagentId,
+    requestedSubagentId: input.subagentId,
+    capability: input.capability,
+  });
+
   return {
     input: {
       ...input,
@@ -130,5 +146,32 @@ export async function evaluateExecutionRequest(sessionId: string, rawInput: unkn
     decision,
     entitlements,
     mcpBinding,
+    sessionSubagentId,
   };
+}
+
+export function resolveSessionComputeSubagentId(
+  rawSubagentId: string | null | undefined,
+  capability: CapabilityKind,
+): ComputeSubagentId {
+  if (rawSubagentId) {
+    return computeSubagentIdSchema.parse(rawSubagentId);
+  }
+
+  return resolveComputeSubagentIdForCapability(capability);
+}
+
+export function assertExecutionSubagentRoute(params: {
+  sessionSubagentId: ComputeSubagentId;
+  requestedSubagentId: ComputeSubagentId;
+  capability: CapabilityKind;
+}) {
+  if (params.sessionSubagentId !== params.requestedSubagentId) {
+    throw new SessionError(409, "compute_subagent_session_mismatch");
+  }
+
+  const expectedSubagentId = resolveComputeSubagentIdForCapability(params.capability);
+  if (params.requestedSubagentId !== expectedSubagentId) {
+    throw new SessionError(409, "compute_subagent_capability_mismatch");
+  }
 }

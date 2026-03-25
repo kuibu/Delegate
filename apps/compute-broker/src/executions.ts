@@ -4,9 +4,11 @@ import {
   executeToolResponseSchema,
   listApprovalsResponseSchema,
   listArtifactsResponseSchema,
+  resolveComputeSubagentIdForCapability,
   resolveApprovalRequestSchema,
   resolveApprovalResponseSchema,
   type CapabilityKind,
+  type ComputeSubagentId,
   type ToolExecutionRequest,
 } from "@delegate/compute-protocol";
 
@@ -62,6 +64,7 @@ type LeasedSessionRecord = {
 };
 type NormalizedExecutionInput = {
   capability: CapabilityKind;
+  subagentId: ComputeSubagentId;
   command: string | undefined;
   content: string | undefined;
   path: string | undefined;
@@ -110,7 +113,8 @@ type RuntimeExecutionResult = {
 };
 
 export async function executeTool(sessionId: string, rawInput: unknown) {
-  const { input, context, decision, mcpBinding } = await evaluateExecutionRequest(sessionId, rawInput);
+  const { input, context, decision, mcpBinding, sessionSubagentId } =
+    await evaluateExecutionRequest(sessionId, rawInput);
   const normalized = normalizeExecutionInput(input, mcpBinding);
   const estimatedCredits = estimateCreditUsage({
     capability: normalized.capability,
@@ -136,6 +140,7 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
       conversationId: context.session.conversationId ?? null,
     },
     sessionId,
+    subagentId: sessionSubagentId,
     capability: normalized.capability,
     decision: effectiveDecision.decision,
     reason: effectiveDecision.reason,
@@ -156,6 +161,7 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
     const requestPayload = buildExecutionRequestPayload(normalized);
     return blockExecution({
       session: context.session,
+      subagentId: sessionSubagentId,
       capability: normalized.capability,
       requestedCommand: getPersistedCommand(normalized),
       requestedPath: normalized.path,
@@ -179,6 +185,7 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
       data: {
         sessionId,
         capability: mapCapabilityToDb(normalized.capability),
+        subagentId: sessionSubagentId,
         status: "BLOCKED",
         requestedCommand: getPersistedCommand(normalized) ?? null,
         requestedPath: normalized.path ?? null,
@@ -211,6 +218,7 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
         payload: {
           sessionId,
           executionId: execution.id,
+          subagentId: sessionSubagentId,
           decision: "ask",
           reason: effectiveDecision.reason,
           approvalRequestId: approval.id,
@@ -238,7 +246,10 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
 
   return runAllowedExecution({
     context,
-    input: normalized,
+    input: {
+      ...normalized,
+      subagentId: sessionSubagentId,
+    },
     estimatedCredits,
   });
 }
@@ -314,6 +325,7 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
               approvalRequestId: approval.id,
               resolution: "rejected",
               toolExecutionId: approval.toolExecutionId ?? null,
+              subagentId: blockedExecution?.subagentId ?? null,
             },
           },
         });
@@ -372,6 +384,7 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
           approvalRequestId: approval.id,
           resolution: "approved",
           toolExecutionId: approval.toolExecutionId ?? null,
+          subagentId: blockedExecution?.subagentId ?? null,
         },
       },
     }),
@@ -485,6 +498,7 @@ async function runAllowedExecution(params: {
         data: {
           status: "RUNNING",
           capability: mapCapabilityToDb(executionDescriptor.capability),
+          subagentId: params.input.subagentId,
           requestedCommand: executionDescriptor.requestedCommand ?? null,
           requestedPath: executionDescriptor.requestedPath ?? null,
           ...(requestPayload ? { requestPayload } : {}),
@@ -500,10 +514,11 @@ async function runAllowedExecution(params: {
           bytesWritten: null,
         },
       })
-    : await prisma.toolExecution.create({
+      : await prisma.toolExecution.create({
         data: {
           sessionId: params.context.session.id,
           capability: mapCapabilityToDb(executionDescriptor.capability),
+          subagentId: params.input.subagentId,
           status: "RUNNING",
           requestedCommand: executionDescriptor.requestedCommand ?? null,
           requestedPath: executionDescriptor.requestedPath ?? null,
@@ -625,6 +640,7 @@ async function runAllowedExecution(params: {
     },
     sessionId: params.context.session.id,
     executionId: execution.id,
+    subagentId: params.input.subagentId,
     capability: executionDescriptor.capability,
     exitCode: runtimeResult.exitCode,
     wallMs: runtimeResult.wallMs,
@@ -648,6 +664,7 @@ async function runAllowedExecution(params: {
       payload: {
         sessionId: leasedSession.id,
         executionId: execution.id,
+        subagentId: params.input.subagentId,
         kinds:
           executionDescriptor.capability === "browser"
             ? ["COMPUTE_MINUTES", "BROWSER_MINUTES", "STORAGE_BYTES"]
@@ -676,6 +693,7 @@ function describeExecution(
   if (input.capability === "mcp") {
     return {
       capability: "mcp" as const,
+      subagentId: input.subagentId,
       requestedCommand: input.toolName,
       requestedPath: input.bindingSlug ?? input.bindingId,
       workingDirectory: undefined,
@@ -685,6 +703,7 @@ function describeExecution(
   const plan = buildExecutionPlan(context, input);
   return {
     capability: plan.capability,
+    subagentId: input.subagentId,
     requestedCommand: plan.requestedCommand,
     requestedPath: plan.requestedPath,
     workingDirectory: plan.workingDirectory,
@@ -910,6 +929,7 @@ async function blockExecution(params: {
     representativeId: string;
     contactId: string | null;
     conversationId: string | null;
+    subagentId: string | null;
     requestedBy: string;
     status: string;
     leaseStatus: string;
@@ -930,6 +950,7 @@ async function blockExecution(params: {
     policyProfileId: string | null;
   };
   capability: CapabilityKind;
+  subagentId: ComputeSubagentId;
   requestedCommand: string | undefined;
   requestedPath: string | undefined;
   workingDirectory: string | undefined;
@@ -943,6 +964,7 @@ async function blockExecution(params: {
     data: {
       sessionId: params.session.id,
       capability: mapCapabilityToDb(params.capability),
+      subagentId: params.subagentId,
       status: "BLOCKED",
       requestedCommand: params.requestedCommand ?? null,
       requestedPath: params.requestedPath ?? null,
@@ -964,6 +986,7 @@ async function blockExecution(params: {
       payload: {
         sessionId: params.session.id,
         executionId: execution.id,
+        subagentId: params.subagentId,
         decision: params.policyDecision,
         reason: params.reason,
       },
@@ -1099,6 +1122,7 @@ function normalizeExecutionInput(
       }
       return {
         capability: "read",
+        subagentId: input.subagentId,
         command: undefined,
         content: undefined,
         path: input.path,
@@ -1124,6 +1148,7 @@ function normalizeExecutionInput(
       }
       return {
         capability: "write",
+        subagentId: input.subagentId,
         command: undefined,
         path: input.path,
         content,
@@ -1147,6 +1172,7 @@ function normalizeExecutionInput(
       const parsed = new URL(url);
       return {
         capability: "browser",
+        subagentId: input.subagentId,
         command: undefined,
         content: undefined,
         path: undefined,
@@ -1178,6 +1204,7 @@ function normalizeExecutionInput(
 
       return {
         capability: "mcp",
+        subagentId: input.subagentId,
         command: toolName,
         content: undefined,
         path: bindingSlug,
@@ -1201,6 +1228,7 @@ function normalizeExecutionInput(
       }
       return {
         capability: input.capability,
+        subagentId: input.subagentId,
         command: input.command,
         content: undefined,
         path: input.path,
@@ -1221,6 +1249,7 @@ function normalizeExecutionInput(
 
 function reconstructExecutionInput(execution: {
   capability: string;
+  subagentId: string | null;
   mcpBindingId: string | null;
   requestedCommand: string | null;
   requestedPath: string | null;
@@ -1228,6 +1257,7 @@ function reconstructExecutionInput(execution: {
   workingDirectory: string | null;
 }) {
   const capability = mapCapabilityFromDb(execution.capability);
+  const subagentId = resolveStoredExecutionSubagentId(execution.subagentId, capability);
 
   if (capability === "read") {
     if (!execution.requestedPath) {
@@ -1235,6 +1265,7 @@ function reconstructExecutionInput(execution: {
     }
     return normalizeExecutionInput({
       capability,
+      subagentId,
       path: execution.requestedPath,
       hasPaidEntitlement: true,
     });
@@ -1246,6 +1277,7 @@ function reconstructExecutionInput(execution: {
     }
     return normalizeExecutionInput({
       capability,
+      subagentId,
       path: execution.requestedPath,
       content: execution.requestedCommand,
       workingDirectory: execution.workingDirectory ?? undefined,
@@ -1259,6 +1291,7 @@ function reconstructExecutionInput(execution: {
     }
     return normalizeExecutionInput({
       capability,
+      subagentId,
       command: undefined,
       content: undefined,
       path: undefined,
@@ -1289,6 +1322,7 @@ function reconstructExecutionInput(execution: {
 
     return normalizeExecutionInput({
       capability,
+      subagentId,
       bindingId,
       bindingSlug,
       toolName,
@@ -1303,6 +1337,7 @@ function reconstructExecutionInput(execution: {
 
   return normalizeExecutionInput({
     capability,
+    subagentId,
     command: execution.requestedCommand,
     content: undefined,
     ...(execution.requestedPath ? { path: execution.requestedPath } : {}),
@@ -1312,6 +1347,17 @@ function reconstructExecutionInput(execution: {
     estimatedCostCents: undefined,
     hasPaidEntitlement: true,
   });
+}
+
+function resolveStoredExecutionSubagentId(
+  rawSubagentId: string | null,
+  capability: CapabilityKind,
+): ComputeSubagentId {
+  if (rawSubagentId === "compute-agent" || rawSubagentId === "browser-agent") {
+    return rawSubagentId;
+  }
+
+  return resolveComputeSubagentIdForCapability(capability);
 }
 
 function safeParseExecutionPayload(value: string) {

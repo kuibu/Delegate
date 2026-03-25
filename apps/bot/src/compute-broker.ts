@@ -15,6 +15,7 @@ export async function createAudienceComputeSession(input: {
   representativeId: string;
   contactId: string;
   conversationId: string;
+  subagentId: "compute-agent" | "browser-agent";
   requestedCapabilities: ToolExecutionRequest["capability"][];
   reason: string;
   requestedBaseImage?: string;
@@ -25,6 +26,7 @@ export async function createAudienceComputeSession(input: {
       representativeId: input.representativeId,
       contactId: input.contactId,
       conversationId: input.conversationId,
+      subagentId: input.subagentId,
       requestedBy: "audience",
       requestedCapabilities: input.requestedCapabilities,
       reason: input.reason,

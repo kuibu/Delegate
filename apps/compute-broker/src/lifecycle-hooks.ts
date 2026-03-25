@@ -17,6 +17,7 @@ export const computeLifecycleHooks = createLifecycleHookBus(
                 type: "TOOL_EXECUTION_REQUESTED",
                 payload: {
                   sessionId: event.sessionId,
+                  subagentId: event.subagentId ?? null,
                   capability: event.capability,
                   requestedCommand: event.requestedCommand ?? null,
                   requestedPath: event.requestedPath ?? null,
@@ -41,6 +42,7 @@ export const computeLifecycleHooks = createLifecycleHookBus(
                 payload: {
                   sessionId: event.sessionId,
                   executionId: event.executionId,
+                  subagentId: event.subagentId ?? null,
                   capability: event.capability,
                   exitCode: event.exitCode,
                   wallMs: event.wallMs,

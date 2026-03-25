@@ -636,6 +636,7 @@ model ComputeSession {
   representativeId   String
   contactId          String?
   conversationId     String?
+  subagentId         String?
   policyProfileId    String?
   requestedBy        ComputeRequestedBy
   status             ComputeSessionStatus @default(REQUESTED)
@@ -675,6 +676,7 @@ model ToolExecution {
   sessionId        String
   mcpBindingId     String?
   capability       CapabilityKind
+  subagentId       String?
   status           ToolExecutionStatus @default(QUEUED)
   requestedCommand String?
   requestedPath    String?

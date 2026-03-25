@@ -3,7 +3,6 @@ import "dotenv/config";
 import { demoRepresentative, type PlanTier } from "@delegate/domain";
 import { generateRepresentativeReply } from "@delegate/model-runtime";
 import { Channel } from "@prisma/client";
-import type { ToolExecutionRequest } from "@delegate/compute-protocol";
 import {
   advanceStructuredCollector,
   beginStructuredCollector,
@@ -1117,6 +1116,7 @@ async function handleComputeRequest(params: {
       representativeId: conversationContext.representativeId,
       contactId: conversationContext.contactId,
       conversationId: conversationContext.conversationId,
+      subagentId: computeSubagent.id,
       requestedCapabilities: [parsed.capability],
       reason: `telegram:${parsed.capability}`,
       requestedBaseImage: conversationContext.compute.baseImage,
@@ -1130,7 +1130,8 @@ async function handleComputeRequest(params: {
     const execution = await executeAudienceTool(
       session.session.id,
       {
-        ...(parsed as ToolExecutionRequest),
+        ...parsed,
+        subagentId: computeSubagent.id,
         hasPaidEntitlement:
           parsed.hasPaidEntitlement ||
           conversationContext.usage.passUnlocked ||

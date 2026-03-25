@@ -42,6 +42,10 @@ export type ResolvedSubagentRoute = {
   budgetHints: SubagentBudgetHints;
 };
 
+export type ComputeSubagentRoute = ResolvedSubagentRoute & {
+  id: "compute-agent" | "browser-agent";
+};
+
 const scopedSubagents: Record<SubagentId, ResolvedSubagentRoute> = {
   "triage-agent": {
     id: "triage-agent",
@@ -181,10 +185,10 @@ export function resolveCollectorSubagent(
   return getScopedSubagent("quote-agent");
 }
 
-export function resolveComputeSubagent(capability: string): ResolvedSubagentRoute {
+export function resolveComputeSubagent(capability: string): ComputeSubagentRoute {
   if (capability === "browser") {
-    return getScopedSubagent("browser-agent");
+    return getScopedSubagent("browser-agent") as ComputeSubagentRoute;
   }
 
-  return getScopedSubagent("compute-agent");
+  return getScopedSubagent("compute-agent") as ComputeSubagentRoute;
 }

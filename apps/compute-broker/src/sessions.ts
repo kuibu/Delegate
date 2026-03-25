@@ -70,6 +70,7 @@ export async function createComputeSession(rawInput: unknown) {
       representativeId: input.representativeId,
       contactId: input.contactId ?? null,
       conversationId: input.conversationId ?? null,
+      subagentId: input.subagentId,
       policyProfileId: defaultPolicyProfileId,
       requestedBy: mapRequestedByToDb(input.requestedBy),
       status: "STARTING",
@@ -88,6 +89,7 @@ export async function createComputeSession(rawInput: unknown) {
       type: "COMPUTE_SESSION_REQUESTED",
       payload: {
         requestedCapabilities: input.requestedCapabilities,
+        subagentId: input.subagentId,
         requestedBy: input.requestedBy,
         reason: input.reason,
         sessionId: session.id,
