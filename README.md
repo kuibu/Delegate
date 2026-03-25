@@ -112,17 +112,41 @@ Representative-side compute examples in Telegram private chat:
 /compute browser https://example.com
 ```
 
+Native computer-use preparation now builds on the retained browser session lane. To surface a ready handoff state for future OpenAI / Claude computer-use loops, set one or both of:
+
+- `COMPUTE_NATIVE_OPENAI_MODEL`
+- `COMPUTE_NATIVE_ANTHROPIC_MODEL`
+
+and the matching provider credentials:
+
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+
+If these are unset, Delegate still keeps Playwright browser sessions, screenshots, and page JSON, but the dashboard will correctly show that native computer-use is not ready yet.
+
 For real OpenViking ingestion / recall / memory extraction, set either `OPENAI_API_KEY` or `ARK_API_KEY` before starting the stack. If model credentials are missing, Delegate still starts the OpenViking service for local development, but representative sync and memory capture stay safely blocked instead of attempting real writes with fake credentials.
 
-For representative reply generation through OpenAI Responses, set:
+For representative reply generation through OpenAI Responses with optional Anthropic fallback, set:
 
 - `DELEGATE_MODEL_ENABLED=true`
 - `DELEGATE_MODEL_PROVIDER=openai`
+- `DELEGATE_MODEL_FALLBACK_PROVIDER=anthropic`
 - `DELEGATE_OPENAI_MODEL=gpt-5-mini`
+- `DELEGATE_ANTHROPIC_MODEL=claude-sonnet-4-5`
 - `DELEGATE_MODEL_MAX_INPUT_TOKENS=2400`
 - `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
 
-If these are missing, the Telegram bot falls back to the existing deterministic reply previews instead of failing the conversation.
+If both providers are unavailable, the Telegram bot falls back to the existing deterministic reply previews instead of failing the conversation.
+
+Internal model-cost accounting is configurable per provider via:
+
+- `DELEGATE_OPENAI_INPUT_COST_USD_PER_1M_TOKENS`
+- `DELEGATE_OPENAI_OUTPUT_COST_USD_PER_1M_TOKENS`
+- `DELEGATE_ANTHROPIC_INPUT_COST_USD_PER_1M_TOKENS`
+- `DELEGATE_ANTHROPIC_OUTPUT_COST_USD_PER_1M_TOKENS`
+
+These values feed the internal `MODEL_USAGE` ledger. Keep them aligned with your current provider pricing if you want non-zero model COGS in the dashboard and audit trail.
 
 The current model lane also ships a structured context assembler and lifecycle traces:
 

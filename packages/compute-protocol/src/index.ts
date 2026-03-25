@@ -75,6 +75,19 @@ export const browserTransportKindSchema = z.enum([
   "openai_computer",
   "claude_computer_use",
 ]);
+export const nativeComputerProviderSchema = z.enum(["openai", "anthropic"]);
+export const nativeComputerProviderStatusSchema = z.enum([
+  "ready",
+  "disabled",
+  "missing_credentials",
+  "missing_model",
+]);
+export const nativeComputerUsePreflightStateSchema = z.enum([
+  "ready",
+  "no_browser_session",
+  "missing_screenshot",
+  "no_ready_providers",
+]);
 export const browserSessionStatusSchema = z.enum(["active", "failed", "closed"]);
 export const browserNavigationStatusSchema = z.enum(["succeeded", "failed"]);
 
@@ -194,6 +207,37 @@ export const browserSessionSnapshotSchema = z.object({
   updatedAt: z.string().datetime(),
   visitCount: z.number().int().nonnegative(),
   latestNavigation: browserNavigationSnapshotSchema.nullable(),
+});
+
+export const nativeComputerProviderSnapshotSchema = z.object({
+  provider: nativeComputerProviderSchema,
+  status: nativeComputerProviderStatusSchema,
+  enabled: z.boolean(),
+  model: z.string().nullable().optional(),
+  transportKind: browserTransportKindSchema,
+  reason: z.string().nullable().optional(),
+});
+
+export const nativeComputerUsePreflightSnapshotSchema = z.object({
+  state: nativeComputerUsePreflightStateSchema,
+  sessionId: z.string().nullable(),
+  browserSessionId: z.string().nullable(),
+  browserTransportKind: browserTransportKindSchema.nullable().optional(),
+  preferredProvider: nativeComputerProviderSchema.nullable().optional(),
+  targetTransportKind: browserTransportKindSchema.nullable().optional(),
+  currentUrl: z.string().url().nullable().optional(),
+  currentTitle: z.string().nullable().optional(),
+  latestNavigationId: z.string().nullable().optional(),
+  latestNavigationAt: z.string().datetime().nullable().optional(),
+  latestRequestedUrl: z.string().url().nullable().optional(),
+  latestFinalUrl: z.string().url().nullable().optional(),
+  latestTextSnippet: z.string().nullable().optional(),
+  latestScreenshotArtifactId: z.string().nullable().optional(),
+  latestJsonArtifactId: z.string().nullable().optional(),
+  requiresApprovalForMutations: z.boolean(),
+  supportsSessionReuse: z.boolean(),
+  providerReadiness: z.array(nativeComputerProviderSnapshotSchema),
+  nextStep: z.string(),
 });
 
 export const createComputeSessionResponseSchema = z.object({
@@ -429,6 +473,10 @@ export const brokerHealthSchema = z.object({
   artifactBucket: z.string(),
 });
 
+export const nativeComputerUsePreflightResponseSchema = z.object({
+  preflight: nativeComputerUsePreflightSnapshotSchema,
+});
+
 export const artifactDetailResponseSchema = z.object({
   artifact: artifactSnapshotSchema,
   contentText: z.string().nullable(),
@@ -451,6 +499,9 @@ export type ComputeNetworkMode = z.infer<typeof computeNetworkModeSchema>;
 export type ComputeFilesystemMode = z.infer<typeof computeFilesystemModeSchema>;
 export type ComputeExecutionOutcome = z.infer<typeof computeExecutionOutcomeSchema>;
 export type BrowserTransportKind = z.infer<typeof browserTransportKindSchema>;
+export type NativeComputerProvider = z.infer<typeof nativeComputerProviderSchema>;
+export type NativeComputerProviderStatus = z.infer<typeof nativeComputerProviderStatusSchema>;
+export type NativeComputerUsePreflightState = z.infer<typeof nativeComputerUsePreflightStateSchema>;
 export type BrowserSessionStatus = z.infer<typeof browserSessionStatusSchema>;
 export type BrowserNavigationStatus = z.infer<typeof browserNavigationStatusSchema>;
 export type CapabilityPolicyRule = z.infer<typeof capabilityPolicyRuleSchema>;
@@ -460,6 +511,10 @@ export type ComputeSessionLease = z.infer<typeof computeSessionLeaseSchema>;
 export type ComputeSessionSnapshot = z.infer<typeof computeSessionSnapshotSchema>;
 export type BrowserNavigationSnapshot = z.infer<typeof browserNavigationSnapshotSchema>;
 export type BrowserSessionSnapshot = z.infer<typeof browserSessionSnapshotSchema>;
+export type NativeComputerProviderSnapshot = z.infer<typeof nativeComputerProviderSnapshotSchema>;
+export type NativeComputerUsePreflightSnapshot = z.infer<
+  typeof nativeComputerUsePreflightSnapshotSchema
+>;
 export type CreateComputeSessionResponse = z.infer<typeof createComputeSessionResponseSchema>;
 export type TerminateComputeSessionRequest = z.infer<typeof terminateComputeSessionRequestSchema>;
 export type HeartbeatComputeSessionRequest = z.infer<typeof heartbeatComputeSessionRequestSchema>;
@@ -480,4 +535,7 @@ export type ListArtifactsResponse = z.infer<typeof listArtifactsResponseSchema>;
 export type ListApprovalsResponse = z.infer<typeof listApprovalsResponseSchema>;
 export type ListMcpBindingsResponse = z.infer<typeof listMcpBindingsResponseSchema>;
 export type BrokerHealth = z.infer<typeof brokerHealthSchema>;
+export type NativeComputerUsePreflightResponse = z.infer<
+  typeof nativeComputerUsePreflightResponseSchema
+>;
 export type ArtifactDetailResponse = z.infer<typeof artifactDetailResponseSchema>;

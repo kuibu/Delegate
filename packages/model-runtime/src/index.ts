@@ -1,10 +1,16 @@
+import { generateAnthropicResponse } from "./anthropic";
 import { assembleRepresentativeReplyPrompt } from "./context";
-import { resolveModelRuntimeEnv } from "./config";
+import { resolveModelRuntimeEnv, resolveProviderAttemptOrder } from "./config";
 import { generateOpenAIResponse } from "./openai";
-import type { RepresentativeReplyInput, RepresentativeReplyResult } from "./types";
+import type {
+  ModelProvider,
+  RepresentativeReplyInput,
+  RepresentativeReplyResult,
+} from "./types";
 
 export * from "./config";
 export * from "./context";
+export * from "./pricing";
 export * from "./types";
 
 export async function generateRepresentativeReply(
@@ -21,42 +27,67 @@ export async function generateRepresentativeReply(
       state: env.state,
       contextTrace: assembled.trace,
       provider: env.provider,
-      ...(env.provider === "openai" ? { model: env.openai.model } : {}),
+      ...(env.provider === "openai"
+        ? { model: env.openai.model }
+        : env.provider === "anthropic"
+          ? { model: env.anthropic.model }
+          : {}),
     };
   }
 
-  if (env.provider !== "openai") {
+  const attemptOrder = resolveProviderAttemptOrder(env);
+  if (!attemptOrder.length) {
     return {
       ok: false,
-      reason: `Unsupported model provider: ${env.provider}.`,
-      state: "unsupported_provider",
+      reason: "Model runtime has no credentialed providers available.",
+      state: "missing_credentials",
       contextTrace: assembled.trace,
       provider: env.provider,
     };
   }
 
-  try {
-    const response = await generateOpenAIResponse({
-      env,
-      prompt: assembled.prompt,
-    });
+  const failures: string[] = [];
+  for (const provider of attemptOrder) {
+    try {
+      const response = await generateProviderResponse(provider, env, assembled.prompt);
 
-    return {
-      ok: true,
-      replyText: response.replyText,
-      provider: "openai",
-      model: env.openai.model,
-      contextTrace: assembled.trace,
-      ...(response.usage ? { usage: response.usage } : {}),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: error instanceof Error ? error.message : "Model generation failed.",
-      state: "ready",
-      contextTrace: assembled.trace,
-      provider: env.provider,
-      ...(env.provider === "openai" ? { model: env.openai.model } : {}),
-    };
+      return {
+        ok: true,
+        replyText: response.replyText,
+        provider,
+        model: provider === "openai" ? env.openai.model : env.anthropic.model,
+        contextTrace: assembled.trace,
+        ...(response.usage ? { usage: response.usage } : {}),
+      };
+    } catch (error) {
+      failures.push(
+        `${provider}: ${error instanceof Error ? error.message : "Model generation failed."}`,
+      );
+    }
   }
+
+  return {
+    ok: false,
+    reason: failures.join(" | "),
+    state: "ready",
+    contextTrace: assembled.trace,
+    provider: env.provider,
+    ...(env.provider === "openai"
+      ? { model: env.openai.model }
+      : env.provider === "anthropic"
+        ? { model: env.anthropic.model }
+        : {}),
+  };
+}
+
+async function generateProviderResponse(
+  provider: ModelProvider,
+  env: ReturnType<typeof resolveModelRuntimeEnv>,
+  prompt: ReturnType<typeof assembleRepresentativeReplyPrompt>["prompt"],
+) {
+  if (provider === "openai") {
+    return generateOpenAIResponse({ env, prompt });
+  }
+
+  return generateAnthropicResponse({ env, prompt });
 }

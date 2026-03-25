@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 
+import { calculateModelUsageCost } from "./pricing";
 import type { ModelRuntimeEnv, ModelUsageSnapshot, RepresentativeReplyPrompt } from "./types";
 
 export async function generateOpenAIResponse(params: {
@@ -32,20 +33,42 @@ export async function generateOpenAIResponse(params: {
   }
 
   const usage = response.usage
-    ? {
-        provider: "openai" as const,
-        model: params.env.openai.model,
-        ...(typeof response.id === "string" ? { responseId: response.id } : {}),
-        ...(typeof response.usage.input_tokens === "number"
-          ? { inputTokens: response.usage.input_tokens }
-          : {}),
-        ...(typeof response.usage.output_tokens === "number"
-          ? { outputTokens: response.usage.output_tokens }
-          : {}),
-        ...(typeof response.usage.total_tokens === "number"
-          ? { totalTokens: response.usage.total_tokens }
-          : {}),
-      }
+    ? (() => {
+        const baseUsage = {
+          provider: "openai" as const,
+          model: params.env.openai.model,
+          ...(typeof response.id === "string" ? { responseId: response.id } : {}),
+          ...(typeof response.usage.input_tokens === "number"
+            ? { inputTokens: response.usage.input_tokens }
+            : {}),
+          ...(typeof response.usage.output_tokens === "number"
+            ? { outputTokens: response.usage.output_tokens }
+            : {}),
+          ...(typeof response.usage.total_tokens === "number"
+            ? { totalTokens: response.usage.total_tokens }
+            : {}),
+        };
+        const pricedUsage = calculateModelUsageCost({
+          pricing: params.env.openai.pricing,
+          usage: {
+            ...(typeof baseUsage.inputTokens === "number"
+              ? { inputTokens: baseUsage.inputTokens }
+              : {}),
+            ...(typeof baseUsage.outputTokens === "number"
+              ? { outputTokens: baseUsage.outputTokens }
+              : {}),
+            ...(typeof baseUsage.totalTokens === "number"
+              ? { totalTokens: baseUsage.totalTokens }
+              : {}),
+          },
+        });
+
+        return {
+          ...baseUsage,
+          costCents: pricedUsage.costCents,
+          estimatedCostUsd: pricedUsage.estimatedCostUsd,
+        };
+      })()
     : undefined;
 
   return {

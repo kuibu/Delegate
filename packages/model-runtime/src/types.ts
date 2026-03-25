@@ -3,13 +3,19 @@ import type { OpenVikingRecallItem } from "@delegate/openviking";
 import type { ConversationPlan, StructuredCollectorState } from "@delegate/runtime";
 import type { ModelContextSegmentTrace } from "@delegate/lifecycle-hooks";
 
-export type ModelProvider = "openai";
+export type ModelProvider = "openai" | "anthropic";
 
 export type ModelRuntimeState = "ready" | "disabled" | "missing_credentials" | "unsupported_provider";
+
+export type ModelPricingConfig = {
+  inputCostUsdPerMillionTokens: number;
+  outputCostUsdPerMillionTokens: number;
+};
 
 export type ModelRuntimeEnv = {
   enabled: boolean;
   provider: string;
+  fallbackProvider?: string;
   state: ModelRuntimeState;
   timeoutMs: number;
   maxInputTokens: number;
@@ -18,6 +24,13 @@ export type ModelRuntimeEnv = {
     model: string;
     apiKey?: string;
     baseUrl?: string;
+    pricing: ModelPricingConfig;
+  };
+  anthropic: {
+    model: string;
+    apiKey?: string;
+    baseUrl?: string;
+    pricing: ModelPricingConfig;
   };
 };
 
@@ -56,6 +69,8 @@ export type ModelUsageSnapshot = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  costCents?: number;
+  estimatedCostUsd?: number;
 };
 
 export type RepresentativeReplyResult =

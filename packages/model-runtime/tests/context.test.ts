@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import {
   assembleRepresentativeReplyPrompt,
   buildRepresentativeReplyPrompt,
+  calculateModelUsageCost,
   resolveModelRuntimeEnv,
+  resolveProviderAttemptOrder,
 } from "../src/index";
 
 describe("buildRepresentativeReplyPrompt", () => {
@@ -150,5 +152,34 @@ describe("resolveModelRuntimeEnv", () => {
     });
 
     expect(env.maxInputTokens).toBe(1800);
+  });
+
+  it("uses Anthropic as the ready fallback provider when OpenAI credentials are missing", () => {
+    const env = resolveModelRuntimeEnv({
+      DELEGATE_MODEL_ENABLED: "true",
+      DELEGATE_MODEL_PROVIDER: "openai",
+      DELEGATE_MODEL_FALLBACK_PROVIDER: "anthropic",
+      DELEGATE_ANTHROPIC_MODEL: "claude-sonnet-4-5",
+      ANTHROPIC_API_KEY: "anthropic-key",
+    });
+
+    expect(env.state).toBe("ready");
+    expect(resolveProviderAttemptOrder(env)).toEqual(["anthropic"]);
+  });
+
+  it("calculates internal model cost from per-provider pricing", () => {
+    const priced = calculateModelUsageCost({
+      pricing: {
+        inputCostUsdPerMillionTokens: 3,
+        outputCostUsdPerMillionTokens: 15,
+      },
+      usage: {
+        inputTokens: 10_000,
+        outputTokens: 5_000,
+      },
+    });
+
+    expect(priced.estimatedCostUsd).toBeCloseTo(0.105, 6);
+    expect(priced.costCents).toBe(11);
   });
 });

@@ -9,6 +9,10 @@ const envSchema = z.object({
   COMPUTE_BROWSER_IMAGE: z.string().min(1).default("mcr.microsoft.com/playwright:v1.58.2-noble"),
   COMPUTE_BROWSER_PLAYWRIGHT_VERSION: z.string().min(1).default("1.58.2"),
   COMPUTE_BROWSER_MAX_COMMAND_SECONDS: z.coerce.number().int().positive().default(120),
+  COMPUTE_NATIVE_OPENAI_ENABLED: z.string().optional(),
+  COMPUTE_NATIVE_OPENAI_MODEL: z.string().optional(),
+  COMPUTE_NATIVE_ANTHROPIC_ENABLED: z.string().optional(),
+  COMPUTE_NATIVE_ANTHROPIC_MODEL: z.string().optional(),
   COMPUTE_MCP_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
   COMPUTE_HOST_WORKSPACE_ROOT: z.string().min(1).default("/Users/a/repos/Delegate"),
   ARTIFACT_STORE_ENDPOINT: z.string().url().default("http://artifact-store:9000"),
@@ -28,6 +32,20 @@ export const computeBrokerConfig = {
   browserImage: parsed.COMPUTE_BROWSER_IMAGE,
   browserPlaywrightVersion: parsed.COMPUTE_BROWSER_PLAYWRIGHT_VERSION,
   browserMaxCommandSeconds: parsed.COMPUTE_BROWSER_MAX_COMMAND_SECONDS,
+  nativeComputerUse: {
+    openai: {
+      enabled: parseBoolean(parsed.COMPUTE_NATIVE_OPENAI_ENABLED, true),
+      ...(normalizeOptionalString(parsed.COMPUTE_NATIVE_OPENAI_MODEL)
+        ? { model: normalizeOptionalString(parsed.COMPUTE_NATIVE_OPENAI_MODEL) }
+        : {}),
+    },
+    anthropic: {
+      enabled: parseBoolean(parsed.COMPUTE_NATIVE_ANTHROPIC_ENABLED, true),
+      ...(normalizeOptionalString(parsed.COMPUTE_NATIVE_ANTHROPIC_MODEL)
+        ? { model: normalizeOptionalString(parsed.COMPUTE_NATIVE_ANTHROPIC_MODEL) }
+        : {}),
+    },
+  },
   mcpTimeoutMs: parsed.COMPUTE_MCP_TIMEOUT_MS,
   hostWorkspaceRoot: parsed.COMPUTE_HOST_WORKSPACE_ROOT,
   artifactStore: artifactStoreConfigSchema.parse({
@@ -39,3 +57,25 @@ export const computeBrokerConfig = {
     forcePathStyle: true,
   }),
 };
+
+function normalizeOptionalString(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
+  if (!value) {
+    return defaultValue;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return defaultValue;
+}

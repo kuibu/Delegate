@@ -672,6 +672,12 @@ bot.on("message:text", async (ctx) => {
             ? { totalTokens: generated.usage.totalTokens }
             : {}),
           ...(generated.usage.responseId ? { responseId: generated.usage.responseId } : {}),
+          ...(typeof generated.usage.costCents === "number"
+            ? { costCents: generated.usage.costCents }
+            : {}),
+          ...(typeof generated.usage.estimatedCostUsd === "number"
+            ? { estimatedCostUsd: generated.usage.estimatedCostUsd }
+            : {}),
         });
       }
 

@@ -2,11 +2,13 @@ import { posix as pathPosix } from "node:path";
 
 import { Prisma } from "@prisma/client";
 import {
+  nativeComputerUsePreflightResponseSchema,
   updateArtifactRequestSchema,
   updateArtifactResponseSchema,
   upsertMcpBindingRequestSchema,
   type ArtifactDetailResponse,
   type McpBindingSnapshot,
+  type NativeComputerUsePreflightSnapshot,
   type ResolveApprovalResponse,
   type UpdateArtifactResponse,
   type UpsertMcpBindingRequest,
@@ -137,6 +139,7 @@ export type RepresentativeComputeSnapshot = {
       }
     >;
   };
+  nativeComputerUse: NativeComputerUsePreflightSnapshot;
   browserSessions: Array<{
     id: string;
     computeSessionId: string;
@@ -298,9 +301,23 @@ export async function getRepresentativeComputeSnapshot(
       take: 15,
     }),
   ]);
+  const latestBrowserSession = browserSessions[0];
+  const nativeComputerUse = nativeComputerUsePreflightResponseSchema.parse(
+    await callComputeBroker(
+      `/internal/compute/browser-native/preflight${
+        latestBrowserSession?.computeSessionId
+          ? `?sessionId=${encodeURIComponent(latestBrowserSession.computeSessionId)}`
+          : ""
+      }`,
+      {
+        method: "GET",
+      },
+    ),
+  ).preflight;
 
   return {
     representative: serializeRepresentativeIdentity(representative),
+    nativeComputerUse,
     browserSessions: browserSessions.map((session) => serializeBrowserSessionRecord(session)),
     sessions: sessions.map((session) => serializeComputeSession(session)),
     ledger: ledgerEntries.map((entry) => ({

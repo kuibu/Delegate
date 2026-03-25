@@ -5,6 +5,7 @@ import { URL } from "node:url";
 import {
   brokerHealthSchema,
   heartbeatComputeSessionRequestSchema,
+  nativeComputerUsePreflightResponseSchema,
   resolveApprovalRequestSchema,
   terminateComputeSessionRequestSchema,
 } from "@delegate/compute-protocol";
@@ -15,6 +16,7 @@ import {
   listSessionArtifacts,
   resolveApproval,
 } from "./executions";
+import { getNativeComputerUsePreflight } from "./native-browser";
 import {
   createComputeSession,
   getComputeSession,
@@ -54,6 +56,18 @@ const server = createServer(async (request, response) => {
     }
 
     const segments = url.pathname.split("/").filter(Boolean);
+
+    if (
+      method === "GET" &&
+      segments[0] === "internal" &&
+      segments[1] === "compute" &&
+      segments[2] === "browser-native" &&
+      segments[3] === "preflight"
+    ) {
+      const sessionId = url.searchParams.get("sessionId");
+      const preflight = await getNativeComputerUsePreflight(sessionId);
+      return sendJson(response, 200, nativeComputerUsePreflightResponseSchema.parse(preflight));
+    }
 
     if (
       method === "POST" &&

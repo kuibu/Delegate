@@ -55,6 +55,34 @@ type ComputeSnapshot = {
       sourceSkillPack?: string;
     }>;
   };
+  nativeComputerUse: {
+    state: "ready" | "no_browser_session" | "missing_screenshot" | "no_ready_providers";
+    sessionId: string | null;
+    browserSessionId: string | null;
+    browserTransportKind?: "playwright" | "openai_computer" | "claude_computer_use" | null;
+    preferredProvider?: "openai" | "anthropic" | null;
+    targetTransportKind?: "playwright" | "openai_computer" | "claude_computer_use" | null;
+    currentUrl?: string | null;
+    currentTitle?: string | null;
+    latestNavigationId?: string | null;
+    latestNavigationAt?: string | null;
+    latestRequestedUrl?: string | null;
+    latestFinalUrl?: string | null;
+    latestTextSnippet?: string | null;
+    latestScreenshotArtifactId?: string | null;
+    latestJsonArtifactId?: string | null;
+    requiresApprovalForMutations: boolean;
+    supportsSessionReuse: boolean;
+    providerReadiness: Array<{
+      provider: "openai" | "anthropic";
+      status: "ready" | "disabled" | "missing_credentials" | "missing_model";
+      enabled: boolean;
+      model?: string | null;
+      transportKind: "playwright" | "openai_computer" | "claude_computer_use";
+      reason?: string | null;
+    }>;
+    nextStep: string;
+  };
   browserSessions: Array<{
     id: string;
     computeSessionId: string;
@@ -275,6 +303,10 @@ export function DashboardCompute({
   const activeBrowserSessions = snapshot
     ? snapshot.browserSessions.filter((session) => session.status === "active").length
     : 0;
+  const readyNativeProviders = snapshot
+    ? snapshot.nativeComputerUse.providerReadiness.filter((provider) => provider.status === "ready")
+        .length
+    : 0;
   const failedSessions = snapshot
     ? snapshot.sessions.filter((session) => session.status === "failed").length
     : 0;
@@ -302,6 +334,15 @@ export function DashboardCompute({
           value: `${activeBrowserSessions}`,
           detail: t.signalCards.browserSessionsDetail,
           tone: activeBrowserSessions > 0 ? ("safe" as const) : ("default" as const),
+        },
+        {
+          label: t.signalCards.nativeProviders,
+          value: `${readyNativeProviders}`,
+          detail: t.signalCards.nativeProvidersDetail(snapshot.nativeComputerUse.state),
+          tone:
+            readyNativeProviders > 0 && snapshot.nativeComputerUse.state === "ready"
+              ? ("safe" as const)
+              : ("default" as const),
         },
         {
           label: t.signalCards.autoApproveBudget,
@@ -876,6 +917,91 @@ export function DashboardCompute({
         </DashboardSurface>
 
         <DashboardSurface
+          eyebrow={t.nativeComputerUseEyebrow}
+          meta={<span className="chip">{t.nativeComputerUseState(snapshot.nativeComputerUse.state)}</span>}
+          title={t.nativeComputerUseTitle}
+        >
+          <div className="row-list">
+            <div className="skill-row">
+              <div>
+                <strong>{t.nativeComputerUseSessionTitle}</strong>
+                <p>{snapshot.nativeComputerUse.nextStep}</p>
+                <div className="chip-row">
+                  {snapshot.nativeComputerUse.sessionId ? (
+                    <span className="chip">{t.computeSession(snapshot.nativeComputerUse.sessionId)}</span>
+                  ) : null}
+                  {snapshot.nativeComputerUse.browserTransportKind ? (
+                    <span className="chip">{snapshot.nativeComputerUse.browserTransportKind}</span>
+                  ) : null}
+                  {snapshot.nativeComputerUse.targetTransportKind ? (
+                    <span className="chip">{t.targetTransport(snapshot.nativeComputerUse.targetTransportKind)}</span>
+                  ) : null}
+                </div>
+                {snapshot.nativeComputerUse.currentTitle ? (
+                  <p className="footer-note">{snapshot.nativeComputerUse.currentTitle}</p>
+                ) : null}
+                {snapshot.nativeComputerUse.currentUrl ? (
+                  <p className="footer-note">{snapshot.nativeComputerUse.currentUrl}</p>
+                ) : null}
+                {snapshot.nativeComputerUse.latestTextSnippet ? (
+                  <p className="footer-note">{snapshot.nativeComputerUse.latestTextSnippet}</p>
+                ) : null}
+                <div className="chip-row">
+                  <span className="chip">
+                    {snapshot.nativeComputerUse.supportsSessionReuse
+                      ? t.sessionReuseEnabled
+                      : t.sessionReuseDisabled}
+                  </span>
+                  <span className="chip">
+                    {snapshot.nativeComputerUse.requiresApprovalForMutations
+                      ? t.approvalRequired
+                      : t.approvalNotRequired}
+                  </span>
+                </div>
+              </div>
+
+              <div className="button-row">
+                {snapshot.nativeComputerUse.latestScreenshotArtifactId ? (
+                  <button
+                    className="button-secondary"
+                    onClick={() =>
+                      setSelectedArtifactId(snapshot.nativeComputerUse.latestScreenshotArtifactId ?? null)
+                    }
+                    type="button"
+                  >
+                    {t.openLatestScreenshot}
+                  </button>
+                ) : null}
+                {snapshot.nativeComputerUse.latestJsonArtifactId ? (
+                  <button
+                    className="button-secondary"
+                    onClick={() => setSelectedArtifactId(snapshot.nativeComputerUse.latestJsonArtifactId ?? null)}
+                    type="button"
+                  >
+                    {t.openLatestJson}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {snapshot.nativeComputerUse.providerReadiness.map((provider) => (
+              <div className="skill-row" key={provider.provider}>
+                <div>
+                  <strong>{provider.provider}</strong>
+                  <p>
+                    {provider.transportKind} · {t.nativeProviderStatus(provider.status)}
+                  </p>
+                </div>
+                <div className="chip-row">
+                  {provider.model ? <span className="chip">{provider.model}</span> : null}
+                  {provider.reason ? <span className="chip">{provider.reason}</span> : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </DashboardSurface>
+
+        <DashboardSurface
           eyebrow={t.browserSessionsEyebrow}
           meta={<span className="chip">{t.browserSessionsChip(snapshot.browserSessions.length)}</span>}
           title={t.browserSessionsTitle}
@@ -1222,6 +1348,8 @@ const copy = {
       artifactsDetail: "已经落入对象存储的输出总数。",
       browserSessions: "Browser sessions",
       browserSessionsDetail: "当前保留状态和导航历史的 browser 会话数。",
+      nativeProviders: "Native lanes",
+      nativeProvidersDetail: (state: string) => `当前 native computer-use preflight 状态：${state}。`,
       autoApproveBudget: "Auto-approve budget",
       autoApproveBudgetDetail: "当前代表级预算阈值，后续可用于轻量自动放行。",
       walletCredits: "Wallet credits",
@@ -1290,6 +1418,17 @@ const copy = {
     failureReasonLabel: (value: string) => `Failure: ${value}`,
     noSessions: "还没有 compute session。",
     browserSessionsEyebrow: "Browser Session Lane",
+    nativeComputerUseEyebrow: "Native Computer-Use Prep",
+    nativeComputerUseTitle: "把 retained browser session 变成未来 Claude / OpenAI computer-use 的交接点",
+    nativeComputerUseSessionTitle: "Latest handoff-ready browser session",
+    nativeComputerUseState: (value: string) => value.replaceAll("_", " "),
+    nativeProviderStatus: (value: string) => value.replaceAll("_", " "),
+    targetTransport: (value: string) => `Target · ${value}`,
+    computeSession: (value: string) => `Session · ${value}`,
+    sessionReuseEnabled: "Session reuse on",
+    sessionReuseDisabled: "Session reuse off",
+    approvalRequired: "Mutation approval required",
+    approvalNotRequired: "Mutation approval relaxed",
     browserSessionsTitle: "追踪 browser profile、最近导航和最新截图入口",
     browserSessionsChip: (count: number) => `${count} browser sessions`,
     visitCount: (count: number) => `${count} visits`,
@@ -1297,6 +1436,7 @@ const copy = {
     lastNavigationLabel: (value: string) => `最近导航 ${value}`,
     openLatestScreenshot: "打开最新截图",
     openLatestManifest: "打开最新 manifest",
+    openLatestJson: "打开最新 page JSON",
     noBrowserSessions: "还没有 browser session 历史。",
     artifactsEyebrow: "Artifact Store",
     artifactsTitle: "确认 stdout / stderr 等结果已经进入对象存储",
@@ -1355,6 +1495,8 @@ const copy = {
       artifactsDetail: "Outputs already persisted into object storage.",
       browserSessions: "Browser sessions",
       browserSessionsDetail: "Browser profiles that still carry navigation state and recent history.",
+      nativeProviders: "Native lanes",
+      nativeProvidersDetail: (state: string) => `Current native computer-use preflight state: ${state}.`,
       autoApproveBudget: "Auto-approve budget",
       autoApproveBudgetDetail: "Representative-level budget threshold for future low-risk auto-approval.",
       walletCredits: "Wallet credits",
@@ -1423,6 +1565,17 @@ const copy = {
     failureReasonLabel: (value: string) => `Failure: ${value}`,
     noSessions: "No compute sessions yet.",
     browserSessionsEyebrow: "Browser Session Lane",
+    nativeComputerUseEyebrow: "Native Computer-Use Prep",
+    nativeComputerUseTitle: "Turn the retained browser session into a handoff point for future Claude / OpenAI computer-use loops",
+    nativeComputerUseSessionTitle: "Latest handoff-ready browser session",
+    nativeComputerUseState: (value: string) => value.replaceAll("_", " "),
+    nativeProviderStatus: (value: string) => value.replaceAll("_", " "),
+    targetTransport: (value: string) => `Target · ${value}`,
+    computeSession: (value: string) => `Session · ${value}`,
+    sessionReuseEnabled: "Session reuse on",
+    sessionReuseDisabled: "Session reuse off",
+    approvalRequired: "Mutation approval required",
+    approvalNotRequired: "Mutation approval relaxed",
     browserSessionsTitle: "Track browser profiles, recent navigations, and the latest visual capture",
     browserSessionsChip: (count: number) => `${count} browser sessions`,
     visitCount: (count: number) => `${count} visits`,
@@ -1430,6 +1583,7 @@ const copy = {
     lastNavigationLabel: (value: string) => `Last navigation ${value}`,
     openLatestScreenshot: "Open latest screenshot",
     openLatestManifest: "Open latest manifest",
+    openLatestJson: "Open latest page JSON",
     noBrowserSessions: "No browser sessions yet.",
     artifactsEyebrow: "Artifact Store",
     artifactsTitle: "Confirm stdout, stderr, and other outputs are persisted",

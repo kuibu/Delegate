@@ -468,11 +468,14 @@ export async function recordModelUsage(params: {
   outputTokens?: number;
   totalTokens?: number;
   responseId?: string;
+  costCents?: number;
+  estimatedCostUsd?: number;
 }): Promise<void> {
   const quantity =
     typeof params.totalTokens === "number"
       ? params.totalTokens
       : (params.inputTokens ?? 0) + (params.outputTokens ?? 0);
+  const costCents = typeof params.costCents === "number" ? params.costCents : 0;
 
   await prisma.$transaction(async (tx) => {
     await tx.ledgerEntry.create({
@@ -483,7 +486,7 @@ export async function recordModelUsage(params: {
         kind: "MODEL_USAGE",
         quantity,
         unit: "token",
-        costCents: 0,
+        costCents,
         creditDelta: 0,
         notes: JSON.stringify({
           provider: params.provider,
@@ -492,6 +495,8 @@ export async function recordModelUsage(params: {
           outputTokens: params.outputTokens ?? 0,
           totalTokens: quantity,
           responseId: params.responseId ?? null,
+          costCents,
+          estimatedCostUsd: params.estimatedCostUsd ?? null,
         }),
       },
     });
@@ -510,6 +515,8 @@ export async function recordModelUsage(params: {
           outputTokens: params.outputTokens ?? null,
           totalTokens: quantity,
           responseId: params.responseId ?? null,
+          costCents,
+          estimatedCostUsd: params.estimatedCostUsd ?? null,
         },
       },
     });
