@@ -404,6 +404,9 @@ export async function getRepresentativeComputeArtifactDetail(
 export async function getRepresentativeComputeArtifactDownload(
   representativeSlug: string,
   artifactId: string,
+  options?: {
+    recordDownload?: boolean;
+  },
 ): Promise<{
   fileName: string;
   mimeType: string;
@@ -417,34 +420,36 @@ export async function getRepresentativeComputeArtifactDownload(
 
   const { buffer } = await readArtifactObject(artifact.objectKey);
 
-  const now = new Date();
-  const egressCostCents = Math.max(1, Math.ceil(buffer.byteLength / 65536));
-  await prisma.$transaction([
-    prisma.artifact.update({
-      where: { id: artifact.id },
-      data: {
-        downloadCount: {
-          increment: 1,
+  if (options?.recordDownload !== false) {
+    const now = new Date();
+    const egressCostCents = Math.max(1, Math.ceil(buffer.byteLength / 65536));
+    await prisma.$transaction([
+      prisma.artifact.update({
+        where: { id: artifact.id },
+        data: {
+          downloadCount: {
+            increment: 1,
+          },
+          lastDownloadedAt: now,
         },
-        lastDownloadedAt: now,
-      },
-    }),
-    prisma.ledgerEntry.create({
-      data: {
-        representativeId: artifact.representativeId,
-        contactId: artifact.contactId,
-        conversationId: artifact.conversationId,
-        sessionId: artifact.sessionId,
-        toolExecutionId: artifact.toolExecutionId,
-        kind: "ARTIFACT_EGRESS",
-        quantity: buffer.byteLength,
-        unit: "byte",
-        costCents: egressCostCents,
-        creditDelta: 0,
-        notes: "artifact_download_egress",
-      },
-    }),
-  ]);
+      }),
+      prisma.ledgerEntry.create({
+        data: {
+          representativeId: artifact.representativeId,
+          contactId: artifact.contactId,
+          conversationId: artifact.conversationId,
+          sessionId: artifact.sessionId,
+          toolExecutionId: artifact.toolExecutionId,
+          kind: "ARTIFACT_EGRESS",
+          quantity: buffer.byteLength,
+          unit: "byte",
+          costCents: egressCostCents,
+          creditDelta: 0,
+          notes: "artifact_download_egress",
+        },
+      }),
+    ]);
+  }
 
   return {
     fileName: buildArtifactFileName(artifact),

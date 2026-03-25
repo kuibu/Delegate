@@ -10,7 +10,9 @@ export async function GET(
   const inline = new URL(request.url).searchParams.get("inline") === "1";
 
   try {
-    const artifact = await getRepresentativeComputeArtifactDownload(slug, artifactId);
+    const artifact = await getRepresentativeComputeArtifactDownload(slug, artifactId, {
+      recordDownload: !inline,
+    });
     if (!artifact) {
       return NextResponse.json({ error: "Artifact not found." }, { status: 404 });
     }
