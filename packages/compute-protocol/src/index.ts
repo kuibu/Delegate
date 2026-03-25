@@ -27,6 +27,13 @@ export const computeSessionStatusSchema = z.enum([
   "failed",
   "expired",
 ]);
+export const computeLeaseStatusSchema = z.enum([
+  "requested",
+  "ready",
+  "releasing",
+  "released",
+  "failed",
+]);
 export const toolExecutionStatusSchema = z.enum([
   "queued",
   "running",
@@ -111,10 +118,14 @@ export const createComputeSessionRequestSchema = z.object({
 export const computeSessionLeaseSchema = z.object({
   sessionId: z.string(),
   status: computeSessionStatusSchema,
+  leaseStatus: computeLeaseStatusSchema,
   runnerType: computeRunnerTypeSchema,
   baseImage: z.string(),
   leaseToken: z.string(),
+  leaseId: z.string().nullable().optional(),
   expiresAt: z.string().datetime().optional(),
+  leaseAcquiredAt: z.string().datetime().nullable().optional(),
+  leaseReleasedAt: z.string().datetime().nullable().optional(),
 });
 
 export const computeSessionSnapshotSchema = z.object({
@@ -125,11 +136,16 @@ export const computeSessionSnapshotSchema = z.object({
   policyProfileId: z.string().nullable(),
   requestedBy: computeRequestedBySchema,
   status: computeSessionStatusSchema,
+  leaseStatus: computeLeaseStatusSchema,
   runnerType: computeRunnerTypeSchema,
+  runnerLeaseId: z.string().nullable(),
   baseImage: z.string(),
   containerId: z.string().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  leaseAcquiredAt: z.string().datetime().nullable(),
+  leaseLastUsedAt: z.string().datetime().nullable(),
+  leaseReleasedAt: z.string().datetime().nullable(),
   startedAt: z.string().datetime().nullable(),
   lastHeartbeatAt: z.string().datetime().nullable(),
   expiresAt: z.string().datetime().nullable(),
@@ -144,6 +160,14 @@ export const createComputeSessionResponseSchema = z.object({
 
 export const terminateComputeSessionRequestSchema = z.object({
   reason: z.string().min(1).optional(),
+});
+
+export const heartbeatComputeSessionRequestSchema = z.object({
+  reason: z.string().min(1).optional(),
+});
+
+export const heartbeatComputeSessionResponseSchema = z.object({
+  session: computeSessionSnapshotSchema,
 });
 
 export const toolExecutionRequestSchema = z.object({
@@ -359,6 +383,7 @@ export type PolicyDecision = z.infer<typeof policyDecisionSchema>;
 export type McpTransportKind = z.infer<typeof mcpTransportKindSchema>;
 export type PolicyChannel = z.infer<typeof policyChannelSchema>;
 export type ComputeSessionStatus = z.infer<typeof computeSessionStatusSchema>;
+export type ComputeLeaseStatus = z.infer<typeof computeLeaseStatusSchema>;
 export type ToolExecutionStatus = z.infer<typeof toolExecutionStatusSchema>;
 export type ApprovalStatus = z.infer<typeof approvalStatusSchema>;
 export type ArtifactKind = z.infer<typeof artifactKindSchema>;
@@ -374,6 +399,8 @@ export type ComputeSessionLease = z.infer<typeof computeSessionLeaseSchema>;
 export type ComputeSessionSnapshot = z.infer<typeof computeSessionSnapshotSchema>;
 export type CreateComputeSessionResponse = z.infer<typeof createComputeSessionResponseSchema>;
 export type TerminateComputeSessionRequest = z.infer<typeof terminateComputeSessionRequestSchema>;
+export type HeartbeatComputeSessionRequest = z.infer<typeof heartbeatComputeSessionRequestSchema>;
+export type HeartbeatComputeSessionResponse = z.infer<typeof heartbeatComputeSessionResponseSchema>;
 export type ToolExecutionRequest = z.infer<typeof toolExecutionRequestSchema>;
 export type ToolExecutionSnapshot = z.infer<typeof toolExecutionSnapshotSchema>;
 export type McpBindingSnapshot = z.infer<typeof mcpBindingSnapshotSchema>;

@@ -19,6 +19,7 @@ import {
 } from "./billing";
 import { buildPlaywrightBrowseCommand } from "./browser";
 import { computeBrokerConfig } from "./config";
+import { ensureComputeSessionLease } from "./leases";
 import { persistExecutionArtifacts, persistJsonArtifact } from "./artifacts";
 import { computeLifecycleHooks } from "./lifecycle-hooks";
 import { loadRepresentativeMcpBinding, resolveMcpToolName } from "./mcp-bindings";
@@ -27,10 +28,11 @@ import { extractHostname, isHostnameAllowed, normalizeNetworkAllowlist } from ".
 import { normalizeContainerPath } from "./path-utils";
 import { prisma } from "./prisma";
 import { evaluateExecutionRequest, loadSessionPolicyContext } from "./policy";
-import { runDockerExecution } from "./runner";
+import { runRunnerExecution } from "./runner";
 import {
   mapCapabilityFromDb,
   mapCapabilityToDb,
+  mapRunnerTypeFromDb,
   mapPolicyDecisionToDb,
   serializeApprovalRequest,
   serializeArtifact,
@@ -40,6 +42,16 @@ import {
 import { SessionError } from "./session-error";
 
 type PolicyExecutionContext = Awaited<ReturnType<typeof loadSessionPolicyContext>>;
+type LeasedSessionRecord = {
+  id: string;
+  representativeId: string;
+  contactId: string | null;
+  conversationId: string | null;
+  runnerType: string;
+  runnerLeaseId: string | null;
+  containerId: string | null;
+  startedAt: Date | null;
+};
 type NormalizedExecutionInput = {
   capability: CapabilityKind;
   command: string | undefined;
@@ -404,6 +416,11 @@ async function runAllowedExecution(params: {
   existingExecutionId?: string;
 }) {
   const startedAt = new Date();
+  const leasedSession = await ensureComputeSessionLease({
+    session: params.context.session,
+    networkMode: params.context.profile.networkMode,
+    filesystemMode: params.context.profile.filesystemMode,
+  });
   const executionDescriptor = describeExecution(params.context, params.input);
   const requestPayload = buildExecutionRequestPayload(params.input);
   const execution = params.existingExecutionId
@@ -443,10 +460,11 @@ async function runAllowedExecution(params: {
       });
 
   await prisma.computeSession.update({
-    where: { id: params.context.session.id },
+    where: { id: leasedSession.id },
     data: {
       status: "RUNNING",
-      startedAt: params.context.session.startedAt ?? startedAt,
+      startedAt: leasedSession.startedAt ?? startedAt,
+      leaseLastUsedAt: startedAt,
       lastHeartbeatAt: startedAt,
       failureReason: null,
     },
@@ -454,13 +472,15 @@ async function runAllowedExecution(params: {
 
   const runtimeResult =
     params.input.capability === "mcp"
-      ? await runMcpExecution({
+        ? await runMcpExecution({
           context: params.context,
+          leasedSession,
           executionId: execution.id,
           input: params.input,
         })
       : await runContainerExecution({
           context: params.context,
+          leasedSession,
           executionId: execution.id,
           input: params.input,
         });
@@ -484,9 +504,10 @@ async function runAllowedExecution(params: {
   });
 
   const updatedSession = await prisma.computeSession.update({
-    where: { id: params.context.session.id },
+    where: { id: leasedSession.id },
     data: {
       status: "IDLE",
+      leaseLastUsedAt: finishedAt,
       lastHeartbeatAt: finishedAt,
       failureReason:
         runtimeResult.exitCode === 0 ? null : truncate(runtimeResult.failureSummary ?? "", 240),
@@ -504,7 +525,7 @@ async function runAllowedExecution(params: {
     representativeId: params.context.session.representativeId,
     contactId: params.context.session.contactId ?? null,
     conversationId: params.context.session.conversationId ?? null,
-    sessionId: params.context.session.id,
+    sessionId: leasedSession.id,
     toolExecutionId: execution.id,
     ownerId: params.context.session.representative.owner.id,
     computeCredits,
@@ -545,7 +566,7 @@ async function runAllowedExecution(params: {
       conversationId: params.context.session.conversationId ?? null,
       type: "BILLING_LEDGER_RECORDED",
       payload: {
-        sessionId: params.context.session.id,
+        sessionId: leasedSession.id,
         executionId: execution.id,
         kinds: ["COMPUTE_MINUTES", "STORAGE_BYTES"],
         actualCredits: billing.actualCredits,
@@ -589,19 +610,25 @@ function describeExecution(
 
 async function runContainerExecution(params: {
   context: PolicyExecutionContext;
+  leasedSession: LeasedSessionRecord;
   executionId: string;
   input: NormalizedExecutionInput;
 }) {
   const executionPlan = buildExecutionPlan(params.context, params.input);
-  const runnerResult = await runDockerExecution({
-    image: executionPlan.runnerImage,
+  const runnerResult = await runRunnerExecution({
+    runnerType: mapRunnerTypeFromDb(params.leasedSession.runnerType),
+    lease: {
+      runnerType: mapRunnerTypeFromDb(params.leasedSession.runnerType),
+      leaseId: params.leasedSession.runnerLeaseId ?? params.leasedSession.id,
+      containerId: params.leasedSession.containerId,
+      containerName: params.leasedSession.containerId,
+      sessionRoot: "/delegate-session",
+    },
     command: executionPlan.command,
-    hostWorkspaceRoot: computeBrokerConfig.hostWorkspaceRoot,
     maxCommandSeconds:
       executionPlan.capability === "browser"
         ? Math.max(params.context.profile.maxCommandSeconds, computeBrokerConfig.browserMaxCommandSeconds)
         : params.context.profile.maxCommandSeconds,
-    networkMode: executionPlan.networkMode,
     filesystemMode: executionPlan.filesystemMode,
     workingDirectory: executionPlan.workingDirectory,
     sessionId: params.context.session.id,
@@ -633,6 +660,7 @@ async function runContainerExecution(params: {
 
 async function runMcpExecution(params: {
   context: PolicyExecutionContext;
+  leasedSession: LeasedSessionRecord;
   executionId: string;
   input: NormalizedExecutionInput;
 }) {
@@ -669,7 +697,7 @@ async function runMcpExecution(params: {
     representativeSlug: params.context.session.representative.slug,
     contactId: params.context.session.contactId ?? null,
     conversationId: params.context.session.conversationId ?? null,
-    sessionId: params.context.session.id,
+    sessionId: params.leasedSession.id,
     executionId: params.executionId,
     retentionDays: params.context.profile.artifactRetentionDays,
     value: payload,
@@ -705,11 +733,16 @@ async function blockExecution(params: {
     conversationId: string | null;
     requestedBy: string;
     status: string;
+    leaseStatus: string;
     runnerType: string;
+    runnerLeaseId: string | null;
     baseImage: string;
     containerId: string | null;
     createdAt: Date;
     updatedAt: Date;
+    leaseAcquiredAt: Date | null;
+    leaseLastUsedAt: Date | null;
+    leaseReleasedAt: Date | null;
     startedAt: Date | null;
     lastHeartbeatAt: Date | null;
     expiresAt: Date | null;

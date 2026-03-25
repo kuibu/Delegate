@@ -84,6 +84,7 @@ enum EventType {
   HANDOFF_RESOLVED
   COMPUTE_SESSION_REQUESTED
   COMPUTE_SESSION_STARTED
+  COMPUTE_SESSION_HEARTBEAT
   COMPUTE_SESSION_TERMINATED
   TOOL_EXECUTION_REQUESTED
   TOOL_EXECUTION_BLOCKED
@@ -127,6 +128,14 @@ enum ComputeSessionStatus {
   COMPLETED
   FAILED
   EXPIRED
+}
+
+enum ComputeLeaseStatus {
+  REQUESTED
+  READY
+  RELEASING
+  RELEASED
+  FAILED
 }
 
 enum ToolExecutionStatus {
@@ -580,10 +589,15 @@ model ComputeSession {
   policyProfileId    String?
   requestedBy        ComputeRequestedBy
   status             ComputeSessionStatus @default(REQUESTED)
+  leaseStatus        ComputeLeaseStatus   @default(REQUESTED)
+  runnerLeaseId      String?
   containerId        String?
   runnerType         ComputeRunnerType    @default(DOCKER)
   baseImage          String
   leaseTokenHash     String               @unique
+  leaseAcquiredAt    DateTime?
+  leaseLastUsedAt    DateTime?
+  leaseReleasedAt    DateTime?
   startedAt          DateTime?
   lastHeartbeatAt    DateTime?
   expiresAt          DateTime?

@@ -1,58 +1,77 @@
 import { describe, expect, it } from "vitest";
 
-import { buildDockerRunArgs } from "../src/runner";
+import {
+  buildDockerCreateLeaseArgs,
+  buildDockerExecArgs,
+  buildDockerLeaseContainerName,
+  buildDockerLeaseVolumeName,
+} from "../src/runner";
 
-describe("buildDockerRunArgs", () => {
-  it("isolates the runner with no network and a read-only workspace", () => {
-    const args = buildDockerRunArgs({
+describe("docker lease runner", () => {
+  it("creates an isolated reusable lease container with a mounted session volume", () => {
+    const args = buildDockerCreateLeaseArgs({
       image: "debian:bookworm-slim",
-      command: "pwd",
       hostWorkspaceRoot: "/Users/a/repos/Delegate",
-      maxCommandSeconds: 30,
       networkMode: "no_network",
       filesystemMode: "read_only_workspace",
       sessionId: "session_1234567890",
-      executionId: "execution_1234567890",
     });
 
+    expect(args).toContain("-d");
     expect(args).toContain("--network");
     expect(args).toContain("none");
     expect(args).toContain("--read-only");
     expect(args).toContain("/Users/a/repos/Delegate:/workspace:ro");
-    expect(args.slice(-3)).toEqual(["debian:bookworm-slim", "sh", "-lc", "pwd"].slice(-3));
-  });
-
-  it("keeps an ephemeral workspace when the policy allows a full sandbox", () => {
-    const args = buildDockerRunArgs({
-      image: "debian:bookworm-slim",
-      command: "pwd",
-      hostWorkspaceRoot: "/Users/a/repos/Delegate",
-      maxCommandSeconds: 30,
-      networkMode: "full",
-      filesystemMode: "ephemeral_full",
-      sessionId: "session_1234567890",
-      executionId: "execution_1234567890",
-      workingDirectory: "ignored",
-    });
-
-    expect(args).not.toContain("--volume");
-    expect(args).toContain("--workdir");
-    expect(args).toContain("/tmp");
+    expect(args).toContain(`${buildDockerLeaseVolumeName("session_1234567890")}:/delegate-session:rw`);
+    expect(args).toContain(buildDockerLeaseContainerName("session_1234567890"));
   });
 
   it("does not silently grant full egress when the policy says allowlist", () => {
-    const args = buildDockerRunArgs({
+    const args = buildDockerCreateLeaseArgs({
       image: "debian:bookworm-slim",
-      command: "node server.js",
       hostWorkspaceRoot: "/Users/a/repos/Delegate",
-      maxCommandSeconds: 30,
       networkMode: "allowlist",
       filesystemMode: "workspace_only",
       sessionId: "session_allowlist_1234",
-      executionId: "execution_allowlist_1234",
     });
 
     expect(args).toContain("--network");
     expect(args).toContain("none");
+  });
+
+  it("executes commands inside the existing lease container", () => {
+    const args = buildDockerExecArgs({
+      lease: {
+        runnerType: "docker",
+        leaseId: "delegate-lease-vol-session123",
+        containerId: "delegate-lease-session123",
+        containerName: "delegate-lease-session123",
+        sessionRoot: "/delegate-session",
+      },
+      command: "pwd",
+      filesystemMode: "workspace_only",
+      workingDirectory: "apps/bot",
+    });
+
+    expect(args[0]).toBe("exec");
+    expect(args).toContain("delegate-lease-session123");
+    expect(args).toContain("/workspace/apps/bot");
+  });
+
+  it("uses the session root for ephemeral-full exec working directories", () => {
+    const args = buildDockerExecArgs({
+      lease: {
+        runnerType: "docker",
+        leaseId: "delegate-lease-vol-session456",
+        containerId: "delegate-lease-session456",
+        containerName: "delegate-lease-session456",
+        sessionRoot: "/delegate-session",
+      },
+      command: "pwd",
+      filesystemMode: "ephemeral_full",
+      workingDirectory: "scratch",
+    });
+
+    expect(args).toContain("/delegate-session/scratch");
   });
 });

@@ -58,9 +58,15 @@ type ComputeSnapshot = {
   sessions: Array<{
     id: string;
     status: string;
+    leaseStatus: string;
     requestedBy: string;
     baseImage: string;
+    runnerLeaseId?: string;
+    containerId?: string;
     createdAt: string;
+    leaseAcquiredAt?: string;
+    leaseLastUsedAt?: string;
+    leaseReleasedAt?: string;
     startedAt?: string;
     lastHeartbeatAt?: string;
     expiresAt?: string;
@@ -748,16 +754,20 @@ export function DashboardCompute({
                   <div>
                     <strong>{session.baseImage}</strong>
                     <p>
-                      {session.status} · {t.requestedBy(session.requestedBy)}
+                      {session.status} · lease {session.leaseStatus} · {t.requestedBy(session.requestedBy)}
                     </p>
                     <div className="chip-row">
                       <span className="chip">{formatTimestamp(session.createdAt, locale)}</span>
                       <span className="chip">{t.executionCount(session.executionCount)}</span>
+                      {session.leaseAcquiredAt ? (
+                        <span className="chip">lease {formatTimestamp(session.leaseAcquiredAt, locale)}</span>
+                      ) : null}
                       {session.expiresAt ? (
                         <span className="chip chip-safe">
                           {t.expiresLabel(formatTimestamp(session.expiresAt, locale))}
                         </span>
                       ) : null}
+                      {session.runnerLeaseId ? <span className="chip">{session.runnerLeaseId}</span> : null}
                     </div>
                     {session.latestExecution ? (
                       <p className="footer-note">

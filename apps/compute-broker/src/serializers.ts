@@ -38,6 +38,10 @@ export function mapSessionStatusFromDb(value: string) {
     | "expired";
 }
 
+export function mapLeaseStatusFromDb(value: string) {
+  return value.toLowerCase() as "requested" | "ready" | "releasing" | "released" | "failed";
+}
+
 export function mapToolStatusFromDb(value: string) {
   return value.toLowerCase() as
     | "queued"
@@ -99,11 +103,16 @@ export function serializeSession(session: {
   policyProfileId: string | null;
   requestedBy: string;
   status: string;
+  leaseStatus: string;
   runnerType: string;
+  runnerLeaseId: string | null;
   baseImage: string;
   containerId: string | null;
   createdAt: Date;
   updatedAt: Date;
+  leaseAcquiredAt: Date | null;
+  leaseLastUsedAt: Date | null;
+  leaseReleasedAt: Date | null;
   startedAt: Date | null;
   lastHeartbeatAt: Date | null;
   expiresAt: Date | null;
@@ -118,11 +127,16 @@ export function serializeSession(session: {
     policyProfileId: session.policyProfileId,
     requestedBy: mapRequestedByFromDb(session.requestedBy),
     status: mapSessionStatusFromDb(session.status),
+    leaseStatus: mapLeaseStatusFromDb(session.leaseStatus),
     runnerType: mapRunnerTypeFromDb(session.runnerType),
+    runnerLeaseId: session.runnerLeaseId,
     baseImage: session.baseImage,
     containerId: session.containerId,
     createdAt: session.createdAt.toISOString(),
     updatedAt: session.updatedAt.toISOString(),
+    leaseAcquiredAt: session.leaseAcquiredAt?.toISOString() ?? null,
+    leaseLastUsedAt: session.leaseLastUsedAt?.toISOString() ?? null,
+    leaseReleasedAt: session.leaseReleasedAt?.toISOString() ?? null,
     startedAt: session.startedAt?.toISOString() ?? null,
     lastHeartbeatAt: session.lastHeartbeatAt?.toISOString() ?? null,
     expiresAt: session.expiresAt?.toISOString() ?? null,

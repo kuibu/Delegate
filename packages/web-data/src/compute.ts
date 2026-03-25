@@ -116,9 +116,15 @@ export type RepresentativeComputeSnapshot = {
   sessions: Array<{
     id: string;
     status: string;
+    leaseStatus: string;
     requestedBy: string;
     baseImage: string;
+    runnerLeaseId?: string;
+    containerId?: string;
     createdAt: string;
+    leaseAcquiredAt?: string;
+    leaseLastUsedAt?: string;
+    leaseReleasedAt?: string;
     startedAt?: string;
     lastHeartbeatAt?: string;
     expiresAt?: string;
@@ -533,9 +539,15 @@ function serializeComputeSession(session: ComputeSessionRecord) {
   return {
     id: session.id,
     status: session.status.toLowerCase(),
+    leaseStatus: session.leaseStatus.toLowerCase(),
     requestedBy: session.requestedBy.toLowerCase(),
     baseImage: session.baseImage,
+    ...(session.runnerLeaseId ? { runnerLeaseId: session.runnerLeaseId } : {}),
+    ...(session.containerId ? { containerId: session.containerId } : {}),
     createdAt: session.createdAt.toISOString(),
+    ...(session.leaseAcquiredAt ? { leaseAcquiredAt: session.leaseAcquiredAt.toISOString() } : {}),
+    ...(session.leaseLastUsedAt ? { leaseLastUsedAt: session.leaseLastUsedAt.toISOString() } : {}),
+    ...(session.leaseReleasedAt ? { leaseReleasedAt: session.leaseReleasedAt.toISOString() } : {}),
     ...(session.startedAt ? { startedAt: session.startedAt.toISOString() } : {}),
     ...(session.lastHeartbeatAt
       ? { lastHeartbeatAt: session.lastHeartbeatAt.toISOString() }

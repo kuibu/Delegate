@@ -29,7 +29,7 @@ Delegate does **not** yet have the full target stack described in the architectu
 - no Anthropic secondary model lane
 - no native Claude/OpenAI computer-use lane
 - no Temporal orchestration
-- no remote MCP execution path
+- no reusable compute-lease model yet
 - no scoped subagents
 - no org-managed permission layer
 
@@ -37,13 +37,13 @@ Treat the matrix below as source of truth for "what is done vs. what is still ne
 
 ## Fresh review constraint
 
-Before starting the next major slice, preserve this review finding as an active constraint:
+Before starting the next major slice, preserve this already-fixed review finding as an active constraint:
 
 - compute authorization must remain conversation-scoped
 - `contact.isPaid` is CRM/account state, not a compute plan-tier grant
 - `activePlanTier` for governed compute should come from the current conversation unlock state such as `passUnlockedAt` and `deepHelpUnlockedAt`, or from an explicitly scoped entitlement record
 
-This matters because the next `remote MCP transport + policy binding` slice will inherit whatever compute authorization semantics exist today. Do not extend MCP on top of a leaky plan-tier boundary.
+This matters because every future capability lane must inherit the same conversation-scoped authorization semantics. Do not regress back to sticky contact-level plan grants.
 
 ## Implementation matrix
 
@@ -52,13 +52,13 @@ This matters because the next `remote MCP transport + policy binding` slice will
 | 1 | Model access layer | Partial, foundation landed | Public runtime now has an `OpenAI Responses` answer lane, structured context assembly, usage ledger hooks, and deterministic fallback | Add Anthropic/Claude as the secondary lane, sharpen provider cooldown/fallback, and harden model cost accounting | The repo intentionally shipped the smallest trustworthy model path before adding a second provider lane | P1 |
 | 2 | General compute plane | Partial, strong foundation | Docker-isolated broker, capability policy, approval flow, artifact persistence, dual-ledger debit path, Telegram `/compute` entry | Turn logical `ComputeSession` into a real reusable lease model or runner abstraction, then prepare microVM upgrade path | Current implementation uses `docker run --rm` per execution because it was the fastest safe way to close approval/artifact/billing loops | P0 |
 | 3 | Browser / computer use | Partial, deterministic lane landed | A governed `browser` capability now runs through an isolated Playwright lane with approval, artifacts, and billing | Add richer browser session management, screenshot/download UX, and native Claude/OpenAI computer-use lanes behind approvals | The current slice proves governed browser execution, but not the higher-level native computer-use stack yet | P1 |
-| 4 | Permission system | Partial, managed overlays landed | `allow / ask / deny`, capability rules, path/domain/cost/paid-plan gates, dashboard-editable compute defaults, and managed overlay profiles with channel / plan-tier conditions | First fix conversation-scoped plan-tier derivation, then add richer resource scopes, customer/org policy overlays, and approval-aware MCP policy binding | The product still has no org/IAM layer, and the current plan-tier derivation still needs to stop treating `contact.isPaid` as a session-level `pass` grant | P1 |
+| 4 | Permission system | Partial, managed overlays landed | `allow / ask / deny`, capability rules, path/domain/cost/paid-plan gates, dashboard-editable compute defaults, managed overlay profiles with channel / plan-tier conditions, and conversation-scoped compute entitlements | Add richer resource scopes, customer/org policy overlays, and broader approval-aware capability binding across future transports | The product still has no org/IAM layer, and policy is still representative-centric rather than customer/org managed | P1 |
 | 5 | Hooks and audit | Partial, explicit bus landed | Lifecycle hook bus now exists for `PreToolUse`, `PostToolUse`, `SessionEnd`, `PreHandoff`, and model reply/context audit points | Expand hooks into retention, memory filtering, billing budget gates, and owner-facing webhookable summaries | The first hook slice focused on making lifecycle boundaries explicit before adding programmable policies | P1 |
 | 6 | Subagents / multi-agent | Not started | Structured collectors and compute broker exist, but there are no scoped subagents | Introduce explicit `triage-agent`, `compute-agent`, `browser-agent`, `quote-agent`, and `handoff-agent` with isolated budgets and tool scopes | This belongs to the next networked phase, not the current Founder Representative wedge | P2 |
 | 7 | Context management | Partial, structured assembler landed | Postgres truth + OpenViking recall/commit + artifact store + ephemeral compute state are present, and the model lane now assembles contract/snapshot/collector/recent-turn/recall segments with token estimates | Add richer context editing, tool-result compaction, and adaptive recall/token budgeting | Advanced pruning is still heuristic and there is no Claude-style context editing or token-aware multi-provider stack yet | P1 |
 | 8 | Files and artifacts | Partial, strong | Object storage, retention, representative/contact/session attribution, detail/download APIs, dashboard artifact viewer | Expand beyond stdout/stderr into screenshots, generated docs, archives, pinned artifacts, and unified material/file workflows | Compute outputs were the smallest high-value slice to ship first | P1 |
 | 9 | Memory | Partial, strong | Public-safe OpenViking memory, filtering, provenance, recall traces, commit traces, separation from artifacts and Postgres truth | Add memory promotion rules, stronger safety classification, and tool-like memory access semantics for the future model runtime | The current design intentionally keeps memory conservative and bounded until the model layer is in place | P1 |
-| 10 | MCP and capability transport | Partial | ClawHub discovery/provenance and internal capability services exist | Add remote MCP execution with allowlists, provenance, policy binding, and approval defaults | Third-party execution inside a public runtime is being deferred until internal capability paths are stable | P1 |
+| 10 | MCP and capability transport | Partial, first remote path landed | ClawHub discovery/provenance, internal capability services, remote MCP execution, allowlists, provenance, policy binding, and approval defaults exist | Expand transport coverage, richer provenance, retry semantics, and stronger dashboard/approval ergonomics for remote capability execution | The first safe MCP path is in place, but it is still a narrow `streamable_http` lane without broader transport/runtime management | P1 |
 | 11 | Billing | Partial, strong seed | Wallet, sponsor pool, conversation compute budget, compute/storage ledger, Telegram Stars plans | Add model cost accounting, browser/minutes/egress accounting, MCP cost accounting, and a productized `Compute Pass` | Internal compute/storage accounting landed before model/browser/MCP cost layers existed | P1 |
 | 12 | Final target stack | Partial overall | OpenViking, Postgres, object storage, Docker compute, capability policy, owner dashboard are live | Close rows `1, 3, 5, 7, 10, 11` and then add Temporal + secrets manager | The repo is at an intentional middle state: `public representative + governed compute`, not the full end-state | Reference |
 
@@ -95,17 +95,18 @@ Do **not** try to close all 12 rows in one pass.
 
 Recommended order:
 
-1. `P1-B` MCP transport + managed policy layers
+1. `P0` Reusable compute lease model + runner abstraction
 2. `P1-C` Richer billing and file/artifact productization
-3. `P2-A` Scoped subagents
-4. `P2-B` Temporal and broader agent-network infrastructure
+3. `P1-D` Richer browser session management and native computer-use preparation
+4. `P2-A` Scoped subagents
+5. `P2-B` Temporal and broader agent-network infrastructure
 
 Why this order:
 
-- Rows `10 + 4` are now the sharpest missing capability boundary for external tools and managed policy
-- The first task inside `P1-B` should be fixing conversation-scoped plan entitlement so remote MCP inherits the right authorization model
-- Row `11` becomes much more meaningful now that model and browser lanes emit real usage and lifecycle traces
-- Row `6` should still wait until policy, MCP transport, and billing semantics are stable
+- Row `2` is now the highest-leverage missing layer because compute is still modeled as a session but executed as one-off containers
+- Row `11` becomes much more meaningful once sessions have a real reusable lease lifecycle and richer artifact semantics
+- Row `3` should deepen only after the shared lease/session substrate exists
+- Row `6` should still wait until compute, billing, and capability boundaries are more stable
 
 ## Codex prompt rules
 
@@ -435,42 +436,35 @@ Constraints:
 - preserve representative/contact scoping
 ```
 
-### Prompt 10: MCP and capability transport
+### Prompt 10: MCP and capability transport hardening
 
 ```text
 You are Codex working inside /Users/a/repos/Delegate.
 
-Finish the back half of P1-B for Delegate:
-- fix conversation-scoped compute plan authorization
-- then add the first real MCP-oriented capability transport layer
+Harden and extend Delegate's MCP-oriented capability transport layer.
 
 Current repo state:
 - ClawHub discovery and provenance exist
 - internal capability services exist
-- there is no remote MCP execution path yet
+- remote MCP execution exists through the compute broker
 - managed compute policy overlays exist
-- there is a known review finding: `contact.isPaid` currently leaks into `activePlanTier`, so historically paid contacts can inherit `pass` semantics in new conversations
+- compute authorization is already conversation-scoped and must stay that way
 
 Goal:
-Add a safe remote capability transport layer aligned with MCP direction, without allowing arbitrary third-party code into the public runtime.
+Deepen the safe remote capability transport layer aligned with MCP direction, without allowing arbitrary third-party code into the public runtime.
 
 Implement end to end:
-1. fix plan-tier derivation so compute authorization is conversation-scoped
-   - do not derive `activePlanTier` from sticky `contact.isPaid`
-   - derive it from the active conversation unlock fields or a new explicitly scoped entitlement record
-   - add regression tests proving a historically paid contact does not get `pass` in a fresh conversation by default
-2. define MCP-capable capability metadata
-3. add a remote MCP client/service path for approved capabilities
-4. bind MCP capability execution to existing policy and approval layers
-5. ensure managed overlays and plan/channel conditions also apply to MCP-backed capability execution
-6. record provenance and audit for MCP calls
-7. expose safe MCP-related visibility in dashboard
+1. expand transport/runtime coverage where it improves safety or operator value
+2. strengthen provenance, retries, and failure classification for MCP calls
+3. keep approval defaults and managed overlays authoritative for every remote capability invocation
+4. maintain the conversation-scoped compute entitlement boundary with regression coverage
+5. improve dashboard visibility for MCP bindings, approvals, and remote execution traces
 
 Constraints:
 - no arbitrary plugin execution inside the representative runtime
 - default to approval for remote capability execution
 - maintain allowlisted resource/tool scope
-- do not extend MCP on top of the old `contact.isPaid -> pass` behavior
+- do not regress to sticky `contact.isPaid -> pass` behavior
 - preserve Delegate's public/private trust boundary and conversation-level product semantics
 ```
 

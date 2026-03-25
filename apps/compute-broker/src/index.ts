@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { URL } from "node:url";
 import {
   brokerHealthSchema,
+  heartbeatComputeSessionRequestSchema,
   resolveApprovalRequestSchema,
   terminateComputeSessionRequestSchema,
 } from "@delegate/compute-protocol";
@@ -17,6 +18,7 @@ import {
 import {
   createComputeSession,
   getComputeSession,
+  heartbeatComputeSession,
   terminateComputeSession,
 } from "./sessions";
 import { SessionError } from "./session-error";
@@ -79,6 +81,20 @@ const server = createServer(async (request, response) => {
       const body = resolveApprovalRequestSchema.parse(await readJson(request));
       const result = await resolveApproval(approvalId, body);
       return sendJson(response, 200, result);
+    }
+
+    if (
+      method === "POST" &&
+      segments[0] === "internal" &&
+      segments[1] === "compute" &&
+      segments[2] === "sessions" &&
+      segments[3] &&
+      segments[4] === "heartbeat"
+    ) {
+      const sessionId = segments[3];
+      const body = heartbeatComputeSessionRequestSchema.parse(await readJson(request));
+      const session = await heartbeatComputeSession(sessionId, body.reason);
+      return sendJson(response, 200, { session });
     }
 
     if (
