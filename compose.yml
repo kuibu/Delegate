@@ -265,6 +265,62 @@ services:
       retries: 10
       start_period: 10s
 
+  temporal-db-init:
+    image: postgres:16-alpine
+    profiles: ["temporal"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: postgres
+    entrypoint:
+      - "sh"
+      - "-lc"
+      - "if ! psql -h postgres -p 5432 -U postgres -d postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = 'delegate_temporal'\" | grep -q 1; then psql -h postgres -p 5432 -U postgres -d postgres -c \"CREATE DATABASE delegate_temporal\"; fi"
+    restart: "no"
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    profiles: ["temporal"]
+    depends_on:
+      temporal-db-init:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PWD: postgres
+      POSTGRES_SEEDS: postgres
+      POSTGRES_DB: delegate_temporal
+    ports:
+      - "7233:7233"
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    profiles: ["temporal"]
+    depends_on:
+      temporal:
+        condition: service_started
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_UI_PORT: 8080
+    ports:
+      - "8233:8080"
+
+  temporal-namespace-init:
+    image: temporalio/admin-tools:latest
+    profiles: ["temporal"]
+    depends_on:
+      temporal:
+        condition: service_started
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    entrypoint:
+      - "sh"
+      - "-lc"
+      - "temporal operator namespace describe -n delegate >/dev/null 2>&1 || temporal operator namespace create -n delegate"
+    restart: "no"
+
   openviking:
     image: ghcr.io/volcengine/openviking:main
     container_name: delegate-openviking

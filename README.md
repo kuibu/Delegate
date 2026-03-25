@@ -103,6 +103,8 @@ Local URLs:
 - representative app: `http://localhost:3002/reps/lin-founder-rep`
 - compute broker: `http://localhost:4010/health`
 - workflow runner: `http://localhost:4020/health`
+- Temporal gRPC (optional profile): `localhost:7233`
+- Temporal UI (optional profile): `http://localhost:8233`
 - artifact store API: `http://localhost:9000`
 - artifact store console: `http://localhost:9001`
 - OpenViking API: `http://localhost:1933`
@@ -166,6 +168,7 @@ The first durable workflow slice is also live:
 - owner handoff requests can enqueue timed follow-up reminders
 - workflow truth stays in Postgres and is surfaced in the dashboard overview
 - workflow runs now carry engine metadata so the local runner and a future Temporal worker can share the same enqueue boundary
+- workflow runs can now dispatch through a real Temporal worker bridge when the Temporal profile is enabled
 
 To keep local development safe, Delegate still defaults to the built-in runner:
 
@@ -179,6 +182,26 @@ If you want to prepare for a future Temporal worker without breaking local behav
 - `WORKFLOW_TEMPORAL_TASK_QUEUE`
 
 If the Temporal fields are incomplete, Delegate now falls back to the local runner instead of silently enqueueing unserviceable jobs.
+
+If you want to run the local Temporal profile end to end, use:
+
+```bash
+pnpm docker:up:temporal
+```
+
+That command boots:
+
+- `temporal-db-init`
+- `temporal`
+- `temporal-ui`
+- `temporal-namespace-init`
+- `workflow-runner` with `WORKFLOW_ENGINE=temporal`
+
+Once it is up, `http://localhost:4020/health` should report:
+
+- `engine: "temporal"`
+- `temporalReady: true`
+- `temporalBridgeState.status: "running"`
 
 If you only want the database container for local non-Docker app development, use:
 

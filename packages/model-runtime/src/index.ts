@@ -16,6 +16,14 @@ export * from "./types";
 export async function generateRepresentativeReply(
   params: RepresentativeReplyInput,
 ): Promise<RepresentativeReplyResult> {
+  if (!params.subagent.allowedConversationSteps.includes(params.plan.nextStep)) {
+    return {
+      ok: false,
+      reason: `Subagent ${params.subagent.id} cannot handle conversation step ${params.plan.nextStep}.`,
+      state: "invalid_subagent_route",
+    };
+  }
+
   const env = resolveModelRuntimeEnv();
   const maxInputTokens = Math.min(
     env.maxInputTokens,

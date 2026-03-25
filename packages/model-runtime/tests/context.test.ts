@@ -6,6 +6,7 @@ import {
   assembleRepresentativeReplyPrompt,
   buildRepresentativeReplyPrompt,
   calculateModelUsageCost,
+  generateRepresentativeReply,
   resolveModelRuntimeEnv,
   resolveProviderAttemptOrder,
 } from "../src/index";
@@ -176,6 +177,32 @@ describe("buildRepresentativeReplyPrompt", () => {
     expect(assembled.trace.segments.some((segment) => segment.kind === "public_knowledge")).toBe(
       false,
     );
+  });
+
+  it("fails fast when a subagent is paired with a disallowed conversation step", async () => {
+    const result = await generateRepresentativeReply({
+      representative: demoRepresentative,
+      plan: {
+        intent: "handoff",
+        audienceRole: "other",
+        action: "request_handoff",
+        nextStep: "handoff",
+        reasons: ["Intent detected: handoff.", "Human escalation required."],
+        responseOutline: ["Acknowledge the request.", "Prepare a clean owner handoff."],
+      },
+      subagent: getScopedSubagent("triage-agent"),
+      userText: "I need a founder handoff.",
+      recentTurns: [],
+      recalled: [],
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected invalid subagent route to fail.");
+    }
+    expect(result.state).toBe("invalid_subagent_route");
+    expect(result.reason).toContain("triage-agent");
+    expect(result.reason).toContain("handoff");
   });
 });
 

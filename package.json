@@ -15,6 +15,7 @@
     "dev:workflow-runner": "pnpm --filter @delegate/workflow-runner dev",
     "registry:search:clawhub": "tsx scripts/clawhub-search.ts",
     "docker:up": "docker compose up -d --build",
+    "docker:up:temporal": "WORKFLOW_ENGINE=temporal WORKFLOW_TEMPORAL_ADDRESS=temporal:7233 WORKFLOW_TEMPORAL_NAMESPACE=delegate WORKFLOW_TEMPORAL_TASK_QUEUE=delegate-public-runtime docker compose --profile temporal up -d --build temporal-db-init temporal temporal-ui temporal-namespace-init workflow-runner",
     "docker:up:db": "docker compose up -d postgres",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",

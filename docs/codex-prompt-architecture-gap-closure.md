@@ -24,12 +24,12 @@ Delegate already has a meaningful middle state:
 - lifecycle hook bus for model, handoff, and compute audit points
 - scoped `triage / quote / handoff / compute / browser` subagent boundaries in runtime routing and model context assembly
 - an engine-aware durable workflow runner for approval expiration and owner follow-up timers
+- a real Temporal worker bridge boundary with engine-aware dispatch, worker bootstrap, and optional local Temporal profile support
 - owner dashboard control plane
 
 Delegate does **not** yet have the full target stack described in the architecture decisions doc. In particular:
 
 - no native Claude/OpenAI computer-use lane
-- no Temporal orchestration yet
 - no org/customer-managed permission layer
 
 Treat the matrix below as source of truth for "what is done vs. what is still next".
@@ -53,13 +53,13 @@ This matters because every future capability lane must inherit the same conversa
 | 3 | Browser / computer use | Partial, stronger | A governed `browser` capability now runs through an isolated Playwright lane with approval, screenshot/json artifacts, persistent browser session history, dashboard preview support, and native computer-use preflight snapshots for OpenAI/Anthropic handoff readiness | Add multi-step browser workflows and actual native Claude/OpenAI computer-use loops behind approvals | The repo now prepares retained browser sessions for native handoff, but it does not execute provider-native action loops yet | P1 |
 | 4 | Permission system | Partial, managed overlays landed | `allow / ask / deny`, capability rules, path/domain/cost/paid-plan gates, dashboard-editable compute defaults, managed overlay profiles with channel / plan-tier conditions, and conversation-scoped compute entitlements | Add richer resource scopes, customer/org policy overlays, and broader approval-aware capability binding across future transports | The product still has no org/IAM layer, and policy is still representative-centric rather than customer/org managed | P1 |
 | 5 | Hooks and audit | Partial, explicit bus landed | Lifecycle hook bus now exists for `PreToolUse`, `PostToolUse`, `SessionEnd`, `PreHandoff`, and model reply/context audit points | Expand hooks into retention, memory filtering, billing budget gates, and owner-facing webhookable summaries | The first hook slice focused on making lifecycle boundaries explicit before adding programmable policies | P1 |
-| 6 | Subagents / multi-agent | Partial, first scoped layer landed | Runtime routing now resolves explicit `triage-agent`, `quote-agent`, `handoff-agent`, `compute-agent`, and `browser-agent` boundaries, and the model lane now assembles prompts with subagent-specific context scopes and token budgets | Add deeper budget enforcement, richer agent-to-agent orchestration, and dedicated browser/native-computer subagent loops | The first slice keeps subagents as execution boundaries inside one representative runtime; it does not yet create durable multi-agent orchestration | P2 |
+| 6 | Subagents / multi-agent | Partial, first scoped layer landed | Runtime routing now resolves explicit `triage-agent`, `quote-agent`, `handoff-agent`, `compute-agent`, and `browser-agent` boundaries, and the model lane now assembles prompts with subagent-specific context scopes and token budgets | Add deeper budget enforcement, broker-level compute/browser subagent transport, and richer agent-to-agent orchestration | The first slice keeps subagents as execution boundaries inside one representative runtime; it does not yet create durable multi-agent orchestration or hard transport isolation for compute/browser | P2 |
 | 7 | Context management | Partial, structured assembler landed | Postgres truth + OpenViking recall/commit + artifact store + ephemeral compute state are present, and the model lane now assembles contract/snapshot/collector/recent-turn/recall segments with token estimates | Add richer context editing, tool-result compaction, and adaptive recall/token budgeting | Advanced pruning is still heuristic and there is no Claude-style context editing or token-aware multi-provider stack yet | P1 |
 | 8 | Files and artifacts | Partial, strong | Object storage, retention, representative/contact/session attribution, detail/download APIs, dashboard artifact viewer, pinned artifacts, download tracking, and artifact egress ledger entries | Expand beyond stdout/stderr into screenshots, generated docs, archives, richer filtering, and unified material/file workflows | Compute outputs and artifact governance shipped first; broader deliverable/file ergonomics are still ahead | P1 |
 | 9 | Memory | Partial, strong | Public-safe OpenViking memory, filtering, provenance, recall traces, commit traces, separation from artifacts and Postgres truth | Add memory promotion rules, stronger safety classification, and tool-like memory access semantics for the future model runtime | The current design intentionally keeps memory conservative and bounded until the model layer is in place | P1 |
 | 10 | MCP and capability transport | Partial, first remote path landed | ClawHub discovery/provenance, internal capability services, remote MCP execution, allowlists, provenance, policy binding, and approval defaults exist | Expand transport coverage, richer provenance, retry semantics, and stronger dashboard/approval ergonomics for remote capability execution | The first safe MCP path is in place, but it is still a narrow `streamable_http` lane without broader transport/runtime management | P1 |
 | 11 | Billing | Partial, stronger foundation | Wallet, sponsor pool, conversation compute budget, compute/storage/egress ledger, Telegram Stars plans, split usage-vs-debit execution billing, and env-configured model cost accounting now exist | Add browser/minutes accounting, MCP cost accounting, and a productized `Compute Pass` | Internal model accounting is now present, but browser/MCP cost layers and product packaging still lag | P1 |
-| 12 | Final target stack | Partial overall | OpenViking, Postgres, object storage, Docker compute, capability policy, owner dashboard are live | Close rows `1, 3, 5, 7, 10, 11` and then add Temporal + secrets manager | The repo is at an intentional middle state: `public representative + governed compute`, not the full end-state | Reference |
+| 12 | Final target stack | Partial overall | OpenViking, Postgres, object storage, Docker compute, capability policy, owner dashboard, and a Temporal-capable workflow boundary are live | Close rows `1, 3, 5, 7, 10, 11` and then add secrets manager | The repo is at an intentional middle state: `public representative + governed compute`, not the full end-state | Reference |
 
 ## Key files by area
 
@@ -98,14 +98,16 @@ Do **not** try to close all 12 rows in one pass.
 
 Recommended order:
 
-1. `P2-B final mile` Temporal worker bridge and broader agent-network infrastructure
+1. `P2-C` harden subagent transport and broker-level compute/browser boundaries
+2. `P3-A` native computer-use execution loop on top of the retained browser lane
+3. `P3-B` richer billing for browser minutes and remote capability costs
 
 Why this order:
 
-- Row `6` now has a first scoped subagent layer, and the repo now has an engine-aware workflow runner boundary, so the next bottleneck shifts toward adding a real Temporal worker bridge instead of re-deriving enqueue semantics from scratch
+- Row `6` now has a first scoped subagent layer, but compute/browser boundaries are still stronger in routing than in transport, so that is the next safety bottleneck
+- Row `3` now has a retained browser session lane and native-provider preflight state, so it is ready for a real native computer-use loop instead of more preparation-only work
 - Row `11` now has a better base, including model COGS, so the next billing work should focus on browser/MCP cost layers instead of model-only gaps
-- Native computer-use prep should now build on the new browser session lane, not restart browser infrastructure from scratch
-- Row `6` is intentionally still shallow: subagents are scoped boundaries today, and durable workflows currently cover only approval expiration and handoff follow-up, not broader networked agent orchestration or Temporal-native retries/compensations
+- Row `6` is intentionally still shallow: subagents are scoped boundaries today, and durable workflows still cover only approval expiration and handoff follow-up, not broader networked agent orchestration
 
 ## Codex prompt rules
 

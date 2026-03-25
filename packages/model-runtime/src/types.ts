@@ -9,7 +9,12 @@ import type { ModelContextSegmentTrace } from "@delegate/lifecycle-hooks";
 
 export type ModelProvider = "openai" | "anthropic";
 
-export type ModelRuntimeState = "ready" | "disabled" | "missing_credentials" | "unsupported_provider";
+export type ModelRuntimeState =
+  | "ready"
+  | "disabled"
+  | "missing_credentials"
+  | "unsupported_provider"
+  | "invalid_subagent_route";
 
 export type ModelPricingConfig = {
   inputCostUsdPerMillionTokens: number;

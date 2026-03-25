@@ -15,11 +15,32 @@ import { prisma } from "./prisma";
 
 type WorkflowRunRecord = Awaited<ReturnType<typeof loadWorkflowRun>>;
 
-export async function runWorkflowTick(options?: { limit?: number }) {
+export type WorkflowTickSummary = {
+  processed: number;
+  completed: number;
+  dispatched: number;
+  failed: number;
+};
+
+export type TemporalWorkflowDispatcher = {
+  startWorkflowExecution(params: {
+    workflowRunId: string;
+    workflowKind: WorkflowKind;
+    workflowId: string;
+    taskQueue: string;
+  }): Promise<void>;
+};
+
+export async function runWorkflowTick(options?: {
+  limit?: number;
+  engine?: WorkflowEngine;
+  temporalDispatcher?: TemporalWorkflowDispatcher;
+}): Promise<WorkflowTickSummary> {
   const now = new Date();
+  const engine = options?.engine ?? WorkflowEngine.LOCAL_RUNNER;
   const dueRuns = await prisma.workflowRun.findMany({
     where: {
-      engine: WorkflowEngine.LOCAL_RUNNER,
+      engine,
       status: WorkflowStatus.QUEUED,
       scheduledAt: {
         lte: now,
@@ -34,13 +55,14 @@ export async function runWorkflowTick(options?: { limit?: number }) {
 
   let processed = 0;
   let completed = 0;
+  let dispatched = 0;
   let failed = 0;
 
   for (const run of dueRuns) {
     const claimed = await prisma.workflowRun.updateMany({
       where: {
         id: run.id,
-        engine: WorkflowEngine.LOCAL_RUNNER,
+        engine,
         status: WorkflowStatus.QUEUED,
       },
       data: {
@@ -66,28 +88,26 @@ export async function runWorkflowTick(options?: { limit?: number }) {
         continue;
       }
 
-      switch (workflow.kind) {
-        case WorkflowKind.APPROVAL_EXPIRATION:
-          await processApprovalExpiration(workflow);
-          break;
-        case WorkflowKind.HANDOFF_FOLLOW_UP:
-          await processHandoffFollowUp(workflow);
-          break;
+      if (engine === WorkflowEngine.TEMPORAL) {
+        if (!options?.temporalDispatcher) {
+          throw new Error("temporal_dispatcher_missing");
+        }
+        await options.temporalDispatcher.startWorkflowExecution({
+          workflowRunId: workflow.id,
+          workflowKind: workflow.kind,
+          workflowId: workflow.externalWorkflowId ?? workflow.id,
+          taskQueue: workflow.queueName ?? "delegate-public-runtime",
+        });
+        dispatched += 1;
+      } else {
+        await processWorkflowRunById(workflow.id);
+        completed += 1;
       }
-
-      completed += 1;
     } catch (error) {
       failed += 1;
       const failureMessage =
         error instanceof Error ? error.message : "workflow_failed";
-      await prisma.workflowRun.update({
-        where: { id: run.id },
-        data: {
-          status: WorkflowStatus.FAILED,
-          failedAt: new Date(),
-          lastError: failureMessage,
-        },
-      });
+      await markWorkflowRunFailed(run.id, failureMessage);
       if (workflow) {
         await prisma.eventAudit.create({
           data: {
@@ -111,8 +131,36 @@ export async function runWorkflowTick(options?: { limit?: number }) {
   return {
     processed,
     completed,
+    dispatched,
     failed,
   };
+}
+
+export async function processWorkflowRunById(workflowRunId: string) {
+  const workflow = await loadWorkflowRun(workflowRunId);
+  if (!workflow) {
+    return;
+  }
+
+  switch (workflow.kind) {
+    case WorkflowKind.APPROVAL_EXPIRATION:
+      await processApprovalExpiration(workflow);
+      break;
+    case WorkflowKind.HANDOFF_FOLLOW_UP:
+      await processHandoffFollowUp(workflow);
+      break;
+  }
+}
+
+export async function markWorkflowRunFailed(workflowRunId: string, failureMessage: string) {
+  await prisma.workflowRun.update({
+    where: { id: workflowRunId },
+    data: {
+      status: WorkflowStatus.FAILED,
+      failedAt: new Date(),
+      lastError: failureMessage,
+    },
+  });
 }
 
 async function processApprovalExpiration(workflow: NonNullable<WorkflowRunRecord>) {
