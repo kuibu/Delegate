@@ -1,4 +1,5 @@
 import { demoRepresentative } from "@delegate/domain";
+import { getWorkflowEngineConfig } from "@delegate/workflows";
 import {
   HandoffStatus,
   InvoiceStatus,
@@ -33,6 +34,13 @@ export type DashboardOverviewSnapshot = {
     value: string;
     detail: string;
   }>;
+  workflowEngine: {
+    configured: "local_runner" | "temporal";
+    effective: "local_runner" | "temporal";
+    temporalReady: boolean;
+    queueName: string;
+    fallbackReason?: string;
+  };
   workflowMetrics: Array<{
     label: string;
     value: string;
@@ -63,6 +71,7 @@ export type DashboardOverviewSnapshot = {
   recentWorkflows: Array<{
     id: string;
     kind: "handoff_follow_up" | "approval_expiration";
+    engine: "local_runner" | "temporal";
     status: "queued" | "running" | "completed" | "failed" | "canceled";
     scheduledAt: string;
     completedAt?: string;
@@ -173,6 +182,7 @@ export async function getDashboardOverviewSnapshot(
 
     const wallet = representative.owner.wallet;
     const paidBreakdown = buildPaidBreakdown(representative.invoices);
+    const workflowEngine = getWorkflowEngineConfig(process.env);
 
     return {
       representative: {
@@ -279,6 +289,16 @@ export async function getDashboardOverviewSnapshot(
             },
           ]
         : [],
+      workflowEngine: {
+        configured: workflowEngine.configuredEngine,
+        effective: workflowEngine.effectiveEngine,
+        temporalReady: workflowEngine.temporalReady,
+        queueName:
+          workflowEngine.effectiveEngine === "temporal"
+            ? workflowEngine.temporalTaskQueue ?? workflowEngine.localQueueName
+            : workflowEngine.localQueueName,
+        ...(workflowEngine.fallbackReason ? { fallbackReason: workflowEngine.fallbackReason } : {}),
+      },
       workflowMetrics: [
         {
           label: locale === "zh" ? "待执行工作流" : "Queued workflows",
@@ -291,6 +311,18 @@ export async function getDashboardOverviewSnapshot(
               : locale === "zh"
                 ? "当前没有等待中的耐久工作流"
                 : "No durable workflow jobs are currently queued.",
+        },
+        {
+          label: locale === "zh" ? "工作流引擎" : "Workflow engine",
+          value: workflowEngine.effectiveEngine === "temporal" ? "temporal" : "local",
+          detail:
+            workflowEngine.configuredEngine === workflowEngine.effectiveEngine
+              ? locale === "zh"
+                ? `当前队列：${workflowEngine.effectiveEngine === "temporal" ? workflowEngine.temporalTaskQueue ?? "temporal" : workflowEngine.localQueueName}`
+                : `Active queue: ${workflowEngine.effectiveEngine === "temporal" ? workflowEngine.temporalTaskQueue ?? "temporal" : workflowEngine.localQueueName}`
+              : locale === "zh"
+                ? `已从 ${workflowEngine.configuredEngine} 回退到本地 runner：${workflowEngine.fallbackReason ?? "fallback"}`
+                : `Fell back from ${workflowEngine.configuredEngine} to local runner: ${workflowEngine.fallbackReason ?? "fallback"}`,
         },
         {
           label: locale === "zh" ? "失败工作流" : "Failed workflows",
@@ -330,6 +362,7 @@ export async function getDashboardOverviewSnapshot(
       recentWorkflows: representative.workflowRuns.map((workflowRun) => ({
         id: workflowRun.id,
         kind: workflowRun.kind === "HANDOFF_FOLLOW_UP" ? "handoff_follow_up" : "approval_expiration",
+        engine: workflowRun.engine === "TEMPORAL" ? "temporal" : "local_runner",
         status: normalizeWorkflowStatus(workflowRun.status),
         scheduledAt: workflowRun.scheduledAt.toISOString(),
         ...(workflowRun.completedAt ? { completedAt: workflowRun.completedAt.toISOString() } : {}),
@@ -453,6 +486,12 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
         balanceCredits: 240,
       },
       openVikingMetrics: [],
+      workflowEngine: {
+        configured: "local_runner",
+        effective: "local_runner",
+        temporalReady: false,
+        queueName: "local:workflow-runner",
+      },
       workflowMetrics: [],
       handoffRequests: [
         {
@@ -528,6 +567,7 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
         {
           id: "demo-workflow-handoff",
           kind: "handoff_follow_up",
+          engine: "local_runner",
           status: "queued",
           scheduledAt: hoursAgo(-18),
           detail: "owner_follow_up_due",
@@ -535,6 +575,7 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
         {
           id: "demo-workflow-approval",
           kind: "approval_expiration",
+          engine: "local_runner",
           status: "completed",
           scheduledAt: hoursAgo(3),
           completedAt: hoursAgo(2.5),
@@ -679,16 +720,19 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
     locale === "zh"
       ? [
           { label: "待执行工作流", value: "1", detail: "还有 1 条 handoff 跟进任务等待触发" },
+          { label: "工作流引擎", value: "local", detail: "当前使用内置 workflow runner 队列" },
           { label: "失败工作流", value: "0", detail: "最近没有 workflow 失败" },
         ]
       : [
           { label: "Queued workflows", value: "1", detail: "1 handoff follow-up job is still waiting to fire." },
+          { label: "Workflow engine", value: "local", detail: "Currently using the built-in workflow runner queue." },
           { label: "Failed workflows", value: "0", detail: "No recent workflow failures." },
         ];
   demoFallbackOverviewSnapshot.recentWorkflows = [
     {
       id: "demo-workflow-handoff",
       kind: "handoff_follow_up",
+      engine: "local_runner",
       status: "queued",
       scheduledAt:
         demoFallbackOverviewSnapshot.recentWorkflows[0]?.scheduledAt ?? new Date().toISOString(),
@@ -697,6 +741,7 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
     {
       id: "demo-workflow-approval",
       kind: "approval_expiration",
+      engine: "local_runner",
       status: "completed",
       scheduledAt:
         demoFallbackOverviewSnapshot.recentWorkflows[1]?.scheduledAt ?? new Date().toISOString(),
@@ -732,6 +777,7 @@ function cloneDashboardOverviewSnapshot(
     metrics: snapshot.metrics.map((metric) => ({ ...metric })),
     wallet: { ...snapshot.wallet },
     openVikingMetrics: snapshot.openVikingMetrics.map((metric) => ({ ...metric })),
+    workflowEngine: { ...snapshot.workflowEngine },
     handoffRequests: snapshot.handoffRequests.map((request) => ({ ...request })),
     recentInvoices: snapshot.recentInvoices.map((invoice) => ({ ...invoice })),
     workflowMetrics: snapshot.workflowMetrics.map((metric) => ({ ...metric })),

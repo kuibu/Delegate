@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   approvalExpirationDedupeKey,
+  buildWorkflowExternalId,
+  getWorkflowEngineConfig,
   handoffFollowUpDedupeKey,
   isWorkflowTerminal,
+  LOCAL_WORKFLOW_QUEUE,
+  resolveWorkflowDispatchTarget,
   scheduleApprovalExpiration,
   scheduleHandoffFollowUp,
 } from "../src/index";
@@ -32,5 +36,42 @@ describe("workflow helpers", () => {
     expect(isWorkflowTerminal("completed")).toBe(true);
     expect(isWorkflowTerminal("failed")).toBe(true);
     expect(isWorkflowTerminal("canceled")).toBe(true);
+  });
+
+  it("falls back to the local runner when Temporal is not fully configured", () => {
+    const config = getWorkflowEngineConfig({
+      WORKFLOW_ENGINE: "temporal",
+      WORKFLOW_TEMPORAL_NAMESPACE: "delegate",
+    });
+
+    expect(config.configuredEngine).toBe("temporal");
+    expect(config.effectiveEngine).toBe("local_runner");
+    expect(config.localQueueName).toBe(LOCAL_WORKFLOW_QUEUE);
+    expect(config.fallbackReason).toBe("temporal_not_fully_configured");
+  });
+
+  it("builds a Temporal-ready dispatch target when the config is complete", () => {
+    const config = getWorkflowEngineConfig({
+      WORKFLOW_ENGINE: "temporal",
+      WORKFLOW_TEMPORAL_ADDRESS: "127.0.0.1:7233",
+      WORKFLOW_TEMPORAL_NAMESPACE: "delegate",
+      WORKFLOW_TEMPORAL_TASK_QUEUE: "delegate-public-runtime",
+    });
+    const target = resolveWorkflowDispatchTarget({
+      config,
+      kind: "handoff_follow_up",
+      representativeKey: "lin-founder-rep",
+      subjectId: "handoff_123",
+    });
+
+    expect(config.effectiveEngine).toBe("temporal");
+    expect(target.queueName).toBe("delegate-public-runtime");
+    expect(target.externalWorkflowId).toBe(
+      buildWorkflowExternalId({
+        kind: "handoff_follow_up",
+        representativeKey: "lin-founder-rep",
+        subjectId: "handoff_123",
+      }),
+    );
   });
 });

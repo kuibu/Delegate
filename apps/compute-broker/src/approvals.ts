@@ -1,10 +1,16 @@
-import { approvalExpirationDedupeKey, scheduleApprovalExpiration } from "@delegate/workflows";
+import {
+  approvalExpirationDedupeKey,
+  getWorkflowEngineConfig,
+  resolveWorkflowDispatchTarget,
+  scheduleApprovalExpiration,
+} from "@delegate/workflows";
 import { prisma } from "./prisma";
 
 const approvalTimeoutMinutes = parseInt(
   process.env.WORKFLOW_APPROVAL_TIMEOUT_MINUTES?.trim() || "30",
   10,
 );
+const workflowEngineConfig = getWorkflowEngineConfig(process.env);
 
 export async function createApprovalRequestForExecution(params: {
   representativeId: string;
@@ -66,6 +72,12 @@ export async function createApprovalRequestForExecution(params: {
       new Date(),
       approvalTimeoutMinutes,
     );
+    const dispatchTarget = resolveWorkflowDispatchTarget({
+      config: workflowEngineConfig,
+      kind: "approval_expiration",
+      representativeKey: params.representativeId,
+      subjectId: approval.id,
+    });
     const workflow = await prisma.workflowRun.create({
       data: {
         representativeId: params.representativeId,
@@ -73,8 +85,11 @@ export async function createApprovalRequestForExecution(params: {
         conversationId: params.conversationId ?? null,
         approvalRequestId: approval.id,
         kind: "APPROVAL_EXPIRATION",
+        engine: dispatchTarget.effectiveEngine === "temporal" ? "TEMPORAL" : "LOCAL_RUNNER",
         status: "QUEUED",
         dedupeKey,
+        queueName: dispatchTarget.queueName,
+        externalWorkflowId: dispatchTarget.externalWorkflowId,
         scheduledAt,
         input: {
           approvalId: approval.id,
@@ -93,6 +108,12 @@ export async function createApprovalRequestForExecution(params: {
           workflowRunId: workflow.id,
           workflowKind: "approval_expiration",
           approvalRequestId: approval.id,
+          configuredEngine: dispatchTarget.configuredEngine,
+          effectiveEngine: dispatchTarget.effectiveEngine,
+          queueName: dispatchTarget.queueName,
+          externalWorkflowId: dispatchTarget.externalWorkflowId,
+          temporalReady: dispatchTarget.temporalReady,
+          fallbackReason: dispatchTarget.fallbackReason,
           scheduledAt: scheduledAt.toISOString(),
         },
       },

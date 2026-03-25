@@ -32,6 +32,13 @@ type DashboardOverviewSnapshot = {
     value: string;
     detail: string;
   }>;
+  workflowEngine: {
+    configured: "local_runner" | "temporal";
+    effective: "local_runner" | "temporal";
+    temporalReady: boolean;
+    queueName: string;
+    fallbackReason?: string;
+  };
   workflowMetrics: Array<{
     label: string;
     value: string;
@@ -62,6 +69,7 @@ type DashboardOverviewSnapshot = {
   recentWorkflows: Array<{
     id: string;
     kind: "handoff_follow_up" | "approval_expiration";
+    engine: "local_runner" | "temporal";
     status: "queued" | "running" | "completed" | "failed" | "canceled";
     scheduledAt: string;
     completedAt?: string;
@@ -333,7 +341,12 @@ export function DashboardOverview({
 
         <DashboardSurface
           eyebrow={t.workflowEyebrow}
-          meta={<span className="chip">{t.workflowChip(snapshot.recentWorkflows.length)}</span>}
+          meta={
+            <div className="chip-row">
+              <span className="chip">{t.workflowChip(snapshot.recentWorkflows.length)}</span>
+              <span className="chip chip-safe">{t.workflowEngineChip(snapshot.workflowEngine.effective)}</span>
+            </div>
+          }
           title={t.workflowQueueTitle}
         >
           <div className="row-list">
@@ -344,6 +357,7 @@ export function DashboardOverview({
                     <strong>{workflow.kind}</strong>
                     <p>{workflow.detail}</p>
                     <div className="chip-row">
+                      <span className="chip">{t.workflowEngineChip(workflow.engine)}</span>
                       <span className="chip">{workflow.status}</span>
                       <span className="chip">{formatTimestamp(workflow.scheduledAt, locale)}</span>
                       {workflow.completedAt ? (
@@ -497,6 +511,8 @@ const copy = {
     openInvoice: "查看发票",
     noInvoices: "还没有任何 Stars invoice 记录。",
     workflowChip: (count: number) => `${count} 条 workflows`,
+    workflowEngineChip: (engine: "local_runner" | "temporal") =>
+      engine === "temporal" ? "Temporal" : "Local runner",
     workflowQueueTitle: "最近工作流",
     noWorkflows: "当前还没有耐久工作流记录。",
   },
@@ -541,6 +557,8 @@ const copy = {
     openInvoice: "View invoice",
     noInvoices: "There are no Stars invoices yet.",
     workflowChip: (count: number) => `${count} workflows`,
+    workflowEngineChip: (engine: "local_runner" | "temporal") =>
+      engine === "temporal" ? "Temporal" : "Local runner",
     workflowQueueTitle: "Recent workflows",
     noWorkflows: "There are no durable workflow records yet.",
   },

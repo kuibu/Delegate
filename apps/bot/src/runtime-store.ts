@@ -2,6 +2,8 @@ import type { PlanTier } from "@delegate/domain";
 import type { ModelContextSegmentTrace } from "@delegate/lifecycle-hooks";
 import {
   handoffFollowUpDedupeKey,
+  getWorkflowEngineConfig,
+  resolveWorkflowDispatchTarget,
   scheduleHandoffFollowUp,
 } from "@delegate/workflows";
 import type {
@@ -85,6 +87,8 @@ type ConversationAuditScope = Pick<
 >;
 
 type TransactionClient = Prisma.TransactionClient;
+
+const workflowEngineConfig = getWorkflowEngineConfig(process.env);
 
 type StoredPlan = {
   id: string;
@@ -1133,6 +1137,12 @@ async function enqueueHandoffFollowUpWorkflowTx(
 
   const handoffWindowHours = representative?.handoffWindowHours ?? 24;
   const scheduledAt = scheduleHandoffFollowUp(new Date(), handoffWindowHours);
+  const dispatchTarget = resolveWorkflowDispatchTarget({
+    config: workflowEngineConfig,
+    kind: "handoff_follow_up",
+    representativeKey: params.representativeSlug,
+    subjectId: params.handoffId,
+  });
   const workflow = await tx.workflowRun.create({
     data: {
       representativeId: params.representativeId,
@@ -1140,8 +1150,11 @@ async function enqueueHandoffFollowUpWorkflowTx(
       conversationId: params.conversationId,
       handoffRequestId: params.handoffId,
       kind: "HANDOFF_FOLLOW_UP",
+      engine: dispatchTarget.effectiveEngine === "temporal" ? "TEMPORAL" : "LOCAL_RUNNER",
       status: "QUEUED",
       dedupeKey,
+      queueName: dispatchTarget.queueName,
+      externalWorkflowId: dispatchTarget.externalWorkflowId,
       scheduledAt,
       input: {
         handoffId: params.handoffId,
@@ -1161,6 +1174,12 @@ async function enqueueHandoffFollowUpWorkflowTx(
         workflowKind: "handoff_follow_up",
         representativeSlug: params.representativeSlug,
         handoffId: params.handoffId,
+        configuredEngine: dispatchTarget.configuredEngine,
+        effectiveEngine: dispatchTarget.effectiveEngine,
+        queueName: dispatchTarget.queueName,
+        externalWorkflowId: dispatchTarget.externalWorkflowId,
+        temporalReady: dispatchTarget.temporalReady,
+        fallbackReason: dispatchTarget.fallbackReason,
         scheduledAt: scheduledAt.toISOString(),
       },
     },

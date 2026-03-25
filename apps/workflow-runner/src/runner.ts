@@ -2,6 +2,7 @@ import {
   ApprovalStatus,
   HandoffStatus,
   Prisma,
+  WorkflowEngine,
   WorkflowKind,
   WorkflowStatus,
 } from "@prisma/client";
@@ -18,6 +19,7 @@ export async function runWorkflowTick(options?: { limit?: number }) {
   const now = new Date();
   const dueRuns = await prisma.workflowRun.findMany({
     where: {
+      engine: WorkflowEngine.LOCAL_RUNNER,
       status: WorkflowStatus.QUEUED,
       scheduledAt: {
         lte: now,
@@ -38,6 +40,7 @@ export async function runWorkflowTick(options?: { limit?: number }) {
     const claimed = await prisma.workflowRun.updateMany({
       where: {
         id: run.id,
+        engine: WorkflowEngine.LOCAL_RUNNER,
         status: WorkflowStatus.QUEUED,
       },
       data: {

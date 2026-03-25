@@ -20,7 +20,7 @@ This repository starts with the narrowest useful wedge:
 - A deterministic policy engine that decides whether to answer, collect intake, hand off, or charge
 - An OpenAI Responses-backed answer lane with deterministic fallback when model credentials are missing or calls fail
 - A Telegram `/compute` lane that can create sandboxed sessions, run `exec / read / write / process / browser` requests, and surface approval outcomes back to chat
-- A workflow runner that processes approval expiry and owner follow-up as the first durable workflow slice
+- An engine-aware workflow runner that processes approval expiry and owner follow-up as the first durable workflow slice
 - Three distinct Next.js surfaces: a marketing site, a public representative app, and an owner dashboard
 - Telegram Stars invoice handling that writes back into conversations, wallet state, and owner inbox
 - A Prisma schema, initial Postgres migration, and deterministic demo seed for the core product entities
@@ -165,6 +165,20 @@ The first durable workflow slice is also live:
 - approval requests can expire automatically after their timeout window
 - owner handoff requests can enqueue timed follow-up reminders
 - workflow truth stays in Postgres and is surfaced in the dashboard overview
+- workflow runs now carry engine metadata so the local runner and a future Temporal worker can share the same enqueue boundary
+
+To keep local development safe, Delegate still defaults to the built-in runner:
+
+- `WORKFLOW_ENGINE=local_runner`
+
+If you want to prepare for a future Temporal worker without breaking local behavior, set:
+
+- `WORKFLOW_ENGINE=temporal`
+- `WORKFLOW_TEMPORAL_ADDRESS`
+- `WORKFLOW_TEMPORAL_NAMESPACE`
+- `WORKFLOW_TEMPORAL_TASK_QUEUE`
+
+If the Temporal fields are incomplete, Delegate now falls back to the local runner instead of silently enqueueing unserviceable jobs.
 
 If you only want the database container for local non-Docker app development, use:
 

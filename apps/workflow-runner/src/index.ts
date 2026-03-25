@@ -28,6 +28,14 @@ const server = createServer((request, response) => {
       JSON.stringify({
         status: "ok",
         service: "workflow-runner",
+        engine: workflowRunnerConfig.engine.effectiveEngine,
+        configuredEngine: workflowRunnerConfig.engine.configuredEngine,
+        queueName:
+          workflowRunnerConfig.engine.effectiveEngine === "temporal"
+            ? workflowRunnerConfig.engine.temporalTaskQueue
+            : workflowRunnerConfig.engine.localQueueName,
+        temporalReady: workflowRunnerConfig.engine.temporalReady,
+        fallbackReason: workflowRunnerConfig.engine.fallbackReason ?? null,
         pollMs: workflowRunnerConfig.pollMs,
         lastTickAt,
         lastTickSummary,
@@ -45,7 +53,16 @@ server.listen(workflowRunnerConfig.port, "0.0.0.0", () => {
   console.log(`workflow-runner listening on http://0.0.0.0:${workflowRunnerConfig.port}`);
 });
 
-void tickLoop();
+if (workflowRunnerConfig.engine.effectiveEngine === "local_runner") {
+  void tickLoop();
+} else {
+  lastTickAt = new Date().toISOString();
+  lastTickSummary = {
+    processed: 0,
+    completed: 0,
+    failed: 0,
+  };
+}
 
 async function tickLoop(): Promise<void> {
   try {

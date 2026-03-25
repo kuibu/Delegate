@@ -13,6 +13,7 @@
     "@delegate/domain": "workspace:*",
     "@delegate/openviking": "workspace:*",
     "@delegate/registry": "workspace:*",
+    "@delegate/workflows": "workspace:*",
     "@prisma/client": "^6.19.2",
     "zod": "^4.3.6"
   }

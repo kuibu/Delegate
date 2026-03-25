@@ -23,7 +23,7 @@ Delegate already has a meaningful middle state:
 - governed compute plane with reusable leases, approvals, artifacts, and richer dual-ledger accounting
 - lifecycle hook bus for model, handoff, and compute audit points
 - scoped `triage / quote / handoff / compute / browser` subagent boundaries in runtime routing and model context assembly
-- a lightweight durable workflow runner for approval expiration and owner follow-up timers
+- an engine-aware durable workflow runner for approval expiration and owner follow-up timers
 - owner dashboard control plane
 
 Delegate does **not** yet have the full target stack described in the architecture decisions doc. In particular:
@@ -98,14 +98,14 @@ Do **not** try to close all 12 rows in one pass.
 
 Recommended order:
 
-1. `P2-B follow-on` Temporal migration and broader agent-network infrastructure
+1. `P2-B final mile` Temporal worker bridge and broader agent-network infrastructure
 
 Why this order:
 
-- Row `6` now has a first scoped subagent layer, and the repo now has a lightweight workflow runner, so the next bottleneck shifts toward deciding where Temporal should replace in-repo timers instead of re-deriving durable workflow state from scratch
+- Row `6` now has a first scoped subagent layer, and the repo now has an engine-aware workflow runner boundary, so the next bottleneck shifts toward adding a real Temporal worker bridge instead of re-deriving enqueue semantics from scratch
 - Row `11` now has a better base, including model COGS, so the next billing work should focus on browser/MCP cost layers instead of model-only gaps
 - Native computer-use prep should now build on the new browser session lane, not restart browser infrastructure from scratch
-- Row `6` is intentionally still shallow: subagents are scoped boundaries today, and durable workflows currently cover only approval expiration and handoff follow-up, not broader networked agent orchestration
+- Row `6` is intentionally still shallow: subagents are scoped boundaries today, and durable workflows currently cover only approval expiration and handoff follow-up, not broader networked agent orchestration or Temporal-native retries/compensations
 
 ## Codex prompt rules
 
@@ -527,7 +527,7 @@ Current repo state:
 - governed compute exists
 - OpenViking exists
 - artifact layer exists
-- a lightweight workflow runner already handles approval expiration and handoff follow-up
+- an engine-aware workflow runner already handles approval expiration and handoff follow-up
 - model runtime and MCP transport have first safe slices, but Temporal is still absent
 
 Goal:

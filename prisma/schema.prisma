@@ -199,6 +199,11 @@ enum WorkflowStatus {
   CANCELED
 }
 
+enum WorkflowEngine {
+  LOCAL_RUNNER
+  TEMPORAL
+}
+
 enum LedgerEntryKind {
   MODEL_USAGE
   COMPUTE_MINUTES
@@ -757,8 +762,11 @@ model WorkflowRun {
   handoffRequestId String?
   approvalRequestId String?
   kind             WorkflowKind
+  engine           WorkflowEngine @default(LOCAL_RUNNER)
   status           WorkflowStatus @default(QUEUED)
   dedupeKey        String         @unique
+  queueName        String?
+  externalWorkflowId String?
   scheduledAt      DateTime
   startedAt        DateTime?
   completedAt      DateTime?
@@ -776,6 +784,7 @@ model WorkflowRun {
   approvalRequest  ApprovalRequest? @relation(fields: [approvalRequestId], references: [id])
 
   @@index([representativeId, scheduledAt])
+  @@index([engine, status, scheduledAt])
   @@index([status, scheduledAt])
   @@index([handoffRequestId])
   @@index([approvalRequestId])

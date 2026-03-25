@@ -5,6 +5,11 @@ export const workflowKindSchema = z.enum([
   "approval_expiration",
 ]);
 
+export const workflowEngineSchema = z.enum([
+  "local_runner",
+  "temporal",
+]);
+
 export const workflowStatusSchema = z.enum([
   "queued",
   "running",
@@ -23,10 +28,35 @@ export const approvalExpirationInputSchema = z.object({
   timeoutMinutes: z.number().int().positive(),
 });
 
+export const workflowEngineConfigSchema = z.object({
+  configuredEngine: workflowEngineSchema,
+  effectiveEngine: workflowEngineSchema,
+  localQueueName: z.string().min(1),
+  temporalAddress: z.string().min(1).optional(),
+  temporalNamespace: z.string().min(1).optional(),
+  temporalTaskQueue: z.string().min(1).optional(),
+  temporalReady: z.boolean(),
+  fallbackReason: z.string().min(1).optional(),
+});
+
+export const workflowDispatchTargetSchema = z.object({
+  configuredEngine: workflowEngineSchema,
+  effectiveEngine: workflowEngineSchema,
+  queueName: z.string().min(1),
+  externalWorkflowId: z.string().min(1),
+  temporalReady: z.boolean(),
+  fallbackReason: z.string().min(1).optional(),
+});
+
 export type WorkflowKind = z.infer<typeof workflowKindSchema>;
+export type WorkflowEngine = z.infer<typeof workflowEngineSchema>;
 export type WorkflowStatus = z.infer<typeof workflowStatusSchema>;
 export type HandoffFollowUpInput = z.infer<typeof handoffFollowUpInputSchema>;
 export type ApprovalExpirationInput = z.infer<typeof approvalExpirationInputSchema>;
+export type WorkflowEngineConfig = z.infer<typeof workflowEngineConfigSchema>;
+export type WorkflowDispatchTarget = z.infer<typeof workflowDispatchTargetSchema>;
+
+export const LOCAL_WORKFLOW_QUEUE = "local:workflow-runner";
 
 export function handoffFollowUpDedupeKey(handoffId: string): string {
   return `handoff_follow_up:${handoffId}`;
@@ -52,4 +82,63 @@ export function scheduleApprovalExpiration(
 
 export function isWorkflowTerminal(status: WorkflowStatus): boolean {
   return status === "completed" || status === "failed" || status === "canceled";
+}
+
+export function getWorkflowEngineConfig(
+  env: Record<string, string | undefined> = process.env,
+): WorkflowEngineConfig {
+  const configuredEngine = workflowEngineSchema.catch("local_runner").parse(
+    env.WORKFLOW_ENGINE?.trim() || "local_runner",
+  );
+  const temporalAddress = env.WORKFLOW_TEMPORAL_ADDRESS?.trim() || undefined;
+  const temporalNamespace = env.WORKFLOW_TEMPORAL_NAMESPACE?.trim() || undefined;
+  const temporalTaskQueue = env.WORKFLOW_TEMPORAL_TASK_QUEUE?.trim() || undefined;
+  const temporalReady =
+    configuredEngine === "temporal" &&
+    Boolean(temporalAddress && temporalNamespace && temporalTaskQueue);
+
+  return workflowEngineConfigSchema.parse({
+    configuredEngine,
+    effectiveEngine: temporalReady ? "temporal" : "local_runner",
+    localQueueName: LOCAL_WORKFLOW_QUEUE,
+    temporalAddress,
+    temporalNamespace,
+    temporalTaskQueue,
+    temporalReady,
+    fallbackReason:
+      configuredEngine === "temporal" && !temporalReady
+        ? "temporal_not_fully_configured"
+        : undefined,
+  });
+}
+
+export function buildWorkflowExternalId(params: {
+  kind: WorkflowKind;
+  representativeKey: string;
+  subjectId: string;
+}): string {
+  return `delegate:${params.representativeKey}:${params.kind}:${params.subjectId}`;
+}
+
+export function resolveWorkflowDispatchTarget(params: {
+  config: WorkflowEngineConfig;
+  kind: WorkflowKind;
+  representativeKey: string;
+  subjectId: string;
+}): WorkflowDispatchTarget {
+  return workflowDispatchTargetSchema.parse({
+    configuredEngine: params.config.configuredEngine,
+    effectiveEngine: params.config.effectiveEngine,
+    queueName:
+      params.config.effectiveEngine === "temporal"
+        ? params.config.temporalTaskQueue
+        : params.config.localQueueName,
+    externalWorkflowId: buildWorkflowExternalId({
+      kind: params.kind,
+      representativeKey: params.representativeKey,
+      subjectId: params.subjectId,
+    }),
+    temporalReady: params.config.temporalReady,
+    fallbackReason: params.config.fallbackReason,
+  });
 }
