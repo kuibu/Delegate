@@ -23,6 +23,9 @@ export function parseComputeRequest(input: string): ParsedComputeRequest | null 
       path,
       estimatedCostCents: 2,
       hasPaidEntitlement: false,
+      browserMode: "deterministic",
+      maxSteps: 1,
+      allowMutations: false,
       displayTarget: path,
     };
   }
@@ -44,6 +47,9 @@ export function parseComputeRequest(input: string): ParsedComputeRequest | null 
       content,
       estimatedCostCents: 4 + Math.ceil(content.length / 512),
       hasPaidEntitlement: false,
+      browserMode: "deterministic",
+      maxSteps: 1,
+      allowMutations: false,
       displayTarget: path,
     };
   }
@@ -59,6 +65,9 @@ export function parseComputeRequest(input: string): ParsedComputeRequest | null 
       url,
       estimatedCostCents: 10,
       hasPaidEntitlement: false,
+      browserMode: "deterministic",
+      maxSteps: 1,
+      allowMutations: false,
       displayTarget: url,
     };
   }
@@ -99,6 +108,9 @@ export function parseComputeRequest(input: string): ParsedComputeRequest | null 
       toolArguments,
       estimatedCostCents: 12 + Math.ceil(JSON.stringify(toolArguments).length / 256),
       hasPaidEntitlement: false,
+      browserMode: "deterministic",
+      maxSteps: 1,
+      allowMutations: false,
       displayTarget: toolName ? `${bindingSlug}:${toolName}` : bindingSlug,
     };
   }
@@ -131,6 +143,9 @@ function buildCommandRequest(capability: CapabilityKind, command: string): Parse
     command,
     estimatedCostCents: capability === "process" ? 6 + Math.ceil(command.length / 48) : 4 + Math.ceil(command.length / 64),
     hasPaidEntitlement: false,
+    browserMode: "deterministic",
+    maxSteps: 1,
+    allowMutations: false,
     displayTarget: command,
   };
 }

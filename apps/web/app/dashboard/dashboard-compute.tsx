@@ -47,10 +47,11 @@ type ComputeSnapshot = {
       serverUrl: string;
       transportKind: "streamable_http";
       allowedToolNames: string[];
-      defaultToolName?: string | null;
-      enabled: boolean;
-      approvalRequired: boolean;
-      createdAt: string;
+    defaultToolName?: string | null;
+    enabled: boolean;
+    approvalRequired: boolean;
+    estimatedCostCentsPerCall: number;
+    createdAt: string;
       updatedAt: string;
       sourceSkillPack?: string;
     }>;
@@ -160,6 +161,7 @@ type ComputeApprovalsSnapshot = {
     reason: string;
     requestedActionSummary: string;
     riskSummary: string;
+    subagentId?: string;
     requestedAt: string;
     resolvedAt?: string;
     resolvedBy?: string;
@@ -223,6 +225,14 @@ type McpBindingFormState = {
   defaultToolName: string;
   enabled: boolean;
   approvalRequired: boolean;
+  estimatedCostCentsPerCall: number;
+};
+
+type NativeComputerFormState = {
+  task: string;
+  provider: "auto" | "openai" | "anthropic";
+  maxSteps: number;
+  allowMutations: boolean;
 };
 
 export function DashboardCompute({
@@ -243,6 +253,12 @@ export function DashboardCompute({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [mcpForm, setMcpForm] = useState<McpBindingFormState>(() => createEmptyMcpBindingForm());
+  const [nativeForm, setNativeForm] = useState<NativeComputerFormState>({
+    task: "",
+    provider: "auto",
+    maxSteps: 3,
+    allowMutations: false,
+  });
 
   useEffect(() => {
     void refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
@@ -250,6 +266,15 @@ export function DashboardCompute({
 
   useEffect(() => {
     setMcpForm(createEmptyMcpBindingForm());
+  }, [representativeSlug]);
+
+  useEffect(() => {
+    setNativeForm({
+      task: "",
+      provider: "auto",
+      maxSteps: 3,
+      allowMutations: false,
+    });
   }, [representativeSlug]);
 
   useEffect(() => {
@@ -444,6 +469,70 @@ export function DashboardCompute({
     });
   }
 
+  async function handleRunNativeComputerUse() {
+    if (!snapshot?.nativeComputerUse.sessionId) {
+      setError(t.messages.nativeMissingSession);
+      return;
+    }
+
+    if (!nativeForm.task.trim()) {
+      setError(t.messages.nativeTaskRequired);
+      return;
+    }
+
+    setBusyKey("native:execute");
+    setMessage(null);
+    setError(null);
+
+    startTransition(() => {
+      void (async () => {
+        const response = await fetch(
+          `/api/dashboard/representatives/${representativeSlug}/compute/native`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              sessionId: snapshot.nativeComputerUse.sessionId,
+              task: nativeForm.task.trim(),
+              ...(nativeForm.provider !== "auto" ? { provider: nativeForm.provider } : {}),
+              maxSteps: nativeForm.maxSteps,
+              allowMutations: nativeForm.allowMutations,
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(await extractError(response));
+        }
+
+        const payload = (await response.json()) as {
+          nativeComputerUse?: {
+            traceArtifactId?: string | null;
+            finalText?: string | null;
+          };
+        };
+
+        await refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+        if (payload.nativeComputerUse?.traceArtifactId) {
+          setSelectedArtifactId(payload.nativeComputerUse.traceArtifactId);
+        }
+        setMessage(
+          payload.nativeComputerUse?.finalText?.trim()
+            ? t.messages.nativeCompleted(payload.nativeComputerUse.finalText.trim())
+            : t.messages.nativeExecuted,
+        );
+      })()
+        .catch((nextError: unknown) => {
+          setError(nextError instanceof Error ? nextError.message : t.messages.error);
+        })
+        .finally(() => {
+          setBusyKey(null);
+        });
+    });
+  }
+
   async function handleSaveMcpBinding() {
     if (!snapshot) {
       return;
@@ -475,11 +564,12 @@ export function DashboardCompute({
             serverUrl: mcpForm.serverUrl,
             transportKind: "streamable_http",
             allowedToolNames,
-            defaultToolName: mcpForm.defaultToolName,
-            enabled: mcpForm.enabled,
-            approvalRequired: mcpForm.approvalRequired,
-          }),
-        });
+              defaultToolName: mcpForm.defaultToolName,
+              enabled: mcpForm.enabled,
+              approvalRequired: mcpForm.approvalRequired,
+              estimatedCostCentsPerCall: mcpForm.estimatedCostCentsPerCall,
+            }),
+          });
 
         if (!response.ok) {
           throw new Error(await extractError(response));
@@ -548,6 +638,7 @@ export function DashboardCompute({
       defaultToolName: binding.defaultToolName ?? "",
       enabled: binding.enabled,
       approvalRequired: binding.approvalRequired,
+      estimatedCostCentsPerCall: binding.estimatedCostCentsPerCall,
     });
     setMessage(null);
     setError(null);
@@ -647,6 +738,7 @@ export function DashboardCompute({
                       </span>
                       <span className="chip">{binding.transportKind}</span>
                       <span className="chip">{binding.slug}</span>
+                      <span className="chip">{t.mcpEstimatedCost(binding.estimatedCostCentsPerCall)}</span>
                       {binding.defaultToolName ? <span className="chip">{binding.defaultToolName}</span> : null}
                       {binding.sourceSkillPack ? <span className="chip">{binding.sourceSkillPack}</span> : null}
                     </div>
@@ -725,6 +817,24 @@ export function DashboardCompute({
                     placeholder="lookup, forecast"
                     type="text"
                     value={mcpForm.allowedToolNames}
+                  />
+                </label>
+                <label className="field-label">
+                  <span>{t.mcpFields.estimatedCost}</span>
+                  <input
+                    className="field-input"
+                    min={0}
+                    onChange={(event) =>
+                      setMcpForm((current) => ({
+                        ...current,
+                        estimatedCostCentsPerCall: Math.max(
+                          0,
+                          Number.parseInt(event.target.value || "0", 10) || 0,
+                        ),
+                      }))
+                    }
+                    type="number"
+                    value={mcpForm.estimatedCostCentsPerCall}
                   />
                 </label>
                 <label className="field-label">
@@ -826,6 +936,7 @@ export function DashboardCompute({
                     <div className="chip-row">
                       <span className="chip">{approval.status}</span>
                       <span className="chip">{approval.reason}</span>
+                      {approval.subagentId ? <span className="chip">{approval.subagentId}</span> : null}
                       <span className="chip">{formatTimestamp(approval.requestedAt, locale)}</span>
                     </div>
                     {approval.sessionId ? (
@@ -981,6 +1092,88 @@ export function DashboardCompute({
                     {t.openLatestJson}
                   </button>
                 ) : null}
+              </div>
+            </div>
+
+            <div className="skill-row">
+              <div className="dashboard-form-grid">
+                <label className="field-label field-label-wide">
+                  <span>{t.nativeFields.task}</span>
+                  <textarea
+                    className="field-textarea"
+                    onChange={(event) =>
+                      setNativeForm((current) => ({
+                        ...current,
+                        task: event.target.value,
+                      }))
+                    }
+                    placeholder={t.nativeTaskPlaceholder}
+                    rows={3}
+                    value={nativeForm.task}
+                  />
+                </label>
+                <label className="field-label">
+                  <span>{t.nativeFields.provider}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setNativeForm((current) => ({
+                        ...current,
+                        provider: event.target.value as NativeComputerFormState["provider"],
+                      }))
+                    }
+                    value={nativeForm.provider}
+                  >
+                    <option value="auto">{t.nativeProviderAuto}</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  <span>{t.nativeFields.maxSteps}</span>
+                  <input
+                    className="field-input"
+                    max={8}
+                    min={1}
+                    onChange={(event) =>
+                      setNativeForm((current) => ({
+                        ...current,
+                        maxSteps: Number.parseInt(event.target.value || "3", 10),
+                      }))
+                    }
+                    type="number"
+                    value={nativeForm.maxSteps}
+                  />
+                </label>
+              </div>
+              <div className="chip-row">
+                <label className="field-toggle">
+                  <input
+                    checked={nativeForm.allowMutations}
+                    onChange={(event) =>
+                      setNativeForm((current) => ({
+                        ...current,
+                        allowMutations: event.target.checked,
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.nativeFields.allowMutations}</span>
+                </label>
+              </div>
+              <div className="button-row">
+                <button
+                  className="button-primary"
+                  disabled={
+                    isPending ||
+                    busyKey === "native:execute" ||
+                    snapshot.nativeComputerUse.state !== "ready"
+                  }
+                  onClick={() => void handleRunNativeComputerUse()}
+                  type="button"
+                >
+                  {busyKey === "native:execute" ? t.nativeRunning : t.nativeRun}
+                </button>
               </div>
             </div>
 
@@ -1319,6 +1512,7 @@ function createEmptyMcpBindingForm(): McpBindingFormState {
     defaultToolName: "",
     enabled: true,
     approvalRequired: true,
+    estimatedCostCentsPerCall: 0,
   };
 }
 
@@ -1379,6 +1573,7 @@ const copy = {
     mcpChip: (count: number) => `${count} bindings`,
     noMcpBindings: "还没有 MCP binding。先把一个远程 capability server 绑进来，再让代表通过审批后的 compute 请求去调用它。",
     allowedTools: (value: string) => `Allowed tools · ${value}`,
+    mcpEstimatedCost: (value: number) => `估算成本 ${value}¢ / call`,
     mcpRequiresApproval: "This binding still requires explicit approval before remote tool calls.",
     mcpNoApproval: "This binding can run without an extra binding-level approval flag.",
     editBinding: "编辑 binding",
@@ -1392,6 +1587,7 @@ const copy = {
       serverUrl: "Server URL",
       allowedTools: "Allowed tools",
       defaultTool: "Default tool",
+      estimatedCost: "Estimated cost / call (¢)",
       description: "Description",
       enabled: "Enabled",
       approvalRequired: "Requires approval",
@@ -1425,6 +1621,16 @@ const copy = {
     nativeProviderStatus: (value: string) => value.replaceAll("_", " "),
     targetTransport: (value: string) => `Target · ${value}`,
     computeSession: (value: string) => `Session · ${value}`,
+    nativeFields: {
+      task: "Native task",
+      provider: "Provider",
+      maxSteps: "Max steps",
+      allowMutations: "Allow mutating actions after approval",
+    },
+    nativeTaskPlaceholder: "例如：滚动到价格区域，确认页面上显示的主套餐名称和价格。",
+    nativeProviderAuto: "自动选择 ready provider",
+    nativeRun: "运行 native loop",
+    nativeRunning: "运行中...",
     sessionReuseEnabled: "Session reuse on",
     sessionReuseDisabled: "Session reuse off",
     approvalRequired: "Mutation approval required",
@@ -1467,6 +1673,10 @@ const copy = {
       mcpUpdated: "MCP binding 已更新。",
       artifactPinned: "Artifact 已置顶，会保留在对象存储里供后续复用。",
       artifactUnpinned: "Artifact 已取消置顶，并恢复默认保留策略。",
+      nativeMissingSession: "当前还没有可复用的 browser session，先跑一次受控 browser step。",
+      nativeTaskRequired: "先填写这次 native browser 要完成的任务。",
+      nativeExecuted: "Native computer-use loop 已完成，trace artifact 已写入对象存储。",
+      nativeCompleted: (value: string) => `Native computer-use 完成：${value}`,
       error: "处理审批失败。",
     },
   },
@@ -1526,6 +1736,7 @@ const copy = {
     mcpChip: (count: number) => `${count} bindings`,
     noMcpBindings: "No MCP bindings yet. Attach a remote capability server here before routing approved work into it.",
     allowedTools: (value: string) => `Allowed tools · ${value}`,
+    mcpEstimatedCost: (value: number) => `Estimated cost ${value}¢ / call`,
     mcpRequiresApproval: "This binding still requires explicit approval before remote tool calls.",
     mcpNoApproval: "This binding can run without an extra binding-level approval flag.",
     editBinding: "Edit binding",
@@ -1539,6 +1750,7 @@ const copy = {
       serverUrl: "Server URL",
       allowedTools: "Allowed tools",
       defaultTool: "Default tool",
+      estimatedCost: "Estimated cost / call (¢)",
       description: "Description",
       enabled: "Enabled",
       approvalRequired: "Requires approval",
@@ -1572,6 +1784,16 @@ const copy = {
     nativeProviderStatus: (value: string) => value.replaceAll("_", " "),
     targetTransport: (value: string) => `Target · ${value}`,
     computeSession: (value: string) => `Session · ${value}`,
+    nativeFields: {
+      task: "Native task",
+      provider: "Provider",
+      maxSteps: "Max steps",
+      allowMutations: "Allow mutating actions after approval",
+    },
+    nativeTaskPlaceholder: "Example: scroll to the pricing area, then tell me the visible plan name and price.",
+    nativeProviderAuto: "Auto-select ready provider",
+    nativeRun: "Run native loop",
+    nativeRunning: "Running...",
     sessionReuseEnabled: "Session reuse on",
     sessionReuseDisabled: "Session reuse off",
     approvalRequired: "Mutation approval required",
@@ -1614,6 +1836,10 @@ const copy = {
       mcpUpdated: "The MCP binding has been updated.",
       artifactPinned: "The artifact is pinned and will stay available beyond the default retention window.",
       artifactUnpinned: "The artifact has been unpinned and returned to the default retention policy.",
+      nativeMissingSession: "There is no retained browser session yet. Run a governed browser step first.",
+      nativeTaskRequired: "Enter a task for the native browser lane before running it.",
+      nativeExecuted: "The native computer-use loop completed and stored a trace artifact.",
+      nativeCompleted: (value: string) => `Native computer-use completed: ${value}`,
       error: "Failed to resolve approval.",
     },
   },

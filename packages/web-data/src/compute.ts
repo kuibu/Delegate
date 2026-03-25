@@ -2,12 +2,15 @@ import { posix as pathPosix } from "node:path";
 
 import { Prisma } from "@prisma/client";
 import {
+  nativeComputerUseExecutionResponseSchema,
+  nativeComputerUseExecutionRequestSchema,
   nativeComputerUsePreflightResponseSchema,
   updateArtifactRequestSchema,
   updateArtifactResponseSchema,
   upsertMcpBindingRequestSchema,
   type ArtifactDetailResponse,
   type McpBindingSnapshot,
+  type NativeComputerUseExecutionResponse,
   type NativeComputerUsePreflightSnapshot,
   type ResolveApprovalResponse,
   type UpdateArtifactResponse,
@@ -97,6 +100,7 @@ type RepresentativeIdentity = {
     defaultToolName: string | null;
     enabled: boolean;
     approvalRequired: boolean;
+    estimatedCostCentsPerCall: number;
     createdAt: Date;
     updatedAt: Date;
     representativeSkillPackLink: {
@@ -221,6 +225,7 @@ export type RepresentativeComputeApprovalSnapshot = {
     reason: string;
     requestedActionSummary: string;
     riskSummary: string;
+    subagentId?: string;
     requestedAt: string;
     resolvedAt?: string;
     resolvedBy?: string;
@@ -271,6 +276,15 @@ export type ResolveRepresentativeComputeApprovalInput = {
   approvalId: string;
   resolution: "approved" | "rejected";
   resolvedBy?: string;
+};
+
+export type ExecuteRepresentativeNativeComputerUseInput = {
+  representativeSlug: string;
+  sessionId: string;
+  task: string;
+  provider?: "openai" | "anthropic";
+  maxSteps?: number;
+  allowMutations?: boolean;
 };
 
 export async function getRepresentativeComputeSnapshot(
@@ -361,6 +375,7 @@ export async function getRepresentativeComputeApprovals(
       reason: approval.reason,
       requestedActionSummary: approval.requestedActionSummary,
       riskSummary: approval.riskSummary,
+      ...(approval.subagentId ? { subagentId: approval.subagentId } : {}),
       requestedAt: approval.requestedAt.toISOString(),
       ...(approval.resolvedAt ? { resolvedAt: approval.resolvedAt.toISOString() } : {}),
       ...(approval.resolvedBy ? { resolvedBy: approval.resolvedBy } : {}),
@@ -621,6 +636,57 @@ export async function resolveRepresentativeComputeApproval(
   return brokerResponse as ResolveApprovalResponse;
 }
 
+export async function executeRepresentativeNativeComputerUse(
+  input: ExecuteRepresentativeNativeComputerUseInput,
+): Promise<NativeComputerUseExecutionResponse> {
+  const representative = await getRepresentativeIdentity(input.representativeSlug);
+
+  if (!representative) {
+    throw new Error(`Representative "${input.representativeSlug}" not found.`);
+  }
+
+  const parsed = nativeComputerUseExecutionRequestSchema.parse({
+    sessionId: input.sessionId,
+    task: input.task,
+    provider: input.provider,
+    maxSteps: input.maxSteps,
+    allowMutations: input.allowMutations,
+  });
+
+  const session = await prisma.computeSession.findFirst({
+    where: {
+      id: parsed.sessionId,
+      representativeId: representative.id,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!session) {
+    throw new Error("Compute session not found for this representative.");
+  }
+
+  const brokerResponse = await callComputeBroker(
+    `/internal/compute/sessions/${parsed.sessionId}/executions`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        capability: "browser",
+        subagentId: "browser-agent",
+        browserMode: "native",
+        task: parsed.task,
+        ...(parsed.provider ? { nativeProvider: parsed.provider } : {}),
+        maxSteps: parsed.maxSteps,
+        allowMutations: parsed.allowMutations,
+        hasPaidEntitlement: false,
+      }),
+    },
+  );
+
+  return nativeComputerUseExecutionResponseSchema.parse(brokerResponse);
+}
+
 export async function upsertRepresentativeMcpBinding(
   input: UpsertRepresentativeMcpBindingInput,
 ): Promise<McpBindingSnapshot> {
@@ -639,9 +705,10 @@ export async function upsertRepresentativeMcpBinding(
     transportKind: input.transportKind,
     allowedToolNames: input.allowedToolNames,
     defaultToolName: input.defaultToolName,
-    enabled: input.enabled,
-    approvalRequired: input.approvalRequired,
-  });
+      enabled: input.enabled,
+      approvalRequired: input.approvalRequired,
+      estimatedCostCentsPerCall: input.estimatedCostCentsPerCall,
+    });
 
   const linkId = parsed.representativeSkillPackLinkId ?? null;
   if (linkId) {
@@ -692,6 +759,7 @@ export async function upsertRepresentativeMcpBinding(
           defaultToolName: parsed.defaultToolName ?? null,
           enabled: parsed.enabled,
           approvalRequired: parsed.approvalRequired,
+          estimatedCostCentsPerCall: parsed.estimatedCostCentsPerCall,
         },
       })
     : await prisma.representativeMcpBinding.create({
@@ -707,6 +775,7 @@ export async function upsertRepresentativeMcpBinding(
           defaultToolName: parsed.defaultToolName ?? null,
           enabled: parsed.enabled,
           approvalRequired: parsed.approvalRequired,
+          estimatedCostCentsPerCall: parsed.estimatedCostCentsPerCall,
         },
       });
 
@@ -872,6 +941,7 @@ async function getRepresentativeIdentity(
           defaultToolName: true,
           enabled: true,
           approvalRequired: true,
+          estimatedCostCentsPerCall: true,
           createdAt: true,
           updatedAt: true,
           representativeSkillPackLink: {
@@ -968,6 +1038,7 @@ function serializeMcpBindingRecord(binding: RepresentativeIdentity["mcpBindings"
     defaultToolName: binding.defaultToolName,
     enabled: binding.enabled,
     approvalRequired: binding.approvalRequired,
+    estimatedCostCentsPerCall: binding.estimatedCostCentsPerCall,
     createdAt: binding.createdAt.toISOString(),
     updatedAt: binding.updatedAt.toISOString(),
     ...(binding.representativeSkillPackLink?.skillPack.displayName

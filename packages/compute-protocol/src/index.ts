@@ -79,6 +79,10 @@ export const browserTransportKindSchema = z.enum([
   "openai_computer",
   "claude_computer_use",
 ]);
+export const browserExecutionModeSchema = z.enum([
+  "deterministic",
+  "native",
+]);
 export const nativeComputerProviderSchema = z.enum(["openai", "anthropic"]);
 export const nativeComputerProviderStatusSchema = z.enum([
   "ready",
@@ -133,6 +137,11 @@ const computeSubagentAllowedCapabilities = {
   "compute-agent": ["exec", "read", "write", "process", "mcp"],
   "browser-agent": ["browser"],
 } as const satisfies Record<z.infer<typeof computeSubagentIdSchema>, readonly z.infer<typeof capabilityKindSchema>[]>;
+
+const computeSubagentBudgetCredits = {
+  "compute-agent": 24,
+  "browser-agent": 48,
+} as const satisfies Record<z.infer<typeof computeSubagentIdSchema>, number>;
 
 function refineSubagentCapabilityBoundary<T extends z.ZodTypeAny>(
   schema: T,
@@ -317,10 +326,23 @@ export const toolExecutionRequestSchema = refineSubagentCapabilityBoundary(z.obj
   workingDirectory: z.string().min(1).optional(),
   estimatedCostCents: z.number().int().nonnegative().optional(),
   hasPaidEntitlement: z.boolean().default(false),
+  browserMode: browserExecutionModeSchema.default("deterministic"),
+  task: z.string().min(1).optional(),
+  nativeProvider: nativeComputerProviderSchema.optional(),
+  maxSteps: z.number().int().positive().max(8).default(3),
+  allowMutations: z.boolean().default(false),
 }), (value) => ({
   subagentId: value.subagentId,
   capabilities: [value.capability],
 }));
+
+export const nativeComputerUseExecutionRequestSchema = z.object({
+  sessionId: z.string().min(1),
+  task: z.string().trim().min(1),
+  provider: nativeComputerProviderSchema.optional(),
+  maxSteps: z.number().int().positive().max(8).default(3),
+  allowMutations: z.boolean().default(false),
+});
 
 export const mcpBindingSnapshotSchema = z.object({
   id: z.string(),
@@ -335,6 +357,7 @@ export const mcpBindingSnapshotSchema = z.object({
   defaultToolName: z.string().nullable().optional(),
   enabled: z.boolean(),
   approvalRequired: z.boolean(),
+  estimatedCostCentsPerCall: z.number().int().nonnegative().default(0),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -350,6 +373,7 @@ const mcpBindingFieldsSchema = z.object({
   defaultToolName: z.string().trim().min(1).optional(),
   enabled: z.boolean().default(true),
   approvalRequired: z.boolean().default(true),
+  estimatedCostCentsPerCall: z.number().int().nonnegative().default(0),
 });
 
 function refineMcpBindingSchema<T extends z.ZodTypeAny>(schema: T) {
@@ -401,6 +425,7 @@ export const approvalRequestSnapshotSchema = z.object({
   conversationId: z.string().nullable(),
   sessionId: z.string().nullable(),
   toolExecutionId: z.string().nullable(),
+  subagentId: computeSubagentIdSchema.nullable().optional(),
   status: approvalStatusSchema,
   reason: z.string(),
   requestedActionSummary: z.string(),
@@ -481,12 +506,25 @@ export const executeToolResponseSchema = z.object({
       actualCredits: z.number().int().nonnegative().optional(),
       computeCostCents: z.number().int().nonnegative().optional(),
       browserCostCents: z.number().int().nonnegative().optional(),
+      providerCostCents: z.number().int().nonnegative().optional(),
+      mcpCostCents: z.number().int().nonnegative().optional(),
       storageCostCents: z.number().int().nonnegative().optional(),
       conversationBudgetRemainingCredits: z.number().int().nullable().optional(),
       ownerBalanceCredits: z.number().int().nullable().optional(),
       sponsorPoolCredit: z.number().int().nullable().optional(),
     })
     .optional(),
+});
+
+export const nativeComputerUseExecutionResponseSchema = executeToolResponseSchema.extend({
+  nativeComputerUse: z.object({
+    executionMode: browserExecutionModeSchema,
+    provider: nativeComputerProviderSchema,
+    maxSteps: z.number().int().positive(),
+    allowMutations: z.boolean(),
+    traceArtifactId: z.string().nullable().optional(),
+    finalText: z.string().nullable().optional(),
+  }),
 });
 
 export const resolveApprovalResponseSchema = z.object({
@@ -550,6 +588,7 @@ export type ComputeNetworkMode = z.infer<typeof computeNetworkModeSchema>;
 export type ComputeFilesystemMode = z.infer<typeof computeFilesystemModeSchema>;
 export type ComputeExecutionOutcome = z.infer<typeof computeExecutionOutcomeSchema>;
 export type BrowserTransportKind = z.infer<typeof browserTransportKindSchema>;
+export type BrowserExecutionMode = z.infer<typeof browserExecutionModeSchema>;
 export type NativeComputerProvider = z.infer<typeof nativeComputerProviderSchema>;
 export type NativeComputerProviderStatus = z.infer<typeof nativeComputerProviderStatusSchema>;
 export type NativeComputerUsePreflightState = z.infer<typeof nativeComputerUsePreflightStateSchema>;
@@ -571,6 +610,9 @@ export type TerminateComputeSessionRequest = z.infer<typeof terminateComputeSess
 export type HeartbeatComputeSessionRequest = z.infer<typeof heartbeatComputeSessionRequestSchema>;
 export type HeartbeatComputeSessionResponse = z.infer<typeof heartbeatComputeSessionResponseSchema>;
 export type ToolExecutionRequest = z.infer<typeof toolExecutionRequestSchema>;
+export type NativeComputerUseExecutionRequest = z.infer<
+  typeof nativeComputerUseExecutionRequestSchema
+>;
 export type ToolExecutionSnapshot = z.infer<typeof toolExecutionSnapshotSchema>;
 export type McpBindingSnapshot = z.infer<typeof mcpBindingSnapshotSchema>;
 export type UpsertMcpBindingRequest = z.infer<typeof upsertMcpBindingRequestSchema>;
@@ -582,6 +624,9 @@ export type ArtifactSnapshot = z.infer<typeof artifactSnapshotSchema>;
 export type UpdateArtifactRequest = z.infer<typeof updateArtifactRequestSchema>;
 export type UpdateArtifactResponse = z.infer<typeof updateArtifactResponseSchema>;
 export type ExecuteToolResponse = z.infer<typeof executeToolResponseSchema>;
+export type NativeComputerUseExecutionResponse = z.infer<
+  typeof nativeComputerUseExecutionResponseSchema
+>;
 export type ListArtifactsResponse = z.infer<typeof listArtifactsResponseSchema>;
 export type ListApprovalsResponse = z.infer<typeof listApprovalsResponseSchema>;
 export type ListMcpBindingsResponse = z.infer<typeof listMcpBindingsResponseSchema>;
@@ -600,6 +645,10 @@ export function isCapabilityAllowedForComputeSubagent(
   capability: CapabilityKind,
 ): boolean {
   return listCapabilitiesForComputeSubagent(subagentId).includes(capability);
+}
+
+export function getComputeSubagentBudgetCredits(subagentId: ComputeSubagentId): number {
+  return computeSubagentBudgetCredits[subagentId];
 }
 
 export function resolveComputeSubagentIdForCapability(capability: CapabilityKind): ComputeSubagentId {

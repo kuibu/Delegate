@@ -18,6 +18,7 @@ export async function createApprovalRequestForExecution(params: {
   conversationId?: string | null;
   sessionId: string;
   executionId: string;
+  subagentId: string;
   reason: string;
   requestedActionSummary: string;
   riskSummary: string;
@@ -29,6 +30,7 @@ export async function createApprovalRequestForExecution(params: {
       conversationId: params.conversationId ?? null,
       sessionId: params.sessionId,
       toolExecutionId: params.executionId,
+      subagentId: params.subagentId,
       status: "PENDING",
       reason: params.reason,
       requestedActionSummary: params.requestedActionSummary,
@@ -52,6 +54,7 @@ export async function createApprovalRequestForExecution(params: {
       payload: {
         approvalRequestId: approval.id,
         executionId: params.executionId,
+        subagentId: params.subagentId,
         reason: params.reason,
       },
     },
@@ -84,6 +87,7 @@ export async function createApprovalRequestForExecution(params: {
         contactId: params.contactId ?? null,
         conversationId: params.conversationId ?? null,
         approvalRequestId: approval.id,
+        subagentId: params.subagentId,
         kind: "APPROVAL_EXPIRATION",
         engine: dispatchTarget.effectiveEngine === "temporal" ? "TEMPORAL" : "LOCAL_RUNNER",
         status: "QUEUED",
@@ -93,6 +97,7 @@ export async function createApprovalRequestForExecution(params: {
         scheduledAt,
         input: {
           approvalId: approval.id,
+          subagentId: params.subagentId,
           timeoutMinutes: approvalTimeoutMinutes,
         },
       },
@@ -108,6 +113,7 @@ export async function createApprovalRequestForExecution(params: {
           workflowRunId: workflow.id,
           workflowKind: "approval_expiration",
           approvalRequestId: approval.id,
+          subagentId: params.subagentId,
           configuredEngine: dispatchTarget.configuredEngine,
           effectiveEngine: dispatchTarget.effectiveEngine,
           queueName: dispatchTarget.queueName,

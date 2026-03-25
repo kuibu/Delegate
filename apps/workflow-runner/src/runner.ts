@@ -120,6 +120,7 @@ export async function runWorkflowTick(options?: {
               workflowKind: workflow.kind === WorkflowKind.HANDOFF_FOLLOW_UP
                 ? "handoff_follow_up"
                 : "approval_expiration",
+              ...(workflow.subagentId ? { subagentId: workflow.subagentId } : {}),
               error: failureMessage,
             },
           },
@@ -218,6 +219,7 @@ async function processApprovalExpiration(workflow: NonNullable<WorkflowRunRecord
           workflowRunId: workflow.id,
           workflowKind: "approval_expiration",
           approvalRequestId: approval.id,
+          ...(workflow.subagentId ? { subagentId: workflow.subagentId } : {}),
           resolution: "expired",
           resolvedBy: "workflow-runner",
         },
@@ -263,6 +265,7 @@ async function processHandoffFollowUp(workflow: NonNullable<WorkflowRunRecord>) 
         workflowRunId: workflow.id,
         workflowKind: "handoff_follow_up",
         handoffId: handoff.id,
+        ...(workflow.subagentId ? { subagentId: workflow.subagentId } : {}),
         status: handoff.status.toLowerCase(),
         action: "owner_follow_up_due",
       },

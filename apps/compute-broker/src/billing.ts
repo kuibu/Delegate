@@ -23,6 +23,8 @@ export type ExecutionBillingSummary = {
   actualCredits?: number;
   computeCostCents?: number;
   browserCostCents?: number;
+  providerCostCents?: number;
+  mcpCostCents?: number;
   storageCostCents?: number;
   conversationBudgetRemainingCredits?: number | null;
   ownerBalanceCredits?: number | null;
@@ -85,6 +87,9 @@ export async function applyExecutionBilling(params: {
   computeCredits: number;
   storageCredits: number;
   computeCostCents: number;
+  browserCostCents: number;
+  providerCostCents: number;
+  mcpCostCents: number;
   storageCostCents: number;
   capability: CapabilityKind;
   wallMs: number;
@@ -225,9 +230,45 @@ export async function applyExecutionBilling(params: {
           kind: "BROWSER_MINUTES",
           quantity: Math.max(params.wallMs / 60000, params.wallMs > 0 ? 1 / 60 : 0),
           unit: "minute",
-          costCents: params.computeCostCents,
+          costCents: params.browserCostCents,
           creditDelta: 0,
           notes: "browser_usage",
+        },
+      });
+    }
+
+    if (params.providerCostCents > 0) {
+      await tx.ledgerEntry.create({
+        data: {
+          representativeId: params.representativeId,
+          contactId: params.contactId ?? null,
+          conversationId: params.conversationId ?? null,
+          sessionId: params.sessionId,
+          toolExecutionId: params.toolExecutionId,
+          kind: "MODEL_USAGE",
+          quantity: 1,
+          unit: "request",
+          costCents: params.providerCostCents,
+          creditDelta: 0,
+          notes: "native_provider_usage",
+        },
+      });
+    }
+
+    if (params.mcpCostCents > 0) {
+      await tx.ledgerEntry.create({
+        data: {
+          representativeId: params.representativeId,
+          contactId: params.contactId ?? null,
+          conversationId: params.conversationId ?? null,
+          sessionId: params.sessionId,
+          toolExecutionId: params.toolExecutionId,
+          kind: "MCP_CALLS",
+          quantity: 1,
+          unit: "call",
+          costCents: params.mcpCostCents,
+          creditDelta: 0,
+          notes: "mcp_remote_usage",
         },
       });
     }
@@ -277,7 +318,9 @@ export async function applyExecutionBilling(params: {
     return {
       actualCredits: totalCreditsToCharge,
       computeCostCents: params.computeCostCents,
-      browserCostCents: params.capability === "browser" ? params.computeCostCents : 0,
+      browserCostCents: params.browserCostCents,
+      providerCostCents: params.providerCostCents,
+      mcpCostCents: params.mcpCostCents,
       storageCostCents: params.storageCostCents,
       conversationBudgetRemainingCredits: remainingConversationCredits,
       ownerBalanceCredits: remainingOwnerBalanceCredits,

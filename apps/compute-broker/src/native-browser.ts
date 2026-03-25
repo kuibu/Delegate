@@ -1,10 +1,14 @@
+import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import {
   nativeComputerUsePreflightResponseSchema,
   type BrowserTransportKind,
+  type NativeComputerProvider,
   type NativeComputerProviderSnapshot,
   type NativeComputerUsePreflightSnapshot,
 } from "@delegate/compute-protocol";
 
+import type { NativeBrowserAction, PlaywrightBrowseArtifactPayload } from "./browser";
 import { computeBrokerConfig } from "./config";
 import { prisma } from "./prisma";
 
@@ -26,6 +30,62 @@ type BrowserSessionPreflightRecord = {
       }
     | null
     | undefined;
+};
+
+export type NativeComputerPendingSafetyCheck = {
+  id: string;
+  code?: string | null;
+  message?: string | null;
+};
+
+export type NativeComputerLoopTrace = {
+  provider: NativeComputerProvider;
+  model: string;
+  allowMutations: boolean;
+  maxSteps: number;
+  task: string;
+  startedAt: string;
+  completedAt?: string;
+  status: "completed" | "failed";
+  finalText?: string | null;
+  failureReason?: string;
+  usage?: NativeComputerUsageSummary;
+  steps: Array<{
+    index: number;
+    providerResponseId?: string;
+    providerMessageId?: string;
+    callId?: string;
+    toolUseId?: string;
+    pendingSafetyChecks?: NativeComputerPendingSafetyCheck[];
+    actions: Array<{
+      type: NativeBrowserAction["type"];
+      summary: string;
+    }>;
+    resultingUrl?: string;
+    pageTitle?: string;
+    textSnippet?: string;
+  }>;
+};
+
+export type NativeComputerUsageSummary = {
+  provider: NativeComputerProvider;
+  model: string;
+  responseIds: string[];
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  providerCostCents: number;
+};
+
+export type NativeComputerLoopResult = {
+  provider: NativeComputerProvider;
+  model: string;
+  transportKind: Extract<BrowserTransportKind, "openai_computer" | "claude_computer_use">;
+  finalText: string | null;
+  trace: NativeComputerLoopTrace;
+  capture: PlaywrightBrowseArtifactPayload | null;
+  usage: NativeComputerUsageSummary;
+  wallMs: number;
 };
 
 export async function getNativeComputerUsePreflight(
@@ -189,6 +249,42 @@ export function deriveNativeComputerUsePreflight(params: {
   };
 }
 
+export async function executeNativeComputerUseLoop(params: {
+  provider?: NativeComputerProvider;
+  task: string;
+  maxSteps: number;
+  allowMutations: boolean;
+  currentUrl?: string | null | undefined;
+  currentTitle?: string | null | undefined;
+  textSnippet?: string | null | undefined;
+  screenshotBase64: string;
+  screenshotMimeType: "image/png" | "image/jpeg";
+  executeActionBatch: (params: {
+    transportKind: Extract<BrowserTransportKind, "openai_computer" | "claude_computer_use">;
+    actions: NativeBrowserAction[];
+    currentUrl?: string | null | undefined;
+  }) => Promise<PlaywrightBrowseArtifactPayload>;
+}): Promise<NativeComputerLoopResult> {
+  const providerReadiness = getNativeComputerProviderReadiness();
+  const provider = resolveRequestedProvider(params.provider, providerReadiness);
+  const providerConfig = resolveReadyProviderConfig(provider, providerReadiness);
+  const startedAt = new Date();
+
+  if (provider === "openai") {
+    return runOpenAiNativeLoop({
+      ...params,
+      providerConfig,
+      startedAt,
+    });
+  }
+
+  return runAnthropicNativeLoop({
+    ...params,
+    providerConfig,
+    startedAt,
+  });
+}
+
 export function getNativeComputerProviderReadiness(
   env: NodeJS.ProcessEnv = process.env,
 ): NativeComputerProviderSnapshot[] {
@@ -222,6 +318,807 @@ export function getNativeComputerProviderReadiness(
       hasCredentials: Boolean(normalizeOptionalString(env.ANTHROPIC_API_KEY)),
     }),
   ];
+}
+
+export function hasMutatingNativeActions(actions: NativeBrowserAction[]): boolean {
+  return actions.some((action) =>
+    action.type === "click" ||
+    action.type === "double_click" ||
+    action.type === "drag" ||
+    action.type === "keypress" ||
+    action.type === "type",
+  );
+}
+
+export function summarizeNativeActions(actions: NativeBrowserAction[]) {
+  return actions.map((action) => ({
+    type: action.type,
+    summary: summarizeNativeAction(action),
+  }));
+}
+
+async function runOpenAiNativeLoop(params: {
+  providerConfig: ReadyNativeProviderConfig;
+  task: string;
+  maxSteps: number;
+  allowMutations: boolean;
+  currentUrl?: string | null | undefined;
+  currentTitle?: string | null | undefined;
+  textSnippet?: string | null | undefined;
+  screenshotBase64: string;
+  screenshotMimeType: "image/png" | "image/jpeg";
+  executeActionBatch: (params: {
+    transportKind: "openai_computer";
+    actions: NativeBrowserAction[];
+    currentUrl?: string | null | undefined;
+  }) => Promise<PlaywrightBrowseArtifactPayload>;
+  startedAt: Date;
+}): Promise<NativeComputerLoopResult> {
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    ...(computeBrokerConfig.nativeComputerUse.openai.baseUrl
+      ? { baseURL: computeBrokerConfig.nativeComputerUse.openai.baseUrl }
+      : {}),
+    timeout: computeBrokerConfig.mcpTimeoutMs,
+  });
+  const usage = createUsageAccumulator("openai", params.providerConfig.model);
+  const trace: NativeComputerLoopTrace = {
+    provider: "openai",
+    model: params.providerConfig.model,
+    allowMutations: params.allowMutations,
+    maxSteps: params.maxSteps,
+    task: params.task,
+    startedAt: params.startedAt.toISOString(),
+    status: "failed",
+    steps: [],
+  };
+
+  let capture: PlaywrightBrowseArtifactPayload | null = null;
+  let finalText: string | null = null;
+  let previousResponseId: string | undefined;
+  let currentUrl = params.currentUrl ?? null;
+  let currentTitle = params.currentTitle ?? null;
+  let currentTextSnippet = params.textSnippet ?? null;
+  let currentScreenshotBase64 = params.screenshotBase64;
+  let currentScreenshotMimeType = params.screenshotMimeType;
+  let lastCallId: string | null = null;
+  let lastSafetyChecks: NativeComputerPendingSafetyCheck[] = [];
+
+  for (let index = 0; index < params.maxSteps; index += 1) {
+    const response = await client.responses.create(
+      previousResponseId
+        ? ({
+            model: params.providerConfig.model,
+            previous_response_id: previousResponseId,
+            max_output_tokens: computeBrokerConfig.nativeComputerUse.maxOutputTokens,
+            tools: [buildOpenAiComputerTool()],
+            input: [
+              {
+                type: "computer_call_output",
+                call_id: lastCallId,
+                output: {
+                  type: "computer_screenshot",
+                  image_url: toDataUrl(currentScreenshotMimeType, currentScreenshotBase64),
+                },
+                ...(lastSafetyChecks.length
+                  ? {
+                      acknowledged_safety_checks: lastSafetyChecks.map((check) => ({ id: check.id })),
+                    }
+                  : {}),
+              },
+            ],
+          } as never)
+        : ({
+            model: params.providerConfig.model,
+            max_output_tokens: computeBrokerConfig.nativeComputerUse.maxOutputTokens,
+            tools: [buildOpenAiComputerTool()],
+            input: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "input_text",
+                    text: buildNativeTaskPrompt({
+                      task: params.task,
+                      currentUrl,
+                      currentTitle,
+                      textSnippet: currentTextSnippet,
+                      allowMutations: params.allowMutations,
+                    }),
+                  },
+                  {
+                    type: "input_image",
+                    image_url: toDataUrl(currentScreenshotMimeType, currentScreenshotBase64),
+                  },
+                ],
+              },
+            ],
+          } as never),
+    );
+
+    accumulateOpenAiUsage(usage, response, params.providerConfig.costCentsPerStep);
+
+    const computerCalls = extractOpenAiComputerCalls(response);
+    const text = extractOpenAiResponseText(response);
+
+    if (!computerCalls.length) {
+      finalText = text || "Native browser loop completed without further computer actions.";
+      break;
+    }
+
+    const currentCall = computerCalls[0]!;
+    const actions = currentCall.actions;
+    if (hasMutatingNativeActions(actions) && !params.allowMutations) {
+      throw new Error("native_browser_mutation_requires_approval");
+    }
+
+    capture = await params.executeActionBatch({
+      transportKind: "openai_computer",
+      actions,
+      currentUrl,
+    });
+    currentUrl = capture.finalUrl;
+    currentTitle = capture.title;
+    currentTextSnippet = capture.textSnippet;
+    currentScreenshotBase64 = capture.screenshotBase64;
+    currentScreenshotMimeType = capture.screenshotMimeType;
+    previousResponseId = response.id;
+    lastCallId = currentCall.callId;
+    lastSafetyChecks = currentCall.pendingSafetyChecks;
+
+    trace.steps.push({
+      index: index + 1,
+      providerResponseId: response.id,
+      callId: currentCall.callId,
+      pendingSafetyChecks: currentCall.pendingSafetyChecks,
+      actions: summarizeNativeActions(actions),
+      resultingUrl: capture.finalUrl,
+      pageTitle: capture.title,
+      textSnippet: capture.textSnippet,
+    });
+  }
+
+  trace.status = "completed";
+  trace.completedAt = new Date().toISOString();
+  trace.finalText = finalText;
+  trace.usage = finalizeUsage(usage);
+
+  return {
+    provider: "openai",
+    model: params.providerConfig.model,
+    transportKind: "openai_computer",
+    finalText,
+    trace,
+    capture,
+    usage: finalizeUsage(usage),
+    wallMs: Math.max(1, Date.now() - params.startedAt.getTime()),
+  };
+}
+
+async function runAnthropicNativeLoop(params: {
+  providerConfig: ReadyNativeProviderConfig;
+  task: string;
+  maxSteps: number;
+  allowMutations: boolean;
+  currentUrl?: string | null | undefined;
+  currentTitle?: string | null | undefined;
+  textSnippet?: string | null | undefined;
+  screenshotBase64: string;
+  screenshotMimeType: "image/png" | "image/jpeg";
+  executeActionBatch: (params: {
+    transportKind: "claude_computer_use";
+    actions: NativeBrowserAction[];
+    currentUrl?: string | null | undefined;
+  }) => Promise<PlaywrightBrowseArtifactPayload>;
+  startedAt: Date;
+}): Promise<NativeComputerLoopResult> {
+  const client = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    ...(computeBrokerConfig.nativeComputerUse.anthropic.baseUrl
+      ? { baseURL: computeBrokerConfig.nativeComputerUse.anthropic.baseUrl }
+      : {}),
+    timeout: computeBrokerConfig.mcpTimeoutMs,
+  });
+  const usage = createUsageAccumulator("anthropic", params.providerConfig.model);
+  const trace: NativeComputerLoopTrace = {
+    provider: "anthropic",
+    model: params.providerConfig.model,
+    allowMutations: params.allowMutations,
+    maxSteps: params.maxSteps,
+    task: params.task,
+    startedAt: params.startedAt.toISOString(),
+    status: "failed",
+    steps: [],
+  };
+
+  let capture: PlaywrightBrowseArtifactPayload | null = null;
+  let finalText: string | null = null;
+  let currentUrl = params.currentUrl ?? null;
+  let currentTitle = params.currentTitle ?? null;
+  let currentTextSnippet = params.textSnippet ?? null;
+  let currentScreenshotBase64 = params.screenshotBase64;
+  let currentScreenshotMimeType = params.screenshotMimeType;
+
+  const messages: Array<Record<string, unknown>> = [
+    {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: buildNativeTaskPrompt({
+            task: params.task,
+            currentUrl,
+            currentTitle,
+            textSnippet: currentTextSnippet,
+            allowMutations: params.allowMutations,
+          }),
+        },
+        buildAnthropicImageBlock(currentScreenshotBase64, currentScreenshotMimeType),
+      ],
+    },
+  ];
+
+  for (let index = 0; index < params.maxSteps; index += 1) {
+    const response = await client.beta.messages.create({
+      betas: ["computer-use-2025-01-24"],
+      model: params.providerConfig.model,
+      max_tokens: computeBrokerConfig.nativeComputerUse.maxOutputTokens,
+      messages: messages as never,
+      tools: [
+        {
+          name: "computer",
+          type: "computer_20250124",
+          display_width_px: 1440,
+          display_height_px: 960,
+        },
+      ],
+    } as never);
+
+    accumulateAnthropicUsage(usage, response, params.providerConfig.costCentsPerStep);
+
+    const text = extractAnthropicResponseText(response);
+    const toolUse = Array.isArray(response.content)
+      ? ((response.content as any[]).find(
+          (block) => block?.type === "tool_use" && block?.name === "computer",
+        ) as any | null)
+      : null;
+
+    if (!toolUse) {
+      finalText = text || "Native browser loop completed without further computer actions.";
+      break;
+    }
+
+    const actions = normalizeAnthropicToolUseInput(toolUse.input);
+    if (!actions.length) {
+      throw new Error("anthropic_native_browser_actions_missing");
+    }
+
+    if (hasMutatingNativeActions(actions) && !params.allowMutations) {
+      throw new Error("native_browser_mutation_requires_approval");
+    }
+
+    capture = await params.executeActionBatch({
+      transportKind: "claude_computer_use",
+      actions,
+      currentUrl,
+    });
+    currentUrl = capture.finalUrl;
+    currentTitle = capture.title;
+    currentTextSnippet = capture.textSnippet;
+    currentScreenshotBase64 = capture.screenshotBase64;
+    currentScreenshotMimeType = capture.screenshotMimeType;
+
+    trace.steps.push({
+      index: index + 1,
+      providerMessageId: response.id,
+      toolUseId: typeof toolUse.id === "string" ? toolUse.id : undefined,
+      actions: summarizeNativeActions(actions),
+      resultingUrl: capture.finalUrl,
+      pageTitle: capture.title,
+      textSnippet: capture.textSnippet,
+    });
+
+    messages.push({
+      role: "assistant",
+      content: response.content,
+    });
+    messages.push({
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: toolUse.id,
+          content: [
+            buildAnthropicImageBlock(currentScreenshotBase64, currentScreenshotMimeType),
+            {
+              type: "text",
+              text: buildAnthropicToolResultText({
+                currentUrl,
+                currentTitle,
+                textSnippet: currentTextSnippet,
+              }),
+            },
+          ],
+        },
+      ],
+    });
+  }
+
+  trace.status = "completed";
+  trace.completedAt = new Date().toISOString();
+  trace.finalText = finalText;
+  trace.usage = finalizeUsage(usage);
+
+  return {
+    provider: "anthropic",
+    model: params.providerConfig.model,
+    transportKind: "claude_computer_use",
+    finalText,
+    trace,
+    capture,
+    usage: finalizeUsage(usage),
+    wallMs: Math.max(1, Date.now() - params.startedAt.getTime()),
+  };
+}
+
+type ReadyNativeProviderConfig = {
+  provider: NativeComputerProvider;
+  model: string;
+  transportKind: Extract<BrowserTransportKind, "openai_computer" | "claude_computer_use">;
+  costCentsPerStep: number;
+};
+
+type NativeUsageAccumulator = {
+  provider: NativeComputerProvider;
+  model: string;
+  responseIds: string[];
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  providerCostCents: number;
+};
+
+function resolveRequestedProvider(
+  requestedProvider: NativeComputerProvider | undefined,
+  readiness: NativeComputerProviderSnapshot[],
+): NativeComputerProvider {
+  if (requestedProvider) {
+    return requestedProvider;
+  }
+
+  const readyProvider = readiness.find((provider) => provider.status === "ready");
+  if (!readyProvider) {
+    throw new Error("native_provider_not_ready");
+  }
+
+  return readyProvider.provider;
+}
+
+function resolveReadyProviderConfig(
+  provider: NativeComputerProvider,
+  readiness: NativeComputerProviderSnapshot[],
+): ReadyNativeProviderConfig {
+  const ready = readiness.find((entry) => entry.provider === provider);
+  if (!ready || ready.status !== "ready" || !ready.model) {
+    throw new Error("native_provider_not_ready");
+  }
+
+  return {
+    provider,
+    model: ready.model,
+    transportKind: mapProviderToTransportKind(provider),
+    costCentsPerStep:
+      provider === "openai"
+        ? computeBrokerConfig.nativeComputerUse.openai.costCentsPerStep
+        : computeBrokerConfig.nativeComputerUse.anthropic.costCentsPerStep,
+  };
+}
+
+function createUsageAccumulator(
+  provider: NativeComputerProvider,
+  model: string,
+): NativeUsageAccumulator {
+  return {
+    provider,
+    model,
+    responseIds: [],
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    providerCostCents: 0,
+  };
+}
+
+function finalizeUsage(value: NativeUsageAccumulator): NativeComputerUsageSummary {
+  return {
+    provider: value.provider,
+    model: value.model,
+    responseIds: value.responseIds,
+    inputTokens: value.inputTokens,
+    outputTokens: value.outputTokens,
+    totalTokens: value.totalTokens,
+    providerCostCents: value.providerCostCents,
+  };
+}
+
+function accumulateOpenAiUsage(
+  accumulator: NativeUsageAccumulator,
+  response: any,
+  costCentsPerStep: number,
+) {
+  if (typeof response?.id === "string") {
+    accumulator.responseIds.push(response.id);
+  }
+
+  if (typeof response?.usage?.input_tokens === "number") {
+    accumulator.inputTokens += response.usage.input_tokens;
+  }
+  if (typeof response?.usage?.output_tokens === "number") {
+    accumulator.outputTokens += response.usage.output_tokens;
+  }
+  if (typeof response?.usage?.total_tokens === "number") {
+    accumulator.totalTokens += response.usage.total_tokens;
+  } else {
+    accumulator.totalTokens +=
+      (typeof response?.usage?.input_tokens === "number" ? response.usage.input_tokens : 0) +
+      (typeof response?.usage?.output_tokens === "number" ? response.usage.output_tokens : 0);
+  }
+  accumulator.providerCostCents += costCentsPerStep;
+}
+
+function accumulateAnthropicUsage(
+  accumulator: NativeUsageAccumulator,
+  response: any,
+  costCentsPerStep: number,
+) {
+  if (typeof response?.id === "string") {
+    accumulator.responseIds.push(response.id);
+  }
+
+  if (typeof response?.usage?.input_tokens === "number") {
+    accumulator.inputTokens += response.usage.input_tokens;
+  }
+  if (typeof response?.usage?.output_tokens === "number") {
+    accumulator.outputTokens += response.usage.output_tokens;
+  }
+  accumulator.totalTokens +=
+    (typeof response?.usage?.input_tokens === "number" ? response.usage.input_tokens : 0) +
+    (typeof response?.usage?.output_tokens === "number" ? response.usage.output_tokens : 0);
+  accumulator.providerCostCents += costCentsPerStep;
+}
+
+function buildOpenAiComputerTool() {
+  return {
+    type: "computer_use_preview",
+    display_width: 1440,
+    display_height: 960,
+    environment: "browser",
+  };
+}
+
+function extractOpenAiComputerCalls(response: any): Array<{
+  callId: string;
+  actions: NativeBrowserAction[];
+  pendingSafetyChecks: NativeComputerPendingSafetyCheck[];
+}> {
+  const output = Array.isArray(response?.output) ? response.output : [];
+  return output
+    .filter((item: any) => item?.type === "computer_call" && typeof item?.call_id === "string")
+    .map((item: any) => ({
+      callId: item.call_id,
+      actions: normalizeOpenAiActions(item.actions ?? (item.action ? [item.action] : [])),
+      pendingSafetyChecks: Array.isArray(item.pending_safety_checks)
+        ? item.pending_safety_checks
+            .filter((check: any) => typeof check?.id === "string")
+            .map((check: any) => ({
+              id: check.id,
+              ...(typeof check.code === "string" ? { code: check.code } : {}),
+              ...(typeof check.message === "string" ? { message: check.message } : {}),
+            }))
+        : [],
+    }));
+}
+
+function extractOpenAiResponseText(response: any): string {
+  if (typeof response?.output_text === "string" && response.output_text.trim()) {
+    return response.output_text.trim();
+  }
+
+  const chunks: string[] = [];
+  for (const item of Array.isArray(response?.output) ? response.output : []) {
+    if (item?.type !== "message" || !Array.isArray(item.content)) {
+      continue;
+    }
+    for (const part of item.content) {
+      if (part?.type === "output_text" && typeof part.text === "string" && part.text.trim()) {
+        chunks.push(part.text.trim());
+      }
+    }
+  }
+
+  return chunks.join("\n\n").trim();
+}
+
+function extractAnthropicResponseText(response: any): string {
+  const chunks: string[] = [];
+  for (const block of Array.isArray(response?.content) ? response.content : []) {
+    if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) {
+      chunks.push(block.text.trim());
+    }
+  }
+  return chunks.join("\n\n").trim();
+}
+
+function normalizeOpenAiActions(input: unknown): NativeBrowserAction[] {
+  const values = Array.isArray(input) ? input : [];
+  return values
+    .map((value) => normalizeOpenAiAction(value))
+    .filter((value): value is NativeBrowserAction => Boolean(value));
+}
+
+function normalizeOpenAiAction(value: unknown): NativeBrowserAction | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const action = value as Record<string, unknown>;
+  switch (action.type) {
+    case "click": {
+      const result: Extract<NativeBrowserAction, { type: "click" }> = {
+        type: "click",
+      };
+      const button = normalizeMouseButton(action.button);
+      if (button) {
+        result.button = button;
+      }
+      if (typeof action.x === "number") {
+        result.x = action.x;
+      }
+      if (typeof action.y === "number") {
+        result.y = action.y;
+      }
+      return result;
+    }
+    case "double_click":
+      return {
+        type: "double_click",
+        ...(typeof action.x === "number" ? { x: action.x } : {}),
+        ...(typeof action.y === "number" ? { y: action.y } : {}),
+      };
+    case "drag":
+      return {
+        type: "drag",
+        path: Array.isArray(action.path)
+          ? action.path
+              .map((point) => normalizeCoordinate(point))
+              .filter((point): point is { x: number; y: number } => Boolean(point))
+          : [],
+      };
+    case "keypress":
+      return {
+        type: "keypress",
+        keys: Array.isArray(action.keys)
+          ? action.keys.filter((key): key is string => typeof key === "string")
+          : [],
+      };
+    case "move":
+      if (typeof action.x !== "number" || typeof action.y !== "number") {
+        return null;
+      }
+      return {
+        type: "move",
+        x: action.x,
+        y: action.y,
+      };
+    case "screenshot":
+      return { type: "screenshot" };
+    case "scroll":
+      return {
+        type: "scroll",
+        scroll_x: typeof action.scroll_x === "number" ? action.scroll_x : 0,
+        scroll_y: typeof action.scroll_y === "number" ? action.scroll_y : 0,
+        ...(typeof action.x === "number" ? { x: action.x } : {}),
+        ...(typeof action.y === "number" ? { y: action.y } : {}),
+      };
+    case "type":
+      if (typeof action.text !== "string") {
+        return null;
+      }
+      return {
+        type: "type",
+        text: action.text,
+      };
+    case "wait":
+      return { type: "wait" };
+    default:
+      return null;
+  }
+}
+
+function normalizeAnthropicToolUseInput(input: unknown): NativeBrowserAction[] {
+  if (!input || typeof input !== "object") {
+    return [];
+  }
+
+  const payload = input as Record<string, unknown>;
+  const action = typeof payload.action === "string" ? payload.action : "";
+  const coordinate = normalizeCoordinate(payload.coordinate ?? payload.coordinates);
+
+  switch (action) {
+    case "screenshot":
+      return [{ type: "screenshot" }];
+    case "mouse_move":
+      return coordinate ? [{ type: "move", ...coordinate }] : [];
+    case "left_click":
+      return [{ type: "click", button: "left", ...(coordinate ?? {}) }];
+    case "right_click":
+      return [{ type: "click", button: "right", ...(coordinate ?? {}) }];
+    case "middle_click":
+      return [{ type: "click", button: "middle", ...(coordinate ?? {}) }];
+    case "double_click":
+      return [{ type: "double_click", ...(coordinate ?? {}) }];
+    case "left_click_drag": {
+      const path = normalizeCoordinatePath(payload.path ?? payload.drag_path);
+      if (path.length) {
+        return [{ type: "drag", path }];
+      }
+      const start = normalizeCoordinate(payload.start_coordinate);
+      const end = normalizeCoordinate(payload.end_coordinate);
+      return start && end ? [{ type: "drag", path: [start, end] }] : [];
+    }
+    case "key":
+    case "keypress":
+      return [
+        {
+          type: "keypress",
+          keys: normalizeAnthropicKeys(payload.text ?? payload.keys),
+        },
+      ];
+    case "type":
+      return typeof payload.text === "string"
+        ? [
+            {
+              type: "type",
+              text: payload.text,
+            },
+          ]
+        : [];
+    case "scroll": {
+      const amount =
+        typeof payload.scroll_amount === "number"
+          ? payload.scroll_amount
+          : typeof payload.delta_y === "number"
+            ? Math.abs(payload.delta_y)
+            : 480;
+      const direction =
+        typeof payload.scroll_direction === "string" ? payload.scroll_direction.toLowerCase() : "down";
+      const signedAmount =
+        direction === "up" || direction === "left" ? -Math.abs(amount) : Math.abs(amount);
+      return [
+        {
+          type: "scroll",
+          scroll_x:
+            direction === "left" || direction === "right"
+              ? signedAmount
+              : typeof payload.delta_x === "number"
+                ? payload.delta_x
+                : 0,
+          scroll_y:
+            direction === "up" || direction === "down"
+              ? signedAmount
+              : typeof payload.delta_y === "number"
+                ? payload.delta_y
+                : 0,
+          ...(coordinate ?? {}),
+        },
+      ];
+    }
+    case "wait":
+      return [
+        {
+          type: "wait",
+          ...(typeof payload.duration_ms === "number" ? { durationMs: payload.duration_ms } : {}),
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
+function normalizeCoordinate(value: unknown): { x: number; y: number } | null {
+  if (Array.isArray(value) && value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number") {
+    return { x: value[0], y: value[1] };
+  }
+
+  if (
+    value &&
+    typeof value === "object" &&
+    typeof (value as Record<string, unknown>).x === "number" &&
+    typeof (value as Record<string, unknown>).y === "number"
+  ) {
+    const record = value as Record<string, unknown>;
+    return {
+      x: record.x as number,
+      y: record.y as number,
+    };
+  }
+
+  return null;
+}
+
+function normalizeCoordinatePath(value: unknown): Array<{ x: number; y: number }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => normalizeCoordinate(entry))
+    .filter((entry): entry is { x: number; y: number } => Boolean(entry));
+}
+
+function normalizeAnthropicKeys(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((entry): entry is string => typeof entry === "string");
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split("+")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function buildAnthropicImageBlock(
+  base64: string,
+  mimeType: "image/png" | "image/jpeg",
+) {
+  return {
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: mimeType,
+      data: base64,
+    },
+  };
+}
+
+function buildAnthropicToolResultText(params: {
+  currentUrl?: string | null;
+  currentTitle?: string | null;
+  textSnippet?: string | null;
+}) {
+  return [
+    params.currentTitle ? `Title: ${params.currentTitle}` : null,
+    params.currentUrl ? `URL: ${params.currentUrl}` : null,
+    params.textSnippet ? `Snippet: ${params.textSnippet}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildNativeTaskPrompt(params: {
+  task: string;
+  currentUrl?: string | null;
+  currentTitle?: string | null;
+  textSnippet?: string | null;
+  allowMutations: boolean;
+}) {
+  return [
+    "You are operating Delegate's governed native browser lane.",
+    params.allowMutations
+      ? "Mutating browser actions have already been explicitly approved for this run."
+      : "Do not attempt mutating actions. Only inspect, scroll, wait, or request screenshots unless a safe final answer is possible.",
+    "Prefer the smallest next action that moves the task forward.",
+    params.currentTitle ? `Current page title: ${params.currentTitle}` : null,
+    params.currentUrl ? `Current page URL: ${params.currentUrl}` : null,
+    params.textSnippet ? `Latest visible text snippet: ${params.textSnippet}` : null,
+    `Task: ${params.task}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildProviderReadiness(params: {
@@ -272,11 +1169,14 @@ function buildProviderReadiness(params: {
   };
 }
 
-function mapProviderToTransportKind(provider: "openai" | "anthropic"): BrowserTransportKind {
+export function mapProviderToTransportKind(provider: "openai" | "anthropic"): Extract<
+  BrowserTransportKind,
+  "openai_computer" | "claude_computer_use"
+> {
   return provider === "openai" ? "openai_computer" : "claude_computer_use";
 }
 
-function normalizeBrowserTransportKind(value: string): BrowserTransportKind {
+export function normalizeBrowserTransportKind(value: string): BrowserTransportKind {
   if (value === "OPENAI_COMPUTER" || value === "openai_computer") {
     return "openai_computer";
   }
@@ -284,6 +1184,51 @@ function normalizeBrowserTransportKind(value: string): BrowserTransportKind {
     return "claude_computer_use";
   }
   return "playwright";
+}
+
+function summarizeNativeAction(action: NativeBrowserAction): string {
+  switch (action.type) {
+    case "click":
+      return `${action.button ?? "left"} click${typeof action.x === "number" && typeof action.y === "number" ? ` @ ${action.x},${action.y}` : ""}`;
+    case "double_click":
+      return `double click${typeof action.x === "number" && typeof action.y === "number" ? ` @ ${action.x},${action.y}` : ""}`;
+    case "drag":
+      return `drag ${action.path.length} points`;
+    case "keypress":
+      return action.keys.join("+");
+    case "move":
+      return `move @ ${action.x},${action.y}`;
+    case "scroll":
+      return `scroll ${action.scroll_x},${action.scroll_y}`;
+    case "type":
+      return `type "${action.text.slice(0, 64)}"`;
+    case "wait":
+      return `wait ${action.durationMs ?? 1000}ms`;
+    case "screenshot":
+    default:
+      return "capture screenshot";
+  }
+}
+
+function normalizeMouseButton(
+  value: unknown,
+): "left" | "right" | "middle" | "wheel" | "back" | "forward" | undefined {
+  switch (value) {
+    case "left":
+    case "right":
+    case "wheel":
+    case "back":
+    case "forward":
+      return value;
+    case "middle":
+      return "middle";
+    default:
+      return undefined;
+  }
+}
+
+function toDataUrl(mimeType: string, base64: string) {
+  return `data:${mimeType};base64,${base64}`;
 }
 
 function normalizeOptionalString(value: string | undefined): string | undefined {

@@ -65,6 +65,11 @@ export async function POST(
           : undefined,
       enabled: body.enabled !== false,
       approvalRequired: body.approvalRequired !== false,
+      estimatedCostCentsPerCall:
+        typeof body.estimatedCostCentsPerCall === "number" &&
+        Number.isFinite(body.estimatedCostCentsPerCall)
+          ? Math.max(0, Math.trunc(body.estimatedCostCentsPerCall))
+          : 0,
     });
 
     return NextResponse.json(binding, { status: 201 });

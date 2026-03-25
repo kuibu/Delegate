@@ -2,6 +2,7 @@ import { randomBytes, createHash } from "node:crypto";
 
 import {
   CreateBucketCommand,
+  GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
   S3Client,
@@ -233,6 +234,21 @@ export async function persistBufferArtifact(params: {
   });
 
   return artifact;
+}
+
+export async function readPersistedArtifactObject(objectKey: string): Promise<Buffer> {
+  const response = await artifactClient.send(
+    new GetObjectCommand({
+      Bucket: computeBrokerConfig.artifactStore.bucket,
+      Key: objectKey,
+    }),
+  );
+  const bytes = await response.Body?.transformToByteArray();
+  if (!bytes) {
+    throw new Error("artifact_object_empty");
+  }
+
+  return Buffer.from(bytes);
 }
 
 function summarizeArtifact(value: string): string {

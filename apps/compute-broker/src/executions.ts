@@ -2,13 +2,17 @@ import { posix as pathPosix } from "node:path";
 
 import {
   executeToolResponseSchema,
+  getComputeSubagentBudgetCredits,
   listApprovalsResponseSchema,
   listArtifactsResponseSchema,
+  nativeComputerUseExecutionResponseSchema,
   resolveComputeSubagentIdForCapability,
   resolveApprovalRequestSchema,
   resolveApprovalResponseSchema,
   type CapabilityKind,
+  type BrowserExecutionMode,
   type ComputeSubagentId,
+  type NativeComputerProvider,
   type ToolExecutionRequest,
 } from "@delegate/compute-protocol";
 
@@ -21,6 +25,7 @@ import {
 } from "./billing";
 import {
   buildPlaywrightBrowseCommand,
+  buildPlaywrightNativeCommand,
   parsePlaywrightBrowseArtifactPayload,
 } from "./browser";
 import { recordBrowserNavigation } from "./browser-sessions";
@@ -30,10 +35,12 @@ import {
   persistExecutionArtifacts,
   persistJsonArtifact,
   persistScreenshotArtifact,
+  readPersistedArtifactObject,
 } from "./artifacts";
 import { computeLifecycleHooks } from "./lifecycle-hooks";
 import { loadRepresentativeMcpBinding, resolveMcpToolName } from "./mcp-bindings";
 import { callRemoteMcpTool } from "./mcp";
+import { executeNativeComputerUseLoop } from "./native-browser";
 import { extractHostname, isHostnameAllowed, normalizeNetworkAllowlist } from "./network-allowlist";
 import { normalizeContainerPath } from "./path-utils";
 import { prisma } from "./prisma";
@@ -65,11 +72,16 @@ type LeasedSessionRecord = {
 type NormalizedExecutionInput = {
   capability: CapabilityKind;
   subagentId: ComputeSubagentId;
+  browserMode: BrowserExecutionMode;
   command: string | undefined;
   content: string | undefined;
   path: string | undefined;
   domain: string | undefined;
   url: string | undefined;
+  task: string | undefined;
+  nativeProvider: NativeComputerProvider | undefined;
+  maxSteps: number;
+  allowMutations: boolean;
   bindingId: string | undefined;
   bindingSlug: string | undefined;
   toolName: string | undefined;
@@ -99,6 +111,8 @@ type BrowserCaptureSummary = {
   textSnippet?: string;
   screenshotArtifactId?: string;
   jsonArtifactId?: string;
+  traceArtifactId?: string;
+  nativeFinalText?: string | undefined;
 };
 
 type RuntimeExecutionResult = {
@@ -110,6 +124,19 @@ type RuntimeExecutionResult = {
   browserCapture?: BrowserCaptureSummary | undefined;
   transport: "docker" | "mcp";
   remoteUrl?: string | undefined;
+  providerCostCents?: number | undefined;
+  browserCostCents?: number | undefined;
+  mcpCostCents?: number | undefined;
+  nativeComputerUse?:
+    | {
+        provider: NativeComputerProvider;
+        executionMode: "native";
+        maxSteps: number;
+        allowMutations: boolean;
+        traceArtifactId?: string | null | undefined;
+        finalText?: string | null | undefined;
+      }
+    | undefined;
 };
 
 export async function executeTool(sessionId: string, rawInput: unknown) {
@@ -202,6 +229,7 @@ export async function executeTool(sessionId: string, rawInput: unknown) {
       conversationId: context.session.conversationId ?? null,
       sessionId,
       executionId: execution.id,
+      subagentId: sessionSubagentId,
       reason: effectiveDecision.reason,
       requestedActionSummary: summarizeAction(normalized),
       riskSummary: buildRiskSummary(effectiveDecision.reason),
@@ -541,20 +569,37 @@ async function runAllowedExecution(params: {
     },
   });
 
+  const runtimeStartedAt = Date.now();
   const runtimeResult =
-    params.input.capability === "mcp"
-        ? await runMcpExecution({
-          context: params.context,
-          leasedSession,
-          executionId: execution.id,
-          input: params.input,
-        })
-      : await runContainerExecution({
-          context: params.context,
-          leasedSession,
-          executionId: execution.id,
-          input: params.input,
-        });
+    await (async () => {
+      try {
+        return params.input.capability === "mcp"
+          ? await runMcpExecution({
+              context: params.context,
+              leasedSession,
+              executionId: execution.id,
+              input: params.input,
+            })
+          : await runContainerExecution({
+              context: params.context,
+              leasedSession,
+              executionId: execution.id,
+              input: params.input,
+            });
+      } catch (error) {
+        return {
+          exitCode: 1,
+          wallMs: Math.max(1, Date.now() - runtimeStartedAt),
+          bytesRead: 0,
+          artifacts: [],
+          failureSummary:
+            error instanceof Error ? error.message : "compute_execution_failed",
+          browserCapture: undefined,
+          transport: params.input.capability === "mcp" ? ("mcp" as const) : ("docker" as const),
+          remoteUrl: undefined,
+        } satisfies RuntimeExecutionResult;
+      }
+    })();
 
   const finishedAt = new Date();
   const totalArtifactBytes = runtimeResult.artifacts.reduce(
@@ -610,7 +655,11 @@ async function runAllowedExecution(params: {
   const storageCostCents = totalArtifactBytes > 0 ? Math.max(1, Math.ceil(totalArtifactBytes / 65536)) : 0;
   const computeCredits = estimateCreditUsage({
     capability: executionDescriptor.capability,
-    estimatedCostCents: computeCostCents,
+    estimatedCostCents:
+      computeCostCents +
+      (runtimeResult.browserCostCents ?? 0) +
+      (runtimeResult.mcpCostCents ?? 0) +
+      (runtimeResult.providerCostCents ?? 0),
   });
   const storageCredits = totalArtifactBytes > 0 ? Math.ceil(totalArtifactBytes / 65536) : 0;
   const billing = await applyExecutionBilling({
@@ -623,6 +672,9 @@ async function runAllowedExecution(params: {
     computeCredits,
     storageCredits,
     computeCostCents,
+    browserCostCents: runtimeResult.browserCostCents ?? 0,
+    providerCostCents: runtimeResult.providerCostCents ?? 0,
+    mcpCostCents: runtimeResult.mcpCostCents ?? 0,
     storageCostCents,
     capability: executionDescriptor.capability,
     wallMs: runtimeResult.wallMs,
@@ -666,13 +718,35 @@ async function runAllowedExecution(params: {
         executionId: execution.id,
         subagentId: params.input.subagentId,
         kinds:
-          executionDescriptor.capability === "browser"
-            ? ["COMPUTE_MINUTES", "BROWSER_MINUTES", "STORAGE_BYTES"]
-            : ["COMPUTE_MINUTES", "STORAGE_BYTES"],
+          [
+            "COMPUTE_MINUTES",
+            ...(executionDescriptor.capability === "browser" ? ["BROWSER_MINUTES"] : []),
+            ...(runtimeResult.providerCostCents && runtimeResult.providerCostCents > 0
+              ? ["MODEL_USAGE"]
+              : []),
+            ...(runtimeResult.mcpCostCents && runtimeResult.mcpCostCents > 0
+              ? ["MCP_CALLS"]
+              : []),
+            "STORAGE_BYTES",
+          ],
         actualCredits: billing.actualCredits,
       },
     },
   });
+
+  if (runtimeResult.nativeComputerUse) {
+    return nativeComputerUseExecutionResponseSchema.parse({
+      outcome: runtimeResult.exitCode === 0 ? "completed" : "failed",
+      session: serializeSession(updatedSession),
+      execution: serializeExecution(updatedExecution),
+      artifacts: runtimeResult.artifacts.map((artifact) => serializeArtifact(artifact)),
+      billing: {
+        estimatedCredits: params.estimatedCredits,
+        ...billing,
+      },
+      nativeComputerUse: runtimeResult.nativeComputerUse,
+    });
+  }
 
   return executeToolResponseSchema.parse({
     outcome: runtimeResult.exitCode === 0 ? "completed" : "failed",
@@ -700,6 +774,16 @@ function describeExecution(
     };
   }
 
+  if (input.capability === "browser" && input.browserMode === "native") {
+    return {
+      capability: "browser" as const,
+      subagentId: input.subagentId,
+      requestedCommand: input.url ?? input.task,
+      requestedPath: undefined,
+      workingDirectory: undefined,
+    };
+  }
+
   const plan = buildExecutionPlan(context, input);
   return {
     capability: plan.capability,
@@ -716,6 +800,10 @@ async function runContainerExecution(params: {
   executionId: string;
   input: NormalizedExecutionInput;
 }): Promise<RuntimeExecutionResult> {
+  if (params.input.capability === "browser" && params.input.browserMode === "native") {
+    return runNativeBrowserExecution(params);
+  }
+
   const executionPlan = buildExecutionPlan(params.context, params.input);
   const runnerResult = await runRunnerExecution({
     runnerType: mapRunnerTypeFromDb(params.leasedSession.runnerType),
@@ -774,6 +862,190 @@ async function runContainerExecution(params: {
     browserCapture: artifactResult.browserCapture,
     transport: "docker" as const,
     remoteUrl: undefined,
+    providerCostCents: 0,
+    browserCostCents:
+      executionPlan.capability === "browser"
+        ? Math.max(
+            1,
+            Math.ceil(
+              (runnerResult.wallMs / 60000) * computeBrokerConfig.browserCostCentsPerMinute,
+            ),
+          )
+        : 0,
+    mcpCostCents: 0,
+  };
+}
+
+async function runNativeBrowserExecution(params: {
+  context: PolicyExecutionContext;
+  leasedSession: LeasedSessionRecord;
+  executionId: string;
+  input: NormalizedExecutionInput;
+}): Promise<RuntimeExecutionResult> {
+  const seed = await loadLatestNativeBrowserSeed(params.context.session.id);
+  const nativeResult = await executeNativeComputerUseLoop({
+    task: params.input.task ?? "Inspect the retained browser session.",
+    maxSteps: params.input.maxSteps,
+    allowMutations: params.input.allowMutations,
+    currentUrl: seed.currentUrl,
+    currentTitle: seed.currentTitle,
+    textSnippet: seed.textSnippet,
+    screenshotBase64: seed.screenshotBase64,
+    screenshotMimeType: seed.screenshotMimeType,
+    ...(params.input.nativeProvider ? { provider: params.input.nativeProvider } : {}),
+    executeActionBatch: async ({ transportKind, actions, currentUrl }) => {
+      const runnerResult = await runRunnerExecution({
+        runnerType: mapRunnerTypeFromDb(params.leasedSession.runnerType),
+        lease: {
+          runnerType: mapRunnerTypeFromDb(params.leasedSession.runnerType),
+          leaseId: params.leasedSession.runnerLeaseId ?? params.leasedSession.id,
+          containerId: params.leasedSession.containerId,
+          containerName: params.leasedSession.containerId,
+          sessionRoot: "/delegate-session",
+        },
+        command: buildPlaywrightNativeCommand({
+          transportKind,
+          playwrightVersion: computeBrokerConfig.browserPlaywrightVersion,
+          actions,
+          currentUrl,
+        }),
+        maxCommandSeconds: Math.max(
+          params.context.profile.maxCommandSeconds,
+          computeBrokerConfig.browserMaxCommandSeconds,
+        ),
+        filesystemMode: "ephemeral_full",
+        workingDirectory: undefined,
+        sessionId: params.context.session.id,
+        executionId: params.executionId,
+      });
+
+      const payload = parsePlaywrightBrowseArtifactPayload(runnerResult.stdout);
+      if (!payload) {
+        throw new SessionError(500, "native_browser_capture_invalid");
+      }
+
+      return payload;
+    },
+  });
+
+  const artifacts: Awaited<ReturnType<typeof persistExecutionArtifacts>> = [];
+  let browserCapture: BrowserCaptureSummary | undefined;
+  if (nativeResult.capture) {
+    const captureArtifacts = await persistBrowserExecutionArtifacts({
+      representativeId: params.context.session.representativeId,
+      representativeSlug: params.context.session.representative.slug,
+      contactId: params.context.session.contactId ?? null,
+      conversationId: params.context.session.conversationId ?? null,
+      sessionId: params.context.session.id,
+      executionId: params.executionId,
+      retentionDays: params.context.profile.artifactRetentionDays,
+      stdout: JSON.stringify(nativeResult.capture),
+      stderr: "",
+    });
+    artifacts.push(...captureArtifacts.artifacts);
+    browserCapture = {
+      ...captureArtifacts.browserCapture,
+      transportKind: nativeResult.transportKind,
+      nativeFinalText: nativeResult.finalText ?? undefined,
+    };
+  }
+
+  const traceArtifact = await persistJsonArtifact({
+    representativeId: params.context.session.representativeId,
+    representativeSlug: params.context.session.representative.slug,
+    contactId: params.context.session.contactId ?? null,
+    conversationId: params.context.session.conversationId ?? null,
+    sessionId: params.context.session.id,
+    executionId: params.executionId,
+    kind: "TRACE",
+    retentionDays: params.context.profile.artifactRetentionDays,
+    value: nativeResult.trace,
+    summary: `${nativeResult.provider} native browser trace`,
+  });
+  artifacts.push(traceArtifact);
+
+  browserCapture = {
+    ...(browserCapture ?? {
+      transportKind: nativeResult.transportKind,
+    }),
+    traceArtifactId: traceArtifact.id,
+    nativeFinalText: nativeResult.finalText ?? undefined,
+  };
+
+  const traceBytes = Buffer.byteLength(JSON.stringify(nativeResult.trace), "utf8");
+
+  return {
+    exitCode: nativeResult.finalText || nativeResult.capture ? 0 : 1,
+    wallMs: nativeResult.wallMs,
+    bytesRead: traceBytes,
+    artifacts,
+    failureSummary: nativeResult.finalText ? undefined : "native_browser_loop_completed_without_final_text",
+    browserCapture,
+    transport: "docker",
+    providerCostCents: nativeResult.usage.providerCostCents,
+    browserCostCents: Math.max(
+      1,
+      Math.ceil((nativeResult.wallMs / 60000) * computeBrokerConfig.browserCostCentsPerMinute),
+    ),
+    mcpCostCents: 0,
+    nativeComputerUse: {
+      provider: nativeResult.provider,
+      executionMode: "native",
+      maxSteps: params.input.maxSteps,
+      allowMutations: params.input.allowMutations,
+      traceArtifactId: traceArtifact.id,
+      finalText: nativeResult.finalText,
+    },
+  };
+}
+
+async function loadLatestNativeBrowserSeed(sessionId: string): Promise<{
+  currentUrl?: string | null;
+  currentTitle?: string | null;
+  textSnippet?: string | null;
+  screenshotBase64: string;
+  screenshotMimeType: "image/png" | "image/jpeg";
+}> {
+  const browserSession = await prisma.browserSession.findUnique({
+    where: {
+      computeSessionId: sessionId,
+    },
+    include: {
+      navigations: {
+        orderBy: [{ createdAt: "desc" }],
+        take: 1,
+      },
+    },
+  });
+
+  const latestNavigation = browserSession?.navigations[0];
+  if (!browserSession || !latestNavigation?.screenshotArtifactId) {
+    throw new SessionError(409, "native_browser_seed_missing");
+  }
+
+  const screenshotArtifact = await prisma.artifact.findUnique({
+    where: {
+      id: latestNavigation.screenshotArtifactId,
+    },
+    select: {
+      objectKey: true,
+      mimeType: true,
+    },
+  });
+
+  if (!screenshotArtifact) {
+    throw new SessionError(409, "native_browser_screenshot_missing");
+  }
+
+  const screenshotBuffer = await readPersistedArtifactObject(screenshotArtifact.objectKey);
+
+  return {
+    currentUrl: browserSession.currentUrl,
+    currentTitle: browserSession.currentTitle,
+    textSnippet: latestNavigation.textSnippet,
+    screenshotBase64: screenshotBuffer.toString("base64"),
+    screenshotMimeType:
+      screenshotArtifact.mimeType === "image/png" ? "image/png" : "image/jpeg",
   };
 }
 
@@ -910,6 +1182,12 @@ async function runMcpExecution(params: {
     browserCapture: undefined,
     transport: "mcp" as const,
     remoteUrl: binding.serverUrl,
+    providerCostCents: 0,
+    browserCostCents: 0,
+    mcpCostCents:
+      typeof binding.estimatedCostCentsPerCall === "number"
+        ? binding.estimatedCostCentsPerCall
+        : computeBrokerConfig.mcpDefaultCostCentsPerCall,
   };
 }
 
@@ -1038,6 +1316,26 @@ function resolveEffectiveDecision(params: {
     };
   }
 
+  if (
+    params.input.capability === "browser" &&
+    params.input.browserMode === "native" &&
+    params.input.allowMutations &&
+    params.decision.decision === "allow"
+  ) {
+    return {
+      decision: "ask" as const,
+      reason: "native_browser_mutation_requires_approval",
+    };
+  }
+
+  const subagentBudgetCredits = getComputeSubagentBudgetCredits(params.input.subagentId);
+  if (params.estimatedCredits > subagentBudgetCredits && params.decision.decision === "allow") {
+    return {
+      decision: "ask" as const,
+      reason: "subagent_budget_exceeded",
+    };
+  }
+
   if (params.input.capability === "mcp" && params.context.profile.networkMode === "no_network") {
     return {
       decision: "deny" as const,
@@ -1123,11 +1421,16 @@ function normalizeExecutionInput(
       return {
         capability: "read",
         subagentId: input.subagentId,
+        browserMode: input.browserMode,
         command: undefined,
         content: undefined,
         path: input.path,
         domain: undefined,
         url: undefined,
+        task: undefined,
+        nativeProvider: undefined,
+        maxSteps: input.maxSteps,
+        allowMutations: input.allowMutations,
         bindingId: undefined,
         bindingSlug: undefined,
         toolName: undefined,
@@ -1149,11 +1452,16 @@ function normalizeExecutionInput(
       return {
         capability: "write",
         subagentId: input.subagentId,
+        browserMode: input.browserMode,
         command: undefined,
         path: input.path,
         content,
         domain: undefined,
         url: undefined,
+        task: undefined,
+        nativeProvider: undefined,
+        maxSteps: input.maxSteps,
+        allowMutations: input.allowMutations,
         bindingId: undefined,
         bindingSlug: undefined,
         toolName: undefined,
@@ -1165,19 +1473,28 @@ function normalizeExecutionInput(
       };
     }
     case "browser": {
+      const browserMode = input.browserMode ?? "deterministic";
       const url = input.url ?? input.command;
-      if (!url) {
+      if (browserMode === "deterministic" && !url) {
         throw new SessionError(400, "url_required_for_browser");
       }
-      const parsed = new URL(url);
+      if (browserMode === "native" && !input.task) {
+        throw new SessionError(400, "task_required_for_native_browser");
+      }
+      const parsed = url ? new URL(url) : null;
       return {
         capability: "browser",
         subagentId: input.subagentId,
+        browserMode,
         command: undefined,
         content: undefined,
         path: undefined,
-        url: parsed.toString(),
-        domain: input.domain ?? parsed.hostname,
+        url: parsed?.toString(),
+        domain: input.domain ?? parsed?.hostname,
+        task: browserMode === "native" ? input.task : undefined,
+        nativeProvider: browserMode === "native" ? input.nativeProvider : undefined,
+        maxSteps: browserMode === "native" ? input.maxSteps : 1,
+        allowMutations: browserMode === "native" ? input.allowMutations : false,
         bindingId: undefined,
         bindingSlug: undefined,
         toolName: undefined,
@@ -1205,11 +1522,16 @@ function normalizeExecutionInput(
       return {
         capability: "mcp",
         subagentId: input.subagentId,
+        browserMode: input.browserMode,
         command: toolName,
         content: undefined,
         path: bindingSlug,
         domain: input.domain,
         url: serverUrl,
+        task: undefined,
+        nativeProvider: undefined,
+        maxSteps: input.maxSteps,
+        allowMutations: input.allowMutations,
         bindingId,
         bindingSlug,
         toolName,
@@ -1229,11 +1551,16 @@ function normalizeExecutionInput(
       return {
         capability: input.capability,
         subagentId: input.subagentId,
+        browserMode: input.browserMode,
         command: input.command,
         content: undefined,
         path: input.path,
         domain: input.domain,
         url: undefined,
+        task: undefined,
+        nativeProvider: undefined,
+        maxSteps: input.maxSteps,
+        allowMutations: input.allowMutations,
         bindingId: undefined,
         bindingSlug: undefined,
         toolName: undefined,
@@ -1268,6 +1595,9 @@ function reconstructExecutionInput(execution: {
       subagentId,
       path: execution.requestedPath,
       hasPaidEntitlement: true,
+      browserMode: "deterministic",
+      maxSteps: 1,
+      allowMutations: false,
     });
   }
 
@@ -1282,11 +1612,32 @@ function reconstructExecutionInput(execution: {
       content: execution.requestedCommand,
       workingDirectory: execution.workingDirectory ?? undefined,
       hasPaidEntitlement: true,
+      browserMode: "deterministic",
+      maxSteps: 1,
+      allowMutations: false,
     });
   }
 
   if (capability === "browser") {
-    if (!execution.requestedCommand) {
+    const payload =
+      typeof execution.requestPayload === "string"
+        ? safeParseExecutionPayload(execution.requestPayload)
+        : execution.requestPayload && typeof execution.requestPayload === "object"
+          ? (execution.requestPayload as Record<string, unknown>)
+          : null;
+    const browserMode =
+      payload?.browserMode === "native" ? "native" : "deterministic";
+    const task = typeof payload?.task === "string" ? payload.task : undefined;
+    const nativeProvider =
+      payload?.nativeProvider === "openai" || payload?.nativeProvider === "anthropic"
+        ? payload.nativeProvider
+        : undefined;
+    const maxSteps =
+      typeof payload?.maxSteps === "number" && payload.maxSteps > 0
+        ? payload.maxSteps
+        : undefined;
+    const allowMutations = payload?.allowMutations === true;
+    if (browserMode === "deterministic" && !execution.requestedCommand) {
       throw new SessionError(409, "approved_browser_missing_url");
     }
     return normalizeExecutionInput({
@@ -1295,11 +1646,16 @@ function reconstructExecutionInput(execution: {
       command: undefined,
       content: undefined,
       path: undefined,
-      url: execution.requestedCommand,
+      url: execution.requestedCommand ?? undefined,
       domain: undefined,
       workingDirectory: undefined,
       estimatedCostCents: undefined,
       hasPaidEntitlement: true,
+      browserMode,
+      ...(task ? { task } : {}),
+      ...(nativeProvider ? { nativeProvider } : {}),
+      maxSteps: typeof maxSteps === "number" ? maxSteps : 3,
+      allowMutations,
     });
   }
 
@@ -1328,6 +1684,9 @@ function reconstructExecutionInput(execution: {
       toolName,
       toolArguments,
       hasPaidEntitlement: true,
+      browserMode: "deterministic",
+      maxSteps: 1,
+      allowMutations: false,
     });
   }
 
@@ -1346,6 +1705,9 @@ function reconstructExecutionInput(execution: {
     ...(execution.workingDirectory ? { workingDirectory: execution.workingDirectory } : {}),
     estimatedCostCents: undefined,
     hasPaidEntitlement: true,
+    browserMode: "deterministic",
+    maxSteps: 1,
+    allowMutations: false,
   });
 }
 
@@ -1443,7 +1805,7 @@ function getPersistedCommand(input: NormalizedExecutionInput) {
     case "write":
       return input.content;
     case "browser":
-      return input.url;
+      return input.browserMode === "native" ? input.url ?? input.task : input.url;
     case "mcp":
       return input.toolName;
     case "read":
@@ -1456,16 +1818,26 @@ function getPersistedCommand(input: NormalizedExecutionInput) {
 }
 
 function buildExecutionRequestPayload(input: NormalizedExecutionInput) {
-  if (input.capability !== "mcp") {
-    return undefined;
+  if (input.capability === "browser" && input.browserMode === "native") {
+    return JSON.stringify({
+      browserMode: input.browserMode,
+      ...(input.task ? { task: input.task } : {}),
+      ...(input.nativeProvider ? { nativeProvider: input.nativeProvider } : {}),
+      maxSteps: input.maxSteps,
+      allowMutations: input.allowMutations,
+    });
   }
 
-  return JSON.stringify({
-    ...(input.bindingId ? { bindingId: input.bindingId } : {}),
-    ...(input.bindingSlug ? { bindingSlug: input.bindingSlug } : {}),
-    ...(input.toolName ? { toolName: input.toolName } : {}),
-    toolArguments: input.toolArguments ?? {},
-  });
+  if (input.capability === "mcp") {
+    return JSON.stringify({
+      ...(input.bindingId ? { bindingId: input.bindingId } : {}),
+      ...(input.bindingSlug ? { bindingSlug: input.bindingSlug } : {}),
+      ...(input.toolName ? { toolName: input.toolName } : {}),
+      toolArguments: input.toolArguments ?? {},
+    });
+  }
+
+  return undefined;
 }
 
 function buildRiskSummary(reason: string): string {
@@ -1483,12 +1855,16 @@ function buildRiskSummary(reason: string): string {
       return "The command uses shell control operators and must be reviewed before execution.";
     case "browser_requires_network":
       return "Browser automation requires a network-enabled policy profile.";
+    case "native_browser_mutation_requires_approval":
+      return "Native browser runs that may click, type, or submit data must be explicitly approved before execution.";
     case "mcp_requires_network":
       return "Remote MCP tools require a network-enabled policy profile.";
     case "filesystem_read_only":
       return "This representative is currently running with a read-only filesystem policy.";
     case "insufficient_compute_budget":
       return "The available compute credits are below the estimated charge for this run.";
+    case "subagent_budget_exceeded":
+      return "This request exceeds the credit cap for its delegated compute lane and must be reviewed.";
     default:
       return `Policy requested review before execution (${reason}).`;
   }
@@ -1501,7 +1877,9 @@ function summarizeAction(input: NormalizedExecutionInput) {
     case "write":
       return `Write to "${truncate(input.path ?? "", 120)}".`;
     case "browser":
-      return `Browse "${truncate(input.url ?? "", 120)}" in the isolated Playwright lane.`;
+      return input.browserMode === "native"
+        ? `Run native browser task "${truncate(input.task ?? "", 120)}"${input.nativeProvider ? ` via ${input.nativeProvider}` : ""}.`
+        : `Browse "${truncate(input.url ?? "", 120)}" in the isolated Playwright lane.`;
     case "mcp":
       return `Call MCP tool "${truncate(input.toolName ?? "", 120)}" via "${truncate(input.bindingSlug ?? input.bindingId ?? "", 120)}".`;
     case "process":

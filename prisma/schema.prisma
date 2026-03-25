@@ -210,6 +210,7 @@ enum LedgerEntryKind {
   STORAGE_BYTES
   ARTIFACT_EGRESS
   BROWSER_MINUTES
+  MCP_CALLS
   PLAN_DEBIT
   SPONSOR_CREDIT
 }
@@ -405,6 +406,7 @@ model RepresentativeMcpBinding {
   defaultToolName              String?
   enabled                      Boolean                 @default(true)
   approvalRequired             Boolean                 @default(true)
+  estimatedCostCentsPerCall    Int                     @default(0)
   createdAt                    DateTime                @default(now())
   updatedAt                    DateTime                @updatedAt
   representative               Representative          @relation(fields: [representativeId], references: [id])
@@ -709,6 +711,7 @@ model ApprovalRequest {
   conversationId        String?
   sessionId             String?
   toolExecutionId       String?        @unique
+  subagentId            String?
   status                ApprovalStatus @default(PENDING)
   reason                String
   requestedActionSummary String
@@ -763,6 +766,7 @@ model WorkflowRun {
   conversationId   String?
   handoffRequestId String?
   approvalRequestId String?
+  subagentId       String?
   kind             WorkflowKind
   engine           WorkflowEngine @default(LOCAL_RUNNER)
   status           WorkflowStatus @default(QUEUED)

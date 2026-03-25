@@ -72,6 +72,9 @@ importers:
 
   apps/compute-broker:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.80.0
+        version: 0.80.0(zod@4.3.6)
       '@aws-sdk/client-s3':
         specifier: ^3.914.0
         version: 3.1015.0
@@ -99,6 +102,9 @@ importers:
       dotenv:
         specifier: ^17.2.3
         version: 17.3.1
+      openai:
+        specifier: ^6.32.0
+        version: 6.32.0(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6

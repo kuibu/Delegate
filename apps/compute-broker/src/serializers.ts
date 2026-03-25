@@ -304,6 +304,7 @@ export function serializeMcpBinding(binding: {
   defaultToolName: string | null;
   enabled: boolean;
   approvalRequired: boolean;
+  estimatedCostCentsPerCall: number;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -322,6 +323,7 @@ export function serializeMcpBinding(binding: {
     defaultToolName: binding.defaultToolName,
     enabled: binding.enabled,
     approvalRequired: binding.approvalRequired,
+    estimatedCostCentsPerCall: binding.estimatedCostCentsPerCall,
     createdAt: binding.createdAt.toISOString(),
     updatedAt: binding.updatedAt.toISOString(),
   });
@@ -334,6 +336,7 @@ export function serializeApprovalRequest(approvalRequest: {
   conversationId: string | null;
   sessionId: string | null;
   toolExecutionId: string | null;
+  subagentId: string | null;
   status: string;
   reason: string;
   requestedActionSummary: string;
@@ -349,6 +352,10 @@ export function serializeApprovalRequest(approvalRequest: {
     conversationId: approvalRequest.conversationId,
     sessionId: approvalRequest.sessionId,
     toolExecutionId: approvalRequest.toolExecutionId,
+    subagentId:
+      approvalRequest.subagentId === "compute-agent" || approvalRequest.subagentId === "browser-agent"
+        ? approvalRequest.subagentId
+        : null,
     status: mapApprovalStatusFromDb(approvalRequest.status),
     reason: approvalRequest.reason,
     requestedActionSummary: approvalRequest.requestedActionSummary,
