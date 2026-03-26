@@ -5,6 +5,7 @@ import {
   nativeComputerUseExecutionResponseSchema,
   nativeComputerUseExecutionRequestSchema,
   nativeComputerUsePreflightResponseSchema,
+  organizationGovernanceOverlaysSchema,
   ownerManagedPolicyOverlaysSchema,
   updateArtifactRequestSchema,
   updateArtifactResponseSchema,
@@ -13,6 +14,7 @@ import {
   type McpBindingSnapshot,
   type NativeComputerUseExecutionResponse,
   type NativeComputerUsePreflightSnapshot,
+  type OrganizationGovernanceOverlays,
   type OwnerManagedPolicyOverlays,
   type ResolveApprovalResponse,
   type UpdateArtifactResponse,
@@ -69,6 +71,31 @@ type RepresentativeIdentity = {
   computeNetworkAllowlist: string[];
   computeFilesystemMode: string;
   owner: {
+    organization: {
+      id: string;
+      slug: string;
+      displayName: string;
+      capabilityProfiles: Array<{
+        id: string;
+        name: string;
+        enabled: boolean;
+        managedSource: string | null;
+        managedScope: string;
+        editableByOwner: boolean;
+        contactTrustTierCondition: string | null;
+        precedence: number;
+        rules: Array<{
+          id: string;
+          capability: string;
+          decision: string;
+          resourceScopeCondition: string | null;
+          channelCondition: string | null;
+          requiredPlanTier: string | null;
+          priority: number;
+          requiresHumanApproval: boolean;
+        }>;
+      }>;
+    } | null;
     wallet: {
       balanceCredits: number;
       sponsorPoolCredit: number;
@@ -129,6 +156,12 @@ type RepresentativeIdentity = {
     enabled: boolean;
     approvalRequired: boolean;
     estimatedCostCentsPerCall: number;
+    maxRetries: number;
+    retryBackoffMs: number;
+    consecutiveFailures: number;
+    lastFailureAt: Date | null;
+    lastFailureReason: string | null;
+    lastSuccessAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
     representativeSkillPackLink: {
@@ -136,6 +169,42 @@ type RepresentativeIdentity = {
         displayName: string;
       };
     } | null;
+  }>;
+  organizationCustomerAccounts: Array<{
+    id: string;
+    slug: string;
+    displayName: string;
+    enabled: boolean;
+    contacts: Array<{
+      id: string;
+    }>;
+    capabilityProfiles: Array<{
+      id: string;
+      name: string;
+      enabled: boolean;
+      managedSource: string | null;
+      managedScope: string;
+      editableByOwner: boolean;
+      contactTrustTierCondition: string | null;
+      precedence: number;
+      rules: Array<{
+        id: string;
+        capability: string;
+        decision: string;
+        resourceScopeCondition: string | null;
+        channelCondition: string | null;
+        requiredPlanTier: string | null;
+        priority: number;
+        requiresHumanApproval: boolean;
+      }>;
+    }>;
+  }>;
+  contacts: Array<{
+    id: string;
+    displayName: string | null;
+    username: string | null;
+    computeTrustTier: string | null;
+    customerAccountId: string | null;
   }>;
 };
 
@@ -184,6 +253,7 @@ export type RepresentativeComputeSnapshot = {
         requiredPlanTier: "pass" | "deep_help";
       };
     };
+    governance: OrganizationGovernanceOverlays;
     mcpBindings: Array<
       McpBindingSnapshot & {
         sourceSkillPack?: string;
@@ -321,6 +391,11 @@ export type UpsertRepresentativeMcpBindingInput = {
 export type UpdateRepresentativeManagedPolicyOverlaysInput = {
   representativeSlug: string;
   overlays: OwnerManagedPolicyOverlays;
+};
+
+export type UpdateRepresentativeOrganizationGovernanceInput = {
+  representativeSlug: string;
+  governance: OrganizationGovernanceOverlays;
 };
 
 export type ResolveRepresentativeComputeApprovalInput = {
@@ -607,6 +682,34 @@ export async function updateRepresentativeComputeArtifact(
 
   if (!artifact) {
     return null;
+  }
+
+  if (!input.pinned) {
+    const dependentDeliverable = await prisma.deliverable.findFirst({
+      where: {
+        representativeId: artifact.representativeId,
+        OR: [
+          {
+            artifactId: artifact.id,
+          },
+          {
+            bundleItemArtifactIds: {
+              has: artifact.id,
+            },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        title: true,
+      },
+    });
+
+    if (dependentDeliverable) {
+      throw new Error(
+        `Artifact is still referenced by deliverable "${dependentDeliverable.title}" and cannot be unpinned.`,
+      );
+    }
   }
 
   const nextRetentionUntil = input.pinned
@@ -902,6 +1005,321 @@ export async function updateRepresentativeManagedPolicyOverlays(
   return snapshot.representative.ownerManagedOverlays;
 }
 
+export async function updateRepresentativeOrganizationGovernance(
+  input: UpdateRepresentativeOrganizationGovernanceInput,
+) {
+  const representative = await getRepresentativeIdentity(input.representativeSlug);
+
+  if (!representative) {
+    throw new Error(`Representative "${input.representativeSlug}" not found.`);
+  }
+
+  const parsed = organizationGovernanceOverlaysSchema.parse(input.governance);
+
+  await prisma.$transaction(async (tx) => {
+    const owner = await tx.owner.findUnique({
+      where: { id: representative.ownerId },
+      select: {
+        id: true,
+        displayName: true,
+        handle: true,
+        organizationId: true,
+      },
+    });
+
+    if (!owner) {
+      throw new Error("Owner not found for representative governance update.");
+    }
+
+    let organizationId = owner.organizationId;
+    const preferredSlugBase =
+      parsed.organization.slug?.trim() ||
+      owner.handle?.trim() ||
+      representative.slug ||
+      owner.displayName;
+    const organizationSlug = slugifyGovernanceValue(preferredSlugBase, owner.id);
+    const organizationDisplayName =
+      parsed.organization.displayName?.trim() || `${owner.displayName} Org`;
+
+    if (!organizationId) {
+      const organization = await tx.organization.create({
+        data: {
+          slug: organizationSlug,
+          displayName: organizationDisplayName,
+        },
+      });
+      organizationId = organization.id;
+      await tx.owner.update({
+        where: { id: owner.id },
+        data: {
+          organizationId,
+        },
+      });
+    } else {
+      await tx.organization.update({
+        where: { id: organizationId },
+        data: {
+          slug: organizationSlug,
+          displayName: organizationDisplayName,
+        },
+      });
+    }
+
+    await tx.organizationMember.upsert({
+      where: {
+        organizationId_ownerId: {
+          organizationId,
+          ownerId: owner.id,
+        },
+      },
+      update: {
+        displayName: owner.displayName,
+        role: "OWNER",
+        canApproveCompute: true,
+        canManageArtifacts: true,
+        canManageBilling: true,
+        canManagePolicies: true,
+      },
+      create: {
+        organizationId,
+        ownerId: owner.id,
+        displayName: owner.displayName,
+        role: "OWNER",
+        canApproveCompute: true,
+        canManageArtifacts: true,
+        canManageBilling: true,
+        canManagePolicies: true,
+      },
+    });
+
+    const orgBaselineProfileId = `cap_profile_org_baseline_${organizationId}`;
+    const orgBaselineProfile = await tx.capabilityPolicyProfile.upsert({
+      where: { id: orgBaselineProfileId },
+      update: {
+        organizationId,
+        ownerId: null,
+        representativeId: null,
+        customerAccountId: null,
+        name: "Organization Managed Baseline",
+        isDefault: false,
+        enabled: parsed.organizationBaseline.enabled,
+        isManaged: true,
+        managedScope: "ORG_MANAGED",
+        managedSource: "org-managed",
+        editableByOwner: true,
+        contactTrustTierCondition: null,
+        precedence: 95,
+        defaultDecision: parsed.organizationBaseline.browserDecision.toUpperCase() as
+          | "ALLOW"
+          | "ASK"
+          | "DENY",
+      },
+      create: {
+        id: orgBaselineProfileId,
+        organizationId,
+        name: "Organization Managed Baseline",
+        isDefault: false,
+        enabled: parsed.organizationBaseline.enabled,
+        isManaged: true,
+        managedScope: "ORG_MANAGED",
+        managedSource: "org-managed",
+        editableByOwner: true,
+        precedence: 95,
+        defaultDecision: parsed.organizationBaseline.browserDecision.toUpperCase() as
+          | "ALLOW"
+          | "ASK"
+          | "DENY",
+      },
+    });
+
+    await tx.capabilityPolicyRule.deleteMany({
+      where: {
+        profileId: orgBaselineProfile.id,
+      },
+    });
+    await tx.capabilityPolicyRule.createMany({
+      data: buildManagedOverlayRules({
+        profileId: orgBaselineProfile.id,
+        profileKey: "org_baseline",
+        precedenceBase: 180,
+        config: parsed.organizationBaseline,
+      }),
+    });
+
+    const existingAccounts = await tx.customerAccount.findMany({
+      where: {
+        representativeId: representative.id,
+      },
+      select: {
+        id: true,
+        slug: true,
+      },
+    });
+    const existingBySlug = new Map(existingAccounts.map((account) => [account.slug, account]));
+    const seenAccountIds = new Set<string>();
+
+    for (const account of parsed.customerAccounts) {
+      const normalizedSlug = slugifyGovernanceValue(account.slug, representative.id);
+      const existingAccount = existingBySlug.get(normalizedSlug);
+      const persistedAccount = existingAccount
+        ? await tx.customerAccount.update({
+            where: { id: existingAccount.id },
+            data: {
+              organizationId,
+              representativeId: representative.id,
+              slug: normalizedSlug,
+              displayName: account.displayName.trim(),
+              enabled: account.enabled,
+            },
+          })
+        : await tx.customerAccount.create({
+            data: {
+              organizationId,
+              representativeId: representative.id,
+              slug: normalizedSlug,
+              displayName: account.displayName.trim(),
+              enabled: account.enabled,
+            },
+          });
+
+      seenAccountIds.add(persistedAccount.id);
+
+      const customerProfileId = `cap_profile_customer_${persistedAccount.id}`;
+      const customerProfile = await tx.capabilityPolicyProfile.upsert({
+        where: { id: customerProfileId },
+        update: {
+          organizationId,
+          customerAccountId: persistedAccount.id,
+          ownerId: null,
+          representativeId: representative.id,
+          name: `${persistedAccount.displayName} Customer Overlay`,
+          isDefault: false,
+          enabled: account.enabled,
+          isManaged: true,
+          managedScope: "CUSTOMER_ACCOUNT",
+          managedSource: "customer-account",
+          editableByOwner: true,
+          contactTrustTierCondition: null,
+          precedence: 110,
+          defaultDecision: account.browserDecision.toUpperCase() as "ALLOW" | "ASK" | "DENY",
+        },
+        create: {
+          id: customerProfileId,
+          organizationId,
+          customerAccountId: persistedAccount.id,
+          representativeId: representative.id,
+          name: `${persistedAccount.displayName} Customer Overlay`,
+          isDefault: false,
+          enabled: account.enabled,
+          isManaged: true,
+          managedScope: "CUSTOMER_ACCOUNT",
+          managedSource: "customer-account",
+          editableByOwner: true,
+          precedence: 110,
+          defaultDecision: account.browserDecision.toUpperCase() as "ALLOW" | "ASK" | "DENY",
+        },
+      });
+
+      await tx.capabilityPolicyRule.deleteMany({
+        where: {
+          profileId: customerProfile.id,
+        },
+      });
+      await tx.capabilityPolicyRule.createMany({
+        data: buildManagedOverlayRules({
+          profileId: customerProfile.id,
+          profileKey: `customer_${persistedAccount.id}`,
+          precedenceBase: 190,
+          config: account,
+        }),
+      });
+    }
+
+    const staleAccountIds = existingAccounts
+      .filter((account) => !seenAccountIds.has(account.id))
+      .map((account) => account.id);
+    if (staleAccountIds.length) {
+      await tx.contact.updateMany({
+        where: {
+          representativeId: representative.id,
+          customerAccountId: {
+            in: staleAccountIds,
+          },
+        },
+        data: {
+          customerAccountId: null,
+        },
+      });
+      await tx.capabilityPolicyRule.deleteMany({
+        where: {
+          profile: {
+            customerAccountId: {
+              in: staleAccountIds,
+            },
+          },
+        },
+      });
+      await tx.capabilityPolicyProfile.deleteMany({
+        where: {
+          customerAccountId: {
+            in: staleAccountIds,
+          },
+        },
+      });
+      await tx.customerAccount.deleteMany({
+        where: {
+          id: {
+            in: staleAccountIds,
+          },
+        },
+      });
+    }
+
+    await tx.contact.updateMany({
+      where: {
+        representativeId: representative.id,
+      },
+      data: {
+        customerAccountId: null,
+      },
+    });
+
+    for (const account of parsed.customerAccounts) {
+      const normalizedSlug = slugifyGovernanceValue(account.slug, representative.id);
+      const persistedAccount = await tx.customerAccount.findFirst({
+        where: {
+          representativeId: representative.id,
+          slug: normalizedSlug,
+        },
+        select: {
+          id: true,
+        },
+      });
+      if (!persistedAccount || !account.contactIds.length) {
+        continue;
+      }
+      await tx.contact.updateMany({
+        where: {
+          representativeId: representative.id,
+          id: {
+            in: account.contactIds,
+          },
+        },
+        data: {
+          customerAccountId: persistedAccount.id,
+        },
+      });
+    }
+  });
+
+  const snapshot = await getRepresentativeComputeSnapshot(input.representativeSlug);
+  if (!snapshot) {
+    throw new Error(`Representative "${input.representativeSlug}" not found after update.`);
+  }
+
+  return snapshot.representative.governance;
+}
+
 export async function upsertRepresentativeMcpBinding(
   input: UpsertRepresentativeMcpBindingInput,
 ): Promise<McpBindingSnapshot> {
@@ -920,10 +1338,12 @@ export async function upsertRepresentativeMcpBinding(
     transportKind: input.transportKind,
     allowedToolNames: input.allowedToolNames,
     defaultToolName: input.defaultToolName,
-      enabled: input.enabled,
-      approvalRequired: input.approvalRequired,
-      estimatedCostCentsPerCall: input.estimatedCostCentsPerCall,
-    });
+    enabled: input.enabled,
+    approvalRequired: input.approvalRequired,
+    estimatedCostCentsPerCall: input.estimatedCostCentsPerCall,
+    maxRetries: input.maxRetries,
+    retryBackoffMs: input.retryBackoffMs,
+  });
 
   const linkId = parsed.representativeSkillPackLinkId ?? null;
   if (linkId) {
@@ -969,12 +1389,14 @@ export async function upsertRepresentativeMcpBinding(
           displayName: parsed.displayName,
           description: parsed.description ?? null,
           serverUrl: parsed.serverUrl,
-          transportKind: parsed.transportKind.toUpperCase() as "STREAMABLE_HTTP",
+          transportKind: parsed.transportKind.toUpperCase() as "STREAMABLE_HTTP" | "SSE",
           allowedToolNames: parsed.allowedToolNames,
           defaultToolName: parsed.defaultToolName ?? null,
           enabled: parsed.enabled,
           approvalRequired: parsed.approvalRequired,
           estimatedCostCentsPerCall: parsed.estimatedCostCentsPerCall,
+          maxRetries: parsed.maxRetries,
+          retryBackoffMs: parsed.retryBackoffMs,
         },
       })
     : await prisma.representativeMcpBinding.create({
@@ -985,12 +1407,14 @@ export async function upsertRepresentativeMcpBinding(
           displayName: parsed.displayName,
           description: parsed.description ?? null,
           serverUrl: parsed.serverUrl,
-          transportKind: parsed.transportKind.toUpperCase() as "STREAMABLE_HTTP",
+          transportKind: parsed.transportKind.toUpperCase() as "STREAMABLE_HTTP" | "SSE",
           allowedToolNames: parsed.allowedToolNames,
           defaultToolName: parsed.defaultToolName ?? null,
           enabled: parsed.enabled,
           approvalRequired: parsed.approvalRequired,
           estimatedCostCentsPerCall: parsed.estimatedCostCentsPerCall,
+          maxRetries: parsed.maxRetries,
+          retryBackoffMs: parsed.retryBackoffMs,
         },
       });
 
@@ -1109,6 +1533,42 @@ async function getRepresentativeIdentity(
       computeFilesystemMode: true,
       owner: {
         select: {
+          organization: {
+            select: {
+              id: true,
+              slug: true,
+              displayName: true,
+              capabilityProfiles: {
+                where: {
+                  isManaged: true,
+                },
+                orderBy: [{ precedence: "desc" }, { createdAt: "asc" }],
+                select: {
+                  id: true,
+                  name: true,
+                  enabled: true,
+                  managedSource: true,
+                  managedScope: true,
+                  editableByOwner: true,
+                  contactTrustTierCondition: true,
+                  precedence: true,
+                  rules: {
+                    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+                    select: {
+                      id: true,
+                      capability: true,
+                      decision: true,
+                      resourceScopeCondition: true,
+                      channelCondition: true,
+                      requiredPlanTier: true,
+                      priority: true,
+                      requiresHumanApproval: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
           wallet: {
             select: {
               balanceCredits: true,
@@ -1192,6 +1652,12 @@ async function getRepresentativeIdentity(
           enabled: true,
           approvalRequired: true,
           estimatedCostCentsPerCall: true,
+          maxRetries: true,
+          retryBackoffMs: true,
+          consecutiveFailures: true,
+          lastFailureAt: true,
+          lastFailureReason: true,
+          lastSuccessAt: true,
           createdAt: true,
           updatedAt: true,
           representativeSkillPackLink: {
@@ -1204,6 +1670,60 @@ async function getRepresentativeIdentity(
             },
           },
         },
+      },
+      organizationCustomerAccounts: {
+        orderBy: [{ createdAt: "asc" }],
+        select: {
+          id: true,
+          slug: true,
+          displayName: true,
+          enabled: true,
+          contacts: {
+            select: {
+              id: true,
+            },
+          },
+          capabilityProfiles: {
+            where: {
+              isManaged: true,
+            },
+            orderBy: [{ precedence: "desc" }, { createdAt: "asc" }],
+            select: {
+              id: true,
+              name: true,
+              enabled: true,
+              managedSource: true,
+              managedScope: true,
+              editableByOwner: true,
+              contactTrustTierCondition: true,
+              precedence: true,
+              rules: {
+                orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+                select: {
+                  id: true,
+                  capability: true,
+                  decision: true,
+                  resourceScopeCondition: true,
+                  channelCondition: true,
+                  requiredPlanTier: true,
+                  priority: true,
+                  requiresHumanApproval: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      contacts: {
+        orderBy: [{ lastSeenAt: "desc" }],
+        select: {
+          id: true,
+          displayName: true,
+          username: true,
+          computeTrustTier: true,
+          customerAccountId: true,
+        },
+        take: 50,
       },
     },
   });
@@ -1272,6 +1792,7 @@ function serializeRepresentativeIdentity(representative: RepresentativeIdentity)
       }),
     })),
     ownerManagedOverlays: serializeOwnerManagedOverlays(representative.owner.capabilityProfiles),
+    governance: serializeOrganizationGovernance(representative),
     mcpBindings: representative.mcpBindings.map((binding) => serializeMcpBindingRecord(binding)),
   };
 }
@@ -1302,6 +1823,63 @@ function serializeOwnerManagedOverlays(
       mcpRequiresApproval: resolveOverlayRuleApproval(trustedProfile, "MCP", false),
       requiredPlanTier: resolveOverlayRulePlanTier(trustedProfile, "BROWSER", "PASS"),
     },
+  });
+}
+
+function serializeOrganizationGovernance(representative: RepresentativeIdentity) {
+  const orgProfiles = representative.owner.organization?.capabilityProfiles ?? [];
+  const organizationBaseline = orgProfiles.find((profile) => profile.managedScope === "ORG_MANAGED");
+
+  return organizationGovernanceOverlaysSchema.parse({
+    organization: representative.owner.organization
+      ? {
+          id: representative.owner.organization.id,
+          slug: representative.owner.organization.slug,
+          displayName: representative.owner.organization.displayName,
+        }
+      : {
+          id: null,
+          slug: null,
+          displayName: null,
+        },
+    organizationBaseline: {
+      enabled: organizationBaseline?.enabled ?? true,
+      browserDecision: resolveOverlayRuleDecision(organizationBaseline, "BROWSER", "ASK"),
+      browserRequiresApproval: resolveOverlayRuleApproval(organizationBaseline, "BROWSER", true),
+      mcpDecision: resolveOverlayRuleDecision(organizationBaseline, "MCP", "ASK"),
+      mcpRequiresApproval: resolveOverlayRuleApproval(organizationBaseline, "MCP", true),
+      requiredPlanTier: resolveOverlayRulePlanTier(organizationBaseline, "BROWSER", "PASS"),
+    },
+    customerAccounts: representative.organizationCustomerAccounts.map((account) => {
+      const customerProfile = account.capabilityProfiles.find(
+        (profile) => profile.managedScope === "CUSTOMER_ACCOUNT",
+      );
+      return {
+        id: account.id,
+        slug: account.slug,
+        displayName: account.displayName,
+        enabled: customerProfile?.enabled ?? account.enabled,
+        browserDecision: resolveOverlayRuleDecision(customerProfile, "BROWSER", "ASK"),
+        browserRequiresApproval: resolveOverlayRuleApproval(customerProfile, "BROWSER", true),
+        mcpDecision: resolveOverlayRuleDecision(customerProfile, "MCP", "ALLOW"),
+        mcpRequiresApproval: resolveOverlayRuleApproval(customerProfile, "MCP", false),
+        requiredPlanTier: resolveOverlayRulePlanTier(customerProfile, "BROWSER", "PASS"),
+        contactIds: account.contacts.map((contact) => contact.id),
+      };
+    }),
+    contactAssignments: representative.contacts.map((contact) => {
+      const customerAccount = representative.organizationCustomerAccounts.find(
+        (account) => account.id === contact.customerAccountId,
+      );
+      return {
+        contactId: contact.id,
+        displayName: contact.displayName,
+        username: contact.username,
+        computeTrustTier: resolveOverlayTrustTier(contact.computeTrustTier),
+        customerAccountId: contact.customerAccountId,
+        customerAccountSlug: customerAccount?.slug ?? null,
+      };
+    }),
   });
 }
 
@@ -1347,6 +1925,60 @@ function resolveOverlayTrustTier(
   return "standard";
 }
 
+function buildManagedOverlayRules(params: {
+  profileId: string;
+  profileKey: string;
+  precedenceBase: number;
+  config: {
+    browserDecision: "allow" | "ask" | "deny";
+    browserRequiresApproval: boolean;
+    mcpDecision: "allow" | "ask" | "deny";
+    mcpRequiresApproval: boolean;
+    requiredPlanTier: "pass" | "deep_help";
+  };
+}) {
+  return [
+    {
+      id: `${params.profileId}_${params.profileKey}_browser`,
+      profileId: params.profileId,
+      capability: "BROWSER" as const,
+      decision: params.config.browserDecision.toUpperCase() as "ALLOW" | "ASK" | "DENY",
+      resourceScopeCondition: "BROWSER_LANE" as const,
+      channelCondition: "PRIVATE_CHAT" as const,
+      requiredPlanTier: params.config.requiredPlanTier.toUpperCase() as "PASS" | "DEEP_HELP",
+      priority: params.precedenceBase,
+      requiresPaidPlan: true,
+      requiresHumanApproval: params.config.browserRequiresApproval,
+    },
+    {
+      id: `${params.profileId}_${params.profileKey}_mcp`,
+      profileId: params.profileId,
+      capability: "MCP" as const,
+      decision: params.config.mcpDecision.toUpperCase() as "ALLOW" | "ASK" | "DENY",
+      resourceScopeCondition: "REMOTE_MCP" as const,
+      channelCondition: "PRIVATE_CHAT" as const,
+      requiredPlanTier: params.config.requiredPlanTier.toUpperCase() as "PASS" | "DEEP_HELP",
+      priority: params.precedenceBase - 5,
+      requiresPaidPlan: true,
+      requiresHumanApproval: params.config.mcpRequiresApproval,
+    },
+  ];
+}
+
+function slugifyGovernanceValue(input: string, fallbackSeed: string) {
+  const normalized = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (normalized) {
+    return normalized;
+  }
+
+  return `governance-${fallbackSeed.slice(0, 8).toLowerCase()}`;
+}
+
 function serializeMcpBindingRecord(binding: RepresentativeIdentity["mcpBindings"][number]) {
   return {
     id: binding.id,
@@ -1356,7 +1988,7 @@ function serializeMcpBindingRecord(binding: RepresentativeIdentity["mcpBindings"
     displayName: binding.displayName,
     description: binding.description,
     serverUrl: binding.serverUrl,
-    transportKind: binding.transportKind.toLowerCase() as "streamable_http",
+    transportKind: binding.transportKind.toLowerCase() as "streamable_http" | "sse",
     allowedToolNames: Array.isArray(binding.allowedToolNames)
       ? binding.allowedToolNames.filter((value): value is string => typeof value === "string")
       : [],
@@ -1364,6 +1996,12 @@ function serializeMcpBindingRecord(binding: RepresentativeIdentity["mcpBindings"
     enabled: binding.enabled,
     approvalRequired: binding.approvalRequired,
     estimatedCostCentsPerCall: binding.estimatedCostCentsPerCall,
+    maxRetries: binding.maxRetries,
+    retryBackoffMs: binding.retryBackoffMs,
+    consecutiveFailures: binding.consecutiveFailures,
+    lastFailureAt: binding.lastFailureAt?.toISOString() ?? null,
+    lastFailureReason: binding.lastFailureReason,
+    lastSuccessAt: binding.lastSuccessAt?.toISOString() ?? null,
     createdAt: binding.createdAt.toISOString(),
     updatedAt: binding.updatedAt.toISOString(),
     ...(binding.representativeSkillPackLink?.skillPack.displayName

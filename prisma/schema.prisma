@@ -111,6 +111,7 @@ enum CapabilityKind {
 
 enum McpTransportKind {
   STREAMABLE_HTTP
+  SSE
 }
 
 enum CapabilityPlanTier {
@@ -129,6 +130,15 @@ enum ManagedPolicyScope {
   DELEGATE_MANAGED
   OWNER_MANAGED
   CUSTOMER_TRUST_TIER
+  ORG_MANAGED
+  CUSTOMER_ACCOUNT
+}
+
+enum OrganizationMemberRole {
+  OWNER
+  ADMIN
+  APPROVER
+  ANALYST
 }
 
 enum PolicyResourceScope {
@@ -181,6 +191,25 @@ enum ArtifactKind {
   SCREENSHOT
   JSON
   TRACE
+}
+
+enum DeliverableKind {
+  DECK
+  CASE_STUDY
+  DOWNLOAD
+  GENERATED_DOCUMENT
+  PACKAGE
+}
+
+enum DeliverableVisibility {
+  OWNER_ONLY
+  PUBLIC_MATERIAL
+}
+
+enum DeliverableSourceKind {
+  ARTIFACT
+  EXTERNAL_LINK
+  BUNDLE
 }
 
 enum BrowserTransportKind {
@@ -254,6 +283,7 @@ enum ComputeFilesystemMode {
 
 model Owner {
   id              String           @id @default(cuid())
+  organizationId  String?
   telegramUserId  String?          @unique
   displayName     String
   handle          String?
@@ -261,6 +291,8 @@ model Owner {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   wallet          Wallet?
+  organization    Organization?    @relation(fields: [organizationId], references: [id])
+  organizationMember OrganizationMember?
   capabilityProfiles CapabilityPolicyProfile[]
   representatives Representative[]
 }
@@ -274,6 +306,54 @@ model Wallet {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   owner             Owner    @relation(fields: [ownerId], references: [id])
+}
+
+model Organization {
+  id                 String                   @id @default(cuid())
+  slug               String                   @unique
+  displayName        String
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  owners             Owner[]
+  members            OrganizationMember[]
+  capabilityProfiles CapabilityPolicyProfile[]
+  customerAccounts   CustomerAccount[]
+}
+
+model OrganizationMember {
+  id                  String                 @id @default(cuid())
+  organizationId      String
+  ownerId             String                 @unique
+  displayName         String
+  role                OrganizationMemberRole @default(OWNER)
+  canApproveCompute   Boolean                @default(true)
+  canManageBilling    Boolean                @default(true)
+  canManageArtifacts  Boolean                @default(true)
+  canManagePolicies   Boolean                @default(true)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  organization        Organization           @relation(fields: [organizationId], references: [id])
+  owner               Owner                  @relation(fields: [ownerId], references: [id])
+
+  @@unique([organizationId, ownerId])
+}
+
+model CustomerAccount {
+  id                 String                   @id @default(cuid())
+  organizationId     String
+  representativeId   String
+  slug               String
+  displayName        String
+  enabled            Boolean                  @default(true)
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  organization       Organization             @relation(fields: [organizationId], references: [id])
+  representative     Representative           @relation(fields: [representativeId], references: [id])
+  contacts           Contact[]
+  capabilityProfiles CapabilityPolicyProfile[]
+
+  @@unique([representativeId, slug])
+  @@index([organizationId, representativeId, enabled])
 }
 
 model Representative {
@@ -330,12 +410,14 @@ model Representative {
   events            EventAudit[]
   handoffRequests   HandoffRequest[]
   artifacts         Artifact[]
+  deliverables      Deliverable[]
   approvalRequests  ApprovalRequest[]
   intakeSubmissions IntakeSubmission[]
   invoices          Invoice[]
   ledgerEntries     LedgerEntry[]
   browserSessions   BrowserSession[]
   browserNavigations BrowserNavigation[]
+  organizationCustomerAccounts CustomerAccount[]
   knowledgePack     KnowledgePack?
   memoryRecords     OpenVikingMemoryRecord[]
   pricingPlans      PricingPlan[]
@@ -422,6 +504,12 @@ model RepresentativeMcpBinding {
   enabled                      Boolean                 @default(true)
   approvalRequired             Boolean                 @default(true)
   estimatedCostCentsPerCall    Int                     @default(0)
+  maxRetries                   Int                     @default(2)
+  retryBackoffMs               Int                     @default(1000)
+  consecutiveFailures          Int                     @default(0)
+  lastFailureAt                DateTime?
+  lastFailureReason            String?
+  lastSuccessAt                DateTime?
   createdAt                    DateTime                @default(now())
   updatedAt                    DateTime                @updatedAt
   representative               Representative          @relation(fields: [representativeId], references: [id])
@@ -435,6 +523,7 @@ model RepresentativeMcpBinding {
 model Contact {
   id               String            @id @default(cuid())
   representativeId String
+  customerAccountId String?
   telegramUserId   String
   username         String?
   displayName      String?
@@ -446,6 +535,7 @@ model Contact {
   updatedAt        DateTime          @updatedAt
   lastSeenAt       DateTime          @default(now())
   representative   Representative    @relation(fields: [representativeId], references: [id])
+  customerAccount  CustomerAccount?  @relation(fields: [customerAccountId], references: [id])
   commitTraces     ConversationCommitTrace[]
   conversations    Conversation[]
   events           EventAudit[]
@@ -606,6 +696,8 @@ model CapabilityPolicyProfile {
   id                 String                @id @default(cuid())
   representativeId   String?
   ownerId            String?
+  organizationId     String?
+  customerAccountId  String?
   name               String
   isDefault          Boolean               @default(true)
   enabled            Boolean               @default(true)
@@ -627,11 +719,15 @@ model CapabilityPolicyProfile {
   updatedAt          DateTime              @updatedAt
   representative     Representative?       @relation(fields: [representativeId], references: [id])
   owner              Owner?                @relation(fields: [ownerId], references: [id])
+  organization       Organization?         @relation(fields: [organizationId], references: [id])
+  customerAccount    CustomerAccount?      @relation(fields: [customerAccountId], references: [id])
   computeSessions    ComputeSession[]
   rules              CapabilityPolicyRule[]
 
   @@index([representativeId, isDefault])
   @@index([ownerId, managedScope, enabled])
+  @@index([organizationId, managedScope, enabled])
+  @@index([customerAccountId, managedScope, enabled])
 }
 
 model CapabilityPolicyRule {
@@ -777,9 +873,31 @@ model Artifact {
   conversation     Conversation?   @relation(fields: [conversationId], references: [id])
   session          ComputeSession? @relation(fields: [sessionId], references: [id])
   toolExecution    ToolExecution?  @relation(fields: [toolExecutionId], references: [id])
+  deliverables     Deliverable[]
 
   @@index([representativeId, createdAt])
   @@index([sessionId, createdAt])
+}
+
+model Deliverable {
+  id                  String                @id @default(cuid())
+  representativeId    String
+  artifactId          String?
+  title               String
+  summary             String
+  kind                DeliverableKind
+  visibility          DeliverableVisibility @default(OWNER_ONLY)
+  sourceKind          DeliverableSourceKind
+  externalUrl         String?
+  bundleItemArtifactIds String[]           @default([])
+  createdBy           String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  representative      Representative        @relation(fields: [representativeId], references: [id])
+  artifact            Artifact?             @relation(fields: [artifactId], references: [id])
+
+  @@index([representativeId, visibility, createdAt])
+  @@index([artifactId])
 }
 
 model WorkflowRun {

@@ -2,7 +2,11 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
 import type { PlanTier, Representative } from "@delegate/domain";
-import { getRepresentativeSetupSnapshot, getRepresentativeSkillPackSnapshot } from "@delegate/web-data";
+import {
+  getRepresentativePublicDeliverables,
+  getRepresentativeSetupSnapshot,
+  getRepresentativeSkillPackSnapshot,
+} from "@delegate/web-data";
 import {
   DashboardPanelFrame,
   DashboardSignalStrip,
@@ -40,9 +44,10 @@ export default async function RepresentativePage({
     process.env.NEXT_PUBLIC_DASHBOARD_URL,
     "http://localhost:3001",
   );
-  const [setupSnapshot, skillPackSnapshot] = await Promise.all([
+  const [setupSnapshot, skillPackSnapshot, deliverableSnapshot] = await Promise.all([
     getRepresentativeSetupSnapshot(slug),
     getRepresentativeSkillPackSnapshot(slug),
+    getRepresentativePublicDeliverables(slug),
   ]);
 
   if (!setupSnapshot || !skillPackSnapshot) {
@@ -53,13 +58,17 @@ export default async function RepresentativePage({
     ...setupSnapshot,
     skillPacks: skillPackSnapshot.skillPacks,
   };
+  const publicDeliverables = deliverableSnapshot?.deliverables ?? [];
   const enabledSkillPacks = representative.skillPacks.filter((skillPack) => skillPack.enabled);
   const totalKnowledgeItems =
     representative.knowledgePack.faq.length +
     representative.knowledgePack.materials.length +
-    representative.knowledgePack.policies.length;
+    representative.knowledgePack.policies.length +
+    publicDeliverables.length;
   const skillLabels = buildSkillLabels(locale);
   const groupActivationLabels = buildGroupActivationLabels(locale);
+  const deliverableKindLabels = buildDeliverableKindLabels(locale);
+  const deliverableSourceLabels = buildDeliverableSourceLabels(locale);
   const menu = t.menu;
 
   return (
@@ -302,6 +311,43 @@ export default async function RepresentativePage({
                 <li className="list-item" key={item.id}>
                   <strong>{item.title}</strong>
                   <p>{item.summary}</p>
+                  {item.url ? (
+                    <div className="button-row">
+                      <a className="button-secondary" href={item.url} rel="noreferrer" target="_blank">
+                        {t.openMaterial}
+                      </a>
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+              {publicDeliverables.map((deliverable) => (
+                <li className="list-item" key={deliverable.id}>
+                  <strong>{deliverable.title}</strong>
+                  <p>{deliverable.summary}</p>
+                  <div className="chip-row">
+                    <span className="chip chip-safe">{t.publicDeliverableChip}</span>
+                    <span className="chip">{deliverableKindLabels[deliverable.kind]}</span>
+                    <span className="chip">{deliverableSourceLabels[deliverable.sourceKind]}</span>
+                  </div>
+                  <div className="button-row">
+                    {deliverable.sourceKind === "external_link" && deliverable.externalUrl ? (
+                      <a
+                        className="button-secondary"
+                        href={deliverable.externalUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        {t.openMaterial}
+                      </a>
+                    ) : (
+                      <a
+                        className="button-secondary"
+                        href={`/reps/${representative.slug}/deliverables/${deliverable.id}/download`}
+                      >
+                        {t.downloadDeliverable}
+                      </a>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
@@ -461,6 +507,38 @@ function buildGroupActivationLabels(locale: Locale) {
       };
 }
 
+function buildDeliverableKindLabels(locale: Locale) {
+  return locale === "zh"
+    ? {
+        deck: "介绍材料",
+        case_study: "案例",
+        download: "下载项",
+        generated_document: "生成文档",
+        package: "资料包",
+      }
+    : {
+        deck: "Deck",
+        case_study: "Case study",
+        download: "Download",
+        generated_document: "Generated doc",
+        package: "Package",
+      };
+}
+
+function buildDeliverableSourceLabels(locale: Locale) {
+  return locale === "zh"
+    ? {
+        artifact: "运行产物",
+        external_link: "外部链接",
+        bundle: "打包下载",
+      }
+    : {
+        artifact: "Artifact-backed",
+        external_link: "External link",
+        bundle: "Bundled",
+      };
+}
+
 const copy = {
   zh: {
     brandTagline: "Trust-first public representative profile",
@@ -529,6 +607,9 @@ const copy = {
     faqTitle: "高频标准答案",
     materialsEyebrow: "Materials",
     materialsTitle: "可直接投递的公开材料",
+    openMaterial: "打开资料",
+    downloadDeliverable: "下载交付件",
+    publicDeliverableChip: "公开交付件",
     policiesEyebrow: "Policies",
     policiesTitle: "合作边界与响应规则",
     plansEyebrow: "Plans",
@@ -617,6 +698,9 @@ const copy = {
     faqTitle: "High-frequency answers",
     materialsEyebrow: "Materials",
     materialsTitle: "Public materials that can be delivered directly",
+    openMaterial: "Open material",
+    downloadDeliverable: "Download deliverable",
+    publicDeliverableChip: "Public deliverable",
     policiesEyebrow: "Policies",
     policiesTitle: "Boundary and response rules",
     plansEyebrow: "Plans",

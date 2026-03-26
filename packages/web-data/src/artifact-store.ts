@@ -1,4 +1,4 @@
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { artifactStoreConfigSchema } from "@delegate/artifacts";
 
 const artifactStoreConfig = artifactStoreConfigSchema.parse({
@@ -19,6 +19,10 @@ const artifactClient = new S3Client({
     secretAccessKey: artifactStoreConfig.secretAccessKey,
   },
 });
+
+export function getArtifactStoreBucket() {
+  return artifactStoreConfig.bucket;
+}
 
 export async function readArtifactObject(objectKey: string): Promise<{
   buffer: Buffer;
@@ -48,4 +52,19 @@ export async function readArtifactObject(objectKey: string): Promise<{
     buffer: Buffer.concat(chunks),
     ...(response.ContentType ? { contentType: response.ContentType } : {}),
   };
+}
+
+export async function writeArtifactObject(params: {
+  objectKey: string;
+  body: Buffer;
+  contentType: string;
+}) {
+  await artifactClient.send(
+    new PutObjectCommand({
+      Bucket: artifactStoreConfig.bucket,
+      Key: params.objectKey,
+      Body: params.body,
+      ContentType: params.contentType,
+    }),
+  );
 }

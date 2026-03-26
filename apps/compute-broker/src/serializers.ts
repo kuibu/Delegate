@@ -305,6 +305,12 @@ export function serializeMcpBinding(binding: {
   enabled: boolean;
   approvalRequired: boolean;
   estimatedCostCentsPerCall: number;
+  maxRetries: number;
+  retryBackoffMs: number;
+  consecutiveFailures: number;
+  lastFailureAt: Date | null;
+  lastFailureReason: string | null;
+  lastSuccessAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -324,6 +330,12 @@ export function serializeMcpBinding(binding: {
     enabled: binding.enabled,
     approvalRequired: binding.approvalRequired,
     estimatedCostCentsPerCall: binding.estimatedCostCentsPerCall,
+    maxRetries: binding.maxRetries,
+    retryBackoffMs: binding.retryBackoffMs,
+    consecutiveFailures: binding.consecutiveFailures,
+    lastFailureAt: binding.lastFailureAt?.toISOString() ?? null,
+    lastFailureReason: binding.lastFailureReason,
+    lastSuccessAt: binding.lastSuccessAt?.toISOString() ?? null,
     createdAt: binding.createdAt.toISOString(),
     updatedAt: binding.updatedAt.toISOString(),
   });
@@ -416,6 +428,8 @@ export function serializeCapabilityProfile(profile: {
   id: string;
   representativeId: string | null;
   ownerId: string | null;
+  organizationId: string | null;
+  customerAccountId: string | null;
   name: string;
   isDefault: boolean;
   enabled: boolean;
@@ -453,6 +467,8 @@ export function serializeCapabilityProfile(profile: {
     id: profile.id,
     representativeId: profile.representativeId,
     ownerId: profile.ownerId,
+    organizationId: profile.organizationId,
+    customerAccountId: profile.customerAccountId,
     name: profile.name,
     isDefault: profile.isDefault,
     enabled: profile.enabled,
@@ -461,7 +477,9 @@ export function serializeCapabilityProfile(profile: {
       | "representative_default"
       | "delegate_managed"
       | "owner_managed"
-      | "customer_trust_tier",
+      | "customer_trust_tier"
+      | "org_managed"
+      | "customer_account",
     ...(profile.managedSource ? { managedSource: profile.managedSource } : {}),
     editableByOwner: profile.editableByOwner,
     ...(profile.contactTrustTierCondition

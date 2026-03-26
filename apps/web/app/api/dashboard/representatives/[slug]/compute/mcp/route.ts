@@ -55,7 +55,7 @@ export async function POST(
           ? body.description.trim()
           : undefined,
       serverUrl: String(body.serverUrl ?? ""),
-      transportKind: body.transportKind === "streamable_http" ? "streamable_http" : "streamable_http",
+      transportKind: body.transportKind === "sse" ? "sse" : "streamable_http",
       allowedToolNames: Array.isArray(body.allowedToolNames)
         ? body.allowedToolNames.filter((value): value is string => typeof value === "string")
         : [],
@@ -70,6 +70,14 @@ export async function POST(
         Number.isFinite(body.estimatedCostCentsPerCall)
           ? Math.max(0, Math.trunc(body.estimatedCostCentsPerCall))
           : 0,
+      maxRetries:
+        typeof body.maxRetries === "number" && Number.isFinite(body.maxRetries)
+          ? Math.max(0, Math.min(5, Math.trunc(body.maxRetries)))
+          : 2,
+      retryBackoffMs:
+        typeof body.retryBackoffMs === "number" && Number.isFinite(body.retryBackoffMs)
+          ? Math.max(100, Math.min(30000, Math.trunc(body.retryBackoffMs)))
+          : 1000,
     });
 
     return NextResponse.json(binding, { status: 201 });

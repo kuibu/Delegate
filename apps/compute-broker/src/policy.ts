@@ -23,6 +23,22 @@ export async function loadSessionPolicyContext(sessionId: string) {
           owner: {
             include: {
               wallet: true,
+              organization: {
+                include: {
+                  capabilityProfiles: {
+                    where: {
+                      isManaged: true,
+                      enabled: true,
+                    },
+                    orderBy: [{ precedence: "desc" }, { createdAt: "asc" }],
+                    include: {
+                      rules: {
+                        orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+                      },
+                    },
+                  },
+                },
+              },
               capabilityProfiles: {
                 where: {
                   isManaged: true,
@@ -51,7 +67,26 @@ export async function loadSessionPolicyContext(sessionId: string) {
           },
         },
       },
-      contact: true,
+      contact: {
+        include: {
+          customerAccount: {
+            include: {
+              capabilityProfiles: {
+                where: {
+                  isManaged: true,
+                  enabled: true,
+                },
+                orderBy: [{ precedence: "desc" }, { createdAt: "asc" }],
+                include: {
+                  rules: {
+                    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       conversation: true,
       policyProfile: {
         include: {
@@ -83,7 +118,9 @@ export async function loadSessionPolicyContext(sessionId: string) {
     session,
     profile: serializeCapabilityProfile(session.policyProfile),
     managedProfiles: [
+      ...(session.representative.owner.organization?.capabilityProfiles ?? []),
       ...session.representative.owner.capabilityProfiles,
+      ...(session.contact?.customerAccount?.capabilityProfiles ?? []),
       ...session.representative.capabilityProfiles,
     ].map((profile) =>
       serializeCapabilityProfile(profile),
@@ -139,6 +176,9 @@ export async function evaluateExecutionRequest(sessionId: string, rawInput: unkn
       estimatedCostCents: input.estimatedCostCents,
       hasPaidEntitlement: entitlements.hasPaidEntitlement,
       contactTrustTier: normalizeContactTrustTier(context.session.contact?.computeTrustTier),
+      ...(context.session.contact?.customerAccountId
+        ? { customerAccountId: context.session.contact.customerAccountId }
+        : {}),
     },
   );
 

@@ -20,6 +20,7 @@ export type EvaluateCapabilityRequest = {
   estimatedCostCents?: number | undefined;
   hasPaidEntitlement?: boolean | undefined;
   contactTrustTier?: ContactComputeTrustTier | undefined;
+  customerAccountId?: string | undefined;
 };
 
 export type EvaluatedCapabilityDecision = {
@@ -159,6 +160,10 @@ function matchesManagedProfile(
   profile: CapabilityPolicyProfile,
   request: EvaluateCapabilityRequest,
 ): boolean {
+  if (profile.customerAccountId && request.customerAccountId !== profile.customerAccountId) {
+    return false;
+  }
+
   if (!profile.contactTrustTierCondition) {
     return true;
   }

@@ -38,8 +38,13 @@ import {
   readPersistedArtifactObject,
 } from "./artifacts";
 import { computeLifecycleHooks } from "./lifecycle-hooks";
-import { loadRepresentativeMcpBinding, resolveMcpToolName } from "./mcp-bindings";
-import { callRemoteMcpTool } from "./mcp";
+import {
+  loadRepresentativeMcpBinding,
+  recordRepresentativeMcpBindingFailure,
+  recordRepresentativeMcpBindingSuccess,
+  resolveMcpToolName,
+} from "./mcp-bindings";
+import { callRemoteMcpTool, McpTransportError } from "./mcp";
 import { executeNativeComputerUseLoop } from "./native-browser";
 import { extractHostname, isHostnameAllowed, normalizeNetworkAllowlist } from "./network-allowlist";
 import { normalizeContainerPath } from "./path-utils";
@@ -1143,20 +1148,45 @@ async function runMcpExecution(params: {
     requestedToolName: params.input.toolName,
   });
   const startedAt = Date.now();
-  const toolResult = await callRemoteMcpTool({
-    binding,
-    requestedToolName: resolved.toolName,
-    toolArguments: params.input.toolArguments,
-  });
+  let toolResult: Awaited<ReturnType<typeof callRemoteMcpTool>>;
+  try {
+    toolResult = await callRemoteMcpTool({
+      binding: {
+        ...binding,
+        transportKind: binding.transportKind.toLowerCase() as "streamable_http" | "sse",
+      },
+      requestedToolName: resolved.toolName,
+      toolArguments: params.input.toolArguments,
+    });
+    await recordRepresentativeMcpBindingSuccess(binding.id);
+  } catch (error) {
+    const failureReason =
+      error instanceof McpTransportError
+        ? truncate(error.message, 180)
+        : error instanceof Error
+          ? truncate(error.message, 180)
+          : truncate(String(error), 180);
+
+    await recordRepresentativeMcpBindingFailure({
+      bindingId: binding.id,
+      failureReason,
+    });
+    throw error;
+  }
+
   const payload = {
     binding: {
       id: binding.id,
       slug: binding.slug,
       displayName: binding.displayName,
       serverUrl: binding.serverUrl,
+      transportKind: binding.transportKind.toLowerCase(),
       toolName: toolResult.toolName,
       allowedToolNames: toolResult.allowedToolNames,
       availableToolNames: toolResult.availableToolNames,
+      maxRetries: binding.maxRetries,
+      retryBackoffMs: binding.retryBackoffMs,
+      attempts: toolResult.attempts,
     },
     arguments: params.input.toolArguments ?? {},
     result: toolResult.result,

@@ -1,5 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { SSEClientTransport, SseError } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 import { computeBrokerConfig } from "./config";
@@ -11,8 +13,11 @@ type BindingRecord = {
   slug: string;
   displayName: string;
   serverUrl: string;
+  transportKind: "streamable_http" | "sse";
   defaultToolName: string | null;
   allowedToolNames: unknown;
+  maxRetries: number;
+  retryBackoffMs: number;
 };
 
 type CallToolResultContent = Array<
@@ -34,14 +39,54 @@ export async function callRemoteMcpTool(params: {
   toolArguments?: Record<string, unknown> | undefined;
 }) {
   const bindingUrl = safeParseUrl(params.binding.serverUrl);
-  const transport = new StreamableHTTPClientTransport(bindingUrl, {
-    fetch: createTimedFetch(computeBrokerConfig.mcpTimeoutMs),
-    requestInit: {
-      headers: {
-        "user-agent": "Delegate-Compute-Broker/0.1",
-      },
-    },
-  });
+  const maxRetries = Math.max(0, params.binding.maxRetries ?? 0);
+  const retryBackoffMs = Math.max(100, params.binding.retryBackoffMs ?? 1000);
+
+  let attempt = 0;
+  let lastError: McpTransportError | SessionError | Error | null = null;
+
+  while (attempt <= maxRetries) {
+    attempt += 1;
+
+    try {
+      const result = await callRemoteMcpToolOnce({
+        binding: params.binding,
+        bindingUrl,
+        requestedToolName: params.requestedToolName,
+        toolArguments: params.toolArguments,
+      });
+
+      return {
+        ...result,
+        attempts: attempt,
+        transportKind: params.binding.transportKind,
+      };
+    } catch (error) {
+      if (error instanceof SessionError && !(error instanceof McpTransportError)) {
+        throw error;
+      }
+
+      const normalized = normalizeMcpError(error, params.binding.transportKind, attempt);
+      lastError = normalized;
+
+      if (!normalized.retryable || attempt > maxRetries) {
+        throw normalized;
+      }
+
+      await delay(retryBackoffMs * attempt);
+    }
+  }
+
+  throw lastError ?? new SessionError(502, "mcp_transport_failed:unknown_failure");
+}
+
+async function callRemoteMcpToolOnce(params: {
+  binding: BindingRecord;
+  bindingUrl: URL;
+  requestedToolName?: string | null | undefined;
+  toolArguments?: Record<string, unknown> | undefined;
+}) {
+  const transport = createTransport(params.binding.transportKind, params.bindingUrl);
   const client = new Client({
     name: "delegate-compute-broker",
     version: "0.1.0",
@@ -73,16 +118,26 @@ export async function callRemoteMcpTool(params: {
       result,
       summary: summarizeMcpResult(result.content),
     };
-  } catch (error) {
-    if (error instanceof SessionError) {
-      throw error;
-    }
-
-    const message = error instanceof Error ? error.message : String(error);
-    throw new SessionError(502, `mcp_transport_failed:${message}`);
   } finally {
     await client.close().catch(() => undefined);
   }
+}
+
+function createTransport(kind: BindingRecord["transportKind"], url: URL) {
+  const common = {
+    fetch: createTimedFetch(computeBrokerConfig.mcpTimeoutMs),
+    requestInit: {
+      headers: {
+        "user-agent": "Delegate-Compute-Broker/0.1",
+      },
+    },
+  };
+
+  if (kind === "sse") {
+    return new SSEClientTransport(url, common);
+  }
+
+  return new StreamableHTTPClientTransport(url, common);
 }
 
 function safeParseUrl(value: string) {
@@ -101,6 +156,137 @@ function createTimedFetch(timeoutMs: number): typeof fetch {
       signal,
     });
   };
+}
+
+type McpFailureClassification =
+  | "timeout"
+  | "unauthorized"
+  | "endpoint_not_found"
+  | "server_unavailable"
+  | "transport_connection_failed";
+
+export class McpTransportError extends SessionError {
+  constructor(
+    readonly classification: McpFailureClassification,
+    readonly transportKind: BindingRecord["transportKind"],
+    readonly attempt: number,
+    readonly retryable: boolean,
+    message: string,
+  ) {
+    super(502, `mcp_${classification}:${message}`);
+  }
+}
+
+function normalizeMcpError(
+  error: unknown,
+  transportKind: BindingRecord["transportKind"],
+  attempt: number,
+) {
+  const details = classifyMcpTransportFailure(error);
+  return new McpTransportError(
+    details.classification,
+    transportKind,
+    attempt,
+    details.retryable,
+    details.message,
+  );
+}
+
+function classifyMcpTransportFailure(error: unknown): {
+  classification: McpFailureClassification;
+  retryable: boolean;
+  message: string;
+} {
+  if (error instanceof StreamableHTTPError || error instanceof SseError) {
+    return classifyByStatus(error.code, error.message);
+  }
+
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    const lower = message.toLowerCase();
+
+    if (error.name === "TimeoutError" || error.name === "AbortError" || lower.includes("timeout")) {
+      return {
+        classification: "timeout",
+        retryable: true,
+        message,
+      };
+    }
+
+    if (lower.includes("401") || lower.includes("unauthorized")) {
+      return {
+        classification: "unauthorized",
+        retryable: false,
+        message,
+      };
+    }
+
+    if (lower.includes("404") || lower.includes("not found")) {
+      return {
+        classification: "endpoint_not_found",
+        retryable: false,
+        message,
+      };
+    }
+
+    return {
+      classification: "transport_connection_failed",
+      retryable: true,
+      message,
+    };
+  }
+
+  return {
+    classification: "transport_connection_failed",
+    retryable: true,
+    message: String(error),
+  };
+}
+
+function classifyByStatus(statusCode: number | undefined, message: string) {
+  if (typeof statusCode !== "number") {
+    return {
+      classification: "transport_connection_failed" as const,
+      retryable: true,
+      message,
+    };
+  }
+
+  if (statusCode === 401) {
+    return {
+      classification: "unauthorized" as const,
+      retryable: false,
+      message,
+    };
+  }
+
+  if (statusCode === 404) {
+    return {
+      classification: "endpoint_not_found" as const,
+      retryable: false,
+      message,
+    };
+  }
+
+  if (statusCode === 408 || statusCode === 429 || statusCode >= 500) {
+    return {
+      classification: "server_unavailable" as const,
+      retryable: true,
+      message,
+    };
+  }
+
+  return {
+    classification: "transport_connection_failed" as const,
+    retryable: true,
+    message,
+  };
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function summarizeMcpResult(content: unknown) {

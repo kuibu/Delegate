@@ -6,6 +6,8 @@ describe("evaluateCapabilityPolicy", () => {
     id: "profile_1",
     representativeId: "rep_1",
     ownerId: null,
+    organizationId: null,
+    customerAccountId: null,
     name: "Default",
     isDefault: true,
     enabled: true,
@@ -119,6 +121,8 @@ describe("evaluateCapabilityPolicy", () => {
       id: "managed_customer_verified",
       representativeId: null,
       ownerId: "owner_1",
+      organizationId: null,
+      customerAccountId: null,
       name: "Verified Customer Overlay",
       isDefault: false,
       isManaged: true,
@@ -178,6 +182,8 @@ describe("evaluateCapabilityPolicy", () => {
       id: "delegate_deny_mcp",
       representativeId: "rep_1",
       ownerId: null,
+      organizationId: null,
+      customerAccountId: null,
       name: "Delegate Deny",
       isDefault: false,
       isManaged: true,
@@ -200,6 +206,8 @@ describe("evaluateCapabilityPolicy", () => {
       id: "owner_allow_mcp",
       representativeId: null,
       ownerId: "owner_1",
+      organizationId: null,
+      customerAccountId: null,
       name: "Owner Allow",
       isDefault: false,
       isManaged: true,
@@ -227,5 +235,54 @@ describe("evaluateCapabilityPolicy", () => {
 
     expect(result.decision).toBe("deny");
     expect(result.matchedRuleId).toBe("deny_remote_mcp");
+  });
+
+  it("only applies customer-account overlays to contacts assigned to that account", () => {
+    const customerAccountOverlay = {
+      ...profile,
+      id: "customer_account_overlay",
+      representativeId: "rep_1",
+      ownerId: null,
+      organizationId: "org_1",
+      customerAccountId: "customer_acme",
+      name: "Acme Overlay",
+      isDefault: false,
+      isManaged: true,
+      managedScope: "customer_account" as const,
+      precedence: 120,
+      rules: [
+        {
+          id: "acme_browser_allow",
+          capability: "browser" as const,
+          decision: "allow" as const,
+          resourceScopeCondition: "browser_lane" as const,
+          requiredPlanTier: "pass" as const,
+          priority: 210,
+          requiresHumanApproval: false,
+          requiresPaidPlan: true,
+        },
+      ],
+    };
+
+    const fallbackForOtherAccount = evaluateCapabilityPolicyStack([customerAccountOverlay, profile], {
+      capability: "browser",
+      resourceScope: "browser_lane",
+      activePlanTier: "pass",
+      hasPaidEntitlement: true,
+      customerAccountId: "customer_other",
+    });
+
+    expect(fallbackForOtherAccount.reason).toBe("default_profile_decision");
+
+    const allowedForAssignedAccount = evaluateCapabilityPolicyStack([customerAccountOverlay, profile], {
+      capability: "browser",
+      resourceScope: "browser_lane",
+      activePlanTier: "pass",
+      hasPaidEntitlement: true,
+      customerAccountId: "customer_acme",
+    });
+
+    expect(allowedForAssignedAccount.decision).toBe("allow");
+    expect(allowedForAssignedAccount.matchedRuleId).toBe("acme_browser_allow");
   });
 });

@@ -73,3 +73,29 @@ export function resolveMcpToolName(params: {
     allowedToolNames,
   };
 }
+
+export async function recordRepresentativeMcpBindingSuccess(bindingId: string) {
+  await prisma.representativeMcpBinding.update({
+    where: { id: bindingId },
+    data: {
+      consecutiveFailures: 0,
+      lastSuccessAt: new Date(),
+    },
+  });
+}
+
+export async function recordRepresentativeMcpBindingFailure(params: {
+  bindingId: string;
+  failureReason: string;
+}) {
+  await prisma.representativeMcpBinding.update({
+    where: { id: params.bindingId },
+    data: {
+      consecutiveFailures: {
+        increment: 1,
+      },
+      lastFailureAt: new Date(),
+      lastFailureReason: params.failureReason,
+    },
+  });
+}

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 
+import { maxDeliverableBundleItems } from "@delegate/compute-protocol";
 import {
   DashboardPanelFrame,
   DashboardSignalStrip,
@@ -56,6 +57,41 @@ type ComputeSnapshot = {
         requiredPlanTier: "pass" | "deep_help";
       };
     };
+    governance: {
+      organization: {
+        id?: string | null;
+        slug?: string | null;
+        displayName?: string | null;
+      };
+      organizationBaseline: {
+        enabled: boolean;
+        browserDecision: "allow" | "ask" | "deny";
+        browserRequiresApproval: boolean;
+        mcpDecision: "allow" | "ask" | "deny";
+        mcpRequiresApproval: boolean;
+        requiredPlanTier: "pass" | "deep_help";
+      };
+      customerAccounts: Array<{
+        id?: string | null;
+        slug: string;
+        displayName: string;
+        enabled: boolean;
+        browserDecision: "allow" | "ask" | "deny";
+        browserRequiresApproval: boolean;
+        mcpDecision: "allow" | "ask" | "deny";
+        mcpRequiresApproval: boolean;
+        requiredPlanTier: "pass" | "deep_help";
+        contactIds: string[];
+      }>;
+      contactAssignments: Array<{
+        contactId: string;
+        displayName?: string | null;
+        username?: string | null;
+        computeTrustTier?: "standard" | "verified" | "vip" | "restricted" | null;
+        customerAccountId?: string | null;
+        customerAccountSlug?: string | null;
+      }>;
+    };
     mcpBindings: Array<{
       id: string;
       representativeId: string;
@@ -64,13 +100,19 @@ type ComputeSnapshot = {
       displayName: string;
       description?: string | null;
       serverUrl: string;
-      transportKind: "streamable_http";
+      transportKind: "streamable_http" | "sse";
       allowedToolNames: string[];
-    defaultToolName?: string | null;
-    enabled: boolean;
-    approvalRequired: boolean;
-    estimatedCostCentsPerCall: number;
-    createdAt: string;
+      defaultToolName?: string | null;
+      enabled: boolean;
+      approvalRequired: boolean;
+      estimatedCostCentsPerCall: number;
+      maxRetries: number;
+      retryBackoffMs: number;
+      consecutiveFailures: number;
+      lastFailureAt?: string | null;
+      lastFailureReason?: string | null;
+      lastSuccessAt?: string | null;
+      createdAt: string;
       updatedAt: string;
       sourceSkillPack?: string;
     }>;
@@ -234,17 +276,38 @@ type ComputeArtifactDetail = {
   truncated: boolean;
 };
 
+type DeliverablesSnapshot = {
+  deliverables: Array<{
+    id: string;
+    representativeId: string;
+    artifactId?: string | null;
+    title: string;
+    summary: string;
+    kind: "deck" | "case_study" | "download" | "generated_document" | "package";
+    visibility: "owner_only" | "public_material";
+    sourceKind: "artifact" | "external_link" | "bundle";
+    externalUrl?: string | null;
+    bundleItemArtifactIds: string[];
+    createdBy?: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+};
+
 type McpBindingFormState = {
   bindingId: string | null;
   slug: string;
   displayName: string;
   description: string;
   serverUrl: string;
+  transportKind: "streamable_http" | "sse";
   allowedToolNames: string;
   defaultToolName: string;
   enabled: boolean;
   approvalRequired: boolean;
   estimatedCostCentsPerCall: number;
+  maxRetries: number;
+  retryBackoffMs: number;
 };
 
 type NativeComputerFormState = {
@@ -255,6 +318,18 @@ type NativeComputerFormState = {
 };
 
 type OverlayFormState = ComputeSnapshot["representative"]["ownerManagedOverlays"];
+type GovernanceFormState = ComputeSnapshot["representative"]["governance"];
+
+type DeliverableFormState = {
+  deliverableId: string | null;
+  title: string;
+  summary: string;
+  kind: "deck" | "case_study" | "download" | "generated_document" | "package";
+  visibility: "owner_only" | "public_material";
+  sourceKind: "artifact" | "external_link" | "bundle";
+  externalUrl: string;
+  bundleItemArtifactIds: string[];
+};
 
 export function DashboardCompute({
   representativeSlug,
@@ -267,6 +342,7 @@ export function DashboardCompute({
   const [snapshot, setSnapshot] = useState<ComputeSnapshot | null>(null);
   const [approvals, setApprovals] = useState<ComputeApprovalsSnapshot["approvals"]>([]);
   const [artifacts, setArtifacts] = useState<ComputeArtifactsSnapshot["artifacts"]>([]);
+  const [deliverables, setDeliverables] = useState<DeliverablesSnapshot["deliverables"]>([]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [artifactDetail, setArtifactDetail] = useState<ComputeArtifactDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -275,15 +351,28 @@ export function DashboardCompute({
   const [isPending, startTransition] = useTransition();
   const [mcpForm, setMcpForm] = useState<McpBindingFormState>(() => createEmptyMcpBindingForm());
   const [overlayForm, setOverlayForm] = useState<OverlayFormState>(createEmptyOverlayForm);
+  const [governanceForm, setGovernanceForm] = useState<GovernanceFormState>(
+    createEmptyGovernanceForm(),
+  );
   const [nativeForm, setNativeForm] = useState<NativeComputerFormState>({
     task: "",
     provider: "auto",
     maxSteps: 3,
     allowMutations: false,
   });
+  const [deliverableForm, setDeliverableForm] = useState<DeliverableFormState>(
+    createEmptyDeliverableForm(),
+  );
 
   useEffect(() => {
-    void refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+    void refreshCompute(
+      representativeSlug,
+      setSnapshot,
+      setApprovals,
+      setArtifacts,
+      setDeliverables,
+      setError,
+    );
   }, [representativeSlug]);
 
   useEffect(() => {
@@ -293,6 +382,7 @@ export function DashboardCompute({
   useEffect(() => {
     if (snapshot) {
       setOverlayForm(snapshot.representative.ownerManagedOverlays);
+      setGovernanceForm(snapshot.representative.governance);
     }
   }, [snapshot]);
 
@@ -303,6 +393,10 @@ export function DashboardCompute({
       maxSteps: 3,
       allowMutations: false,
     });
+  }, [representativeSlug]);
+
+  useEffect(() => {
+    setDeliverableForm(createEmptyDeliverableForm());
   }, [representativeSlug]);
 
   useEffect(() => {
@@ -363,6 +457,46 @@ export function DashboardCompute({
   const failedSessions = snapshot
     ? snapshot.sessions.filter((session) => session.status === "failed").length
     : 0;
+  const pinnedArtifacts = useMemo(
+    () => artifacts.filter((artifact) => artifact.isPinned),
+    [artifacts],
+  );
+  useEffect(() => {
+    setDeliverableForm((current) => {
+      if (current.sourceKind !== "bundle") {
+        return current;
+      }
+
+      const nextIds = current.bundleItemArtifactIds.filter((artifactId) =>
+        pinnedArtifacts.some((artifact) => artifact.id === artifactId),
+      );
+      if (
+        nextIds.length === current.bundleItemArtifactIds.length &&
+        nextIds.every((artifactId, index) => artifactId === current.bundleItemArtifactIds[index])
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        bundleItemArtifactIds: nextIds,
+      };
+    });
+  }, [pinnedArtifacts]);
+  const deliverableKindLabels = useMemo(
+    () =>
+      Object.fromEntries(
+        t.deliverableKinds.map((option) => [option.value, option.label]),
+      ) as Record<DeliverableFormState["kind"], string>,
+    [t],
+  );
+  const deliverableSourceLabels = useMemo(
+    () =>
+      Object.fromEntries(
+        t.deliverableSources.map((option) => [option.value, option.label]),
+      ) as Record<DeliverableFormState["sourceKind"], string>,
+    [t],
+  );
   const signalCards = snapshot
     ? [
         {
@@ -381,6 +515,11 @@ export function DashboardCompute({
           label: t.signalCards.artifacts,
           value: `${artifacts.length}`,
           detail: t.signalCards.artifactsDetail,
+        },
+        {
+          label: t.signalCards.deliverables,
+          value: `${deliverables.length}`,
+          detail: t.signalCards.deliverablesDetail,
         },
         {
           label: t.signalCards.browserSessions,
@@ -483,7 +622,14 @@ export function DashboardCompute({
           throw new Error(await extractError(response));
         }
 
-        await refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+        await refreshCompute(
+          representativeSlug,
+          setSnapshot,
+          setApprovals,
+          setArtifacts,
+          setDeliverables,
+          setError,
+        );
         setMessage(
           resolution === "approved" ? t.messages.approved : t.messages.rejected,
         );
@@ -542,7 +688,14 @@ export function DashboardCompute({
           };
         };
 
-        await refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+        await refreshCompute(
+          representativeSlug,
+          setSnapshot,
+          setApprovals,
+          setArtifacts,
+          setDeliverables,
+          setError,
+        );
         if (payload.nativeComputerUse?.traceArtifactId) {
           setSelectedArtifactId(payload.nativeComputerUse.traceArtifactId);
         }
@@ -590,20 +743,29 @@ export function DashboardCompute({
             displayName: mcpForm.displayName,
             description: mcpForm.description,
             serverUrl: mcpForm.serverUrl,
-            transportKind: "streamable_http",
+            transportKind: mcpForm.transportKind,
             allowedToolNames,
-              defaultToolName: mcpForm.defaultToolName,
-              enabled: mcpForm.enabled,
-              approvalRequired: mcpForm.approvalRequired,
-              estimatedCostCentsPerCall: mcpForm.estimatedCostCentsPerCall,
-            }),
-          });
+            defaultToolName: mcpForm.defaultToolName,
+            enabled: mcpForm.enabled,
+            approvalRequired: mcpForm.approvalRequired,
+            estimatedCostCentsPerCall: mcpForm.estimatedCostCentsPerCall,
+            maxRetries: mcpForm.maxRetries,
+            retryBackoffMs: mcpForm.retryBackoffMs,
+          }),
+        });
 
         if (!response.ok) {
           throw new Error(await extractError(response));
         }
 
-        await refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+        await refreshCompute(
+          representativeSlug,
+          setSnapshot,
+          setApprovals,
+          setArtifacts,
+          setDeliverables,
+          setError,
+        );
         setMcpForm(createEmptyMcpBindingForm());
         setMessage(
           mcpForm.bindingId ? t.messages.mcpUpdated : t.messages.mcpCreated,
@@ -640,7 +802,14 @@ export function DashboardCompute({
           throw new Error(await extractError(response));
         }
 
-        await refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+        await refreshCompute(
+          representativeSlug,
+          setSnapshot,
+          setApprovals,
+          setArtifacts,
+          setDeliverables,
+          setError,
+        );
         setMessage(t.messages.policyOverlaysSaved);
       })()
         .catch((nextError: unknown) => {
@@ -650,6 +819,75 @@ export function DashboardCompute({
           setBusyKey(null);
         });
     });
+  }
+
+  async function handleSaveGovernance() {
+    setBusyKey("governance:save");
+    setMessage(null);
+    setError(null);
+
+    startTransition(() => {
+      void (async () => {
+        const response = await fetch(
+          `/api/dashboard/representatives/${representativeSlug}/compute/governance`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(governanceForm),
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(await extractError(response));
+        }
+
+        await refreshCompute(
+          representativeSlug,
+          setSnapshot,
+          setApprovals,
+          setArtifacts,
+          setDeliverables,
+          setError,
+        );
+        setMessage(t.messages.governanceSaved);
+      })()
+        .catch((nextError: unknown) => {
+          setError(nextError instanceof Error ? nextError.message : t.messages.error);
+        })
+        .finally(() => {
+          setBusyKey(null);
+        });
+    });
+  }
+
+  function addCustomerGovernanceAccount() {
+    setGovernanceForm((current) => ({
+      ...current,
+      customerAccounts: [
+        ...current.customerAccounts,
+        {
+          id: null,
+          slug: "",
+          displayName: "",
+          enabled: true,
+          browserDecision: "ask",
+          browserRequiresApproval: true,
+          mcpDecision: "allow",
+          mcpRequiresApproval: false,
+          requiredPlanTier: "pass",
+          contactIds: [],
+        },
+      ],
+    }));
+  }
+
+  function removeCustomerGovernanceAccount(index: number) {
+    setGovernanceForm((current) => ({
+      ...current,
+      customerAccounts: current.customerAccounts.filter((_, candidateIndex) => candidateIndex !== index),
+    }));
   }
 
   async function handleToggleArtifactPin(artifactId: string, pinned: boolean) {
@@ -677,8 +915,120 @@ export function DashboardCompute({
           throw new Error(await extractError(response));
         }
 
-        await refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+        await refreshCompute(
+          representativeSlug,
+          setSnapshot,
+          setApprovals,
+          setArtifacts,
+          setDeliverables,
+          setError,
+        );
         setMessage(pinned ? t.messages.artifactPinned : t.messages.artifactUnpinned);
+      })()
+        .catch((nextError: unknown) => {
+          setError(nextError instanceof Error ? nextError.message : t.messages.error);
+        })
+        .finally(() => {
+          setBusyKey(null);
+        });
+    });
+  }
+
+  async function handleSaveDeliverable() {
+    const trimmedTitle = deliverableForm.title.trim();
+    const trimmedSummary = deliverableForm.summary.trim();
+
+    if (!trimmedTitle || !trimmedSummary) {
+      setError(t.messages.deliverableFieldsRequired);
+      return;
+    }
+
+    if (deliverableForm.sourceKind === "artifact" && !selectedArtifactId) {
+      setError(t.messages.deliverableArtifactRequired);
+      return;
+    }
+
+    if (deliverableForm.sourceKind === "bundle" && !pinnedArtifacts.length) {
+      setError(t.messages.deliverableBundleRequired);
+      return;
+    }
+
+    if (
+      deliverableForm.sourceKind === "bundle" &&
+      !deliverableForm.bundleItemArtifactIds.length
+    ) {
+      setError(t.messages.deliverableBundleSelectionRequired);
+      return;
+    }
+
+    if (
+      deliverableForm.sourceKind === "bundle" &&
+      deliverableForm.bundleItemArtifactIds.length > maxDeliverableBundleItems
+    ) {
+      setError(t.messages.deliverableBundleTooLarge(maxDeliverableBundleItems));
+      return;
+    }
+
+    if (deliverableForm.sourceKind === "external_link" && !deliverableForm.externalUrl.trim()) {
+      setError(t.messages.deliverableUrlRequired);
+      return;
+    }
+
+    setBusyKey(
+      deliverableForm.deliverableId
+        ? `deliverable:update:${deliverableForm.deliverableId}`
+        : "deliverable:create",
+    );
+    setMessage(null);
+    setError(null);
+
+    startTransition(() => {
+      void (async () => {
+        const pathname = deliverableForm.deliverableId
+          ? `/api/dashboard/representatives/${representativeSlug}/deliverables/${deliverableForm.deliverableId}`
+          : `/api/dashboard/representatives/${representativeSlug}/deliverables`;
+        const response = await fetch(pathname, {
+          method: deliverableForm.deliverableId ? "PATCH" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: trimmedTitle,
+            summary: trimmedSummary,
+            kind: deliverableForm.kind,
+            visibility: deliverableForm.visibility,
+            sourceKind: deliverableForm.sourceKind,
+            ...(deliverableForm.sourceKind === "artifact" && selectedArtifactId
+              ? { artifactId: selectedArtifactId }
+              : {}),
+            ...(deliverableForm.sourceKind === "external_link"
+              ? { externalUrl: deliverableForm.externalUrl.trim() }
+              : {}),
+            ...(deliverableForm.sourceKind === "bundle"
+              ? { bundleItemArtifactIds: deliverableForm.bundleItemArtifactIds }
+              : {}),
+            createdBy: "owner-dashboard",
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(await extractError(response));
+        }
+
+        await refreshCompute(
+          representativeSlug,
+          setSnapshot,
+          setApprovals,
+          setArtifacts,
+          setDeliverables,
+          setError,
+        );
+        setDeliverableForm(createEmptyDeliverableForm());
+        setMessage(
+          deliverableForm.deliverableId
+            ? t.messages.deliverableUpdated
+            : t.messages.deliverableCreated,
+        );
       })()
         .catch((nextError: unknown) => {
           setError(nextError instanceof Error ? nextError.message : t.messages.error);
@@ -696,14 +1046,51 @@ export function DashboardCompute({
       displayName: binding.displayName,
       description: binding.description ?? "",
       serverUrl: binding.serverUrl,
+      transportKind: binding.transportKind,
       allowedToolNames: binding.allowedToolNames.join(", "),
       defaultToolName: binding.defaultToolName ?? "",
       enabled: binding.enabled,
       approvalRequired: binding.approvalRequired,
       estimatedCostCentsPerCall: binding.estimatedCostCentsPerCall,
+      maxRetries: binding.maxRetries,
+      retryBackoffMs: binding.retryBackoffMs,
     });
     setMessage(null);
     setError(null);
+  }
+
+  function startEditDeliverable(deliverable: DeliverablesSnapshot["deliverables"][number]) {
+    setDeliverableForm({
+      deliverableId: deliverable.id,
+      title: deliverable.title,
+      summary: deliverable.summary,
+      kind: deliverable.kind,
+      visibility: deliverable.visibility,
+      sourceKind: deliverable.sourceKind,
+      externalUrl: deliverable.externalUrl ?? "",
+      bundleItemArtifactIds: deliverable.bundleItemArtifactIds,
+    });
+    if (deliverable.artifactId) {
+      setSelectedArtifactId(deliverable.artifactId);
+    }
+    setMessage(null);
+    setError(null);
+  }
+
+  function toggleDeliverableBundleArtifact(artifactId: string) {
+    setDeliverableForm((current) => {
+      const selected = new Set(current.bundleItemArtifactIds);
+      if (selected.has(artifactId)) {
+        selected.delete(artifactId);
+      } else if (selected.size < maxDeliverableBundleItems) {
+        selected.add(artifactId);
+      }
+
+      return {
+        ...current,
+        bundleItemArtifactIds: [...selected],
+      };
+    });
   }
 
   if (!snapshot) {
@@ -1067,6 +1454,435 @@ export function DashboardCompute({
         </DashboardSurface>
 
         <DashboardSurface
+          eyebrow={t.governanceEyebrow}
+          meta={<span className="chip">{t.governanceChip(governanceForm.customerAccounts.length)}</span>}
+          title={t.governanceTitle}
+        >
+          <div className="row-list">
+            <div className="skill-row">
+              <div>
+                <strong>{t.governanceOrgTitle}</strong>
+                <p className="footer-note">{t.governanceOrgSummary}</p>
+              </div>
+              <div className="dashboard-form-grid">
+                <label className="field-label">
+                  <span>{t.governanceOrgNameLabel}</span>
+                  <input
+                    className="field-input"
+                    onChange={(event) =>
+                      setGovernanceForm((current) => ({
+                        ...current,
+                        organization: {
+                          ...current.organization,
+                          displayName: event.target.value,
+                        },
+                      }))
+                    }
+                    type="text"
+                    value={governanceForm.organization.displayName ?? ""}
+                  />
+                </label>
+                <label className="field-label">
+                  <span>{t.governanceOrgSlugLabel}</span>
+                  <input
+                    className="field-input"
+                    onChange={(event) =>
+                      setGovernanceForm((current) => ({
+                        ...current,
+                        organization: {
+                          ...current.organization,
+                          slug: event.target.value,
+                        },
+                      }))
+                    }
+                    type="text"
+                    value={governanceForm.organization.slug ?? ""}
+                  />
+                </label>
+                <label className="field-label">
+                  <span>{t.overlayFields.browserDecision}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setGovernanceForm((current) => ({
+                        ...current,
+                        organizationBaseline: {
+                          ...current.organizationBaseline,
+                          browserDecision: event.target.value as "allow" | "ask" | "deny",
+                        },
+                      }))
+                    }
+                    value={governanceForm.organizationBaseline.browserDecision}
+                  >
+                    <option value="deny">{t.overlayDecisions.deny}</option>
+                    <option value="ask">{t.overlayDecisions.ask}</option>
+                    <option value="allow">{t.overlayDecisions.allow}</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  <span>{t.overlayFields.mcpDecision}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setGovernanceForm((current) => ({
+                        ...current,
+                        organizationBaseline: {
+                          ...current.organizationBaseline,
+                          mcpDecision: event.target.value as "allow" | "ask" | "deny",
+                        },
+                      }))
+                    }
+                    value={governanceForm.organizationBaseline.mcpDecision}
+                  >
+                    <option value="deny">{t.overlayDecisions.deny}</option>
+                    <option value="ask">{t.overlayDecisions.ask}</option>
+                    <option value="allow">{t.overlayDecisions.allow}</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  <span>{t.overlayFields.requiredPlanTier}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setGovernanceForm((current) => ({
+                        ...current,
+                        organizationBaseline: {
+                          ...current.organizationBaseline,
+                          requiredPlanTier: event.target.value as "pass" | "deep_help",
+                        },
+                      }))
+                    }
+                    value={governanceForm.organizationBaseline.requiredPlanTier}
+                  >
+                    <option value="pass">Pass</option>
+                    <option value="deep_help">Deep Help</option>
+                  </select>
+                </label>
+              </div>
+              <div className="chip-row">
+                <label className="field-toggle">
+                  <input
+                    checked={governanceForm.organizationBaseline.enabled}
+                    onChange={(event) =>
+                      setGovernanceForm((current) => ({
+                        ...current,
+                        organizationBaseline: {
+                          ...current.organizationBaseline,
+                          enabled: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.overlayFields.enabled}</span>
+                </label>
+                <label className="field-toggle">
+                  <input
+                    checked={governanceForm.organizationBaseline.browserRequiresApproval}
+                    onChange={(event) =>
+                      setGovernanceForm((current) => ({
+                        ...current,
+                        organizationBaseline: {
+                          ...current.organizationBaseline,
+                          browserRequiresApproval: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.overlayFields.browserApproval}</span>
+                </label>
+                <label className="field-toggle">
+                  <input
+                    checked={governanceForm.organizationBaseline.mcpRequiresApproval}
+                    onChange={(event) =>
+                      setGovernanceForm((current) => ({
+                        ...current,
+                        organizationBaseline: {
+                          ...current.organizationBaseline,
+                          mcpRequiresApproval: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.overlayFields.mcpApproval}</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="button-row">
+              <strong>{t.governanceCustomerTitle}</strong>
+              <button className="button-secondary" onClick={() => addCustomerGovernanceAccount()} type="button">
+                {t.governanceAddCustomer}
+              </button>
+            </div>
+            <p className="footer-note">{t.governanceCustomerSummary}</p>
+
+            {governanceForm.customerAccounts.length ? (
+              governanceForm.customerAccounts.map((account, index) => (
+                <div className="skill-row" key={account.id ?? `customer-${index}`}>
+                  <div className="row-list">
+                    <div className="button-row">
+                      <strong>{account.displayName || t.governanceUntitledCustomer(index + 1)}</strong>
+                      <span className="chip">
+                        {t.governanceCustomerChip(account.contactIds.length)}
+                      </span>
+                    </div>
+                    <div className="dashboard-form-grid">
+                      <label className="field-label">
+                        <span>{t.governanceCustomerNameLabel}</span>
+                        <input
+                          className="field-input"
+                          onChange={(event) =>
+                            setGovernanceForm((current) => ({
+                              ...current,
+                              customerAccounts: current.customerAccounts.map((candidate, candidateIndex) =>
+                                candidateIndex === index
+                                  ? { ...candidate, displayName: event.target.value }
+                                  : candidate,
+                              ),
+                            }))
+                          }
+                          type="text"
+                          value={account.displayName}
+                        />
+                      </label>
+                      <label className="field-label">
+                        <span>{t.governanceCustomerSlugLabel}</span>
+                        <input
+                          className="field-input"
+                          onChange={(event) =>
+                            setGovernanceForm((current) => ({
+                              ...current,
+                              customerAccounts: current.customerAccounts.map((candidate, candidateIndex) =>
+                                candidateIndex === index
+                                  ? { ...candidate, slug: event.target.value }
+                                  : candidate,
+                              ),
+                            }))
+                          }
+                          type="text"
+                          value={account.slug}
+                        />
+                      </label>
+                      <label className="field-label">
+                        <span>{t.overlayFields.browserDecision}</span>
+                        <select
+                          className="field-input"
+                          onChange={(event) =>
+                            setGovernanceForm((current) => ({
+                              ...current,
+                              customerAccounts: current.customerAccounts.map((candidate, candidateIndex) =>
+                                candidateIndex === index
+                                  ? {
+                                      ...candidate,
+                                      browserDecision: event.target.value as "allow" | "ask" | "deny",
+                                    }
+                                  : candidate,
+                              ),
+                            }))
+                          }
+                          value={account.browserDecision}
+                        >
+                          <option value="deny">{t.overlayDecisions.deny}</option>
+                          <option value="ask">{t.overlayDecisions.ask}</option>
+                          <option value="allow">{t.overlayDecisions.allow}</option>
+                        </select>
+                      </label>
+                      <label className="field-label">
+                        <span>{t.overlayFields.mcpDecision}</span>
+                        <select
+                          className="field-input"
+                          onChange={(event) =>
+                            setGovernanceForm((current) => ({
+                              ...current,
+                              customerAccounts: current.customerAccounts.map((candidate, candidateIndex) =>
+                                candidateIndex === index
+                                  ? {
+                                      ...candidate,
+                                      mcpDecision: event.target.value as "allow" | "ask" | "deny",
+                                    }
+                                  : candidate,
+                              ),
+                            }))
+                          }
+                          value={account.mcpDecision}
+                        >
+                          <option value="deny">{t.overlayDecisions.deny}</option>
+                          <option value="ask">{t.overlayDecisions.ask}</option>
+                          <option value="allow">{t.overlayDecisions.allow}</option>
+                        </select>
+                      </label>
+                      <label className="field-label">
+                        <span>{t.overlayFields.requiredPlanTier}</span>
+                        <select
+                          className="field-input"
+                          onChange={(event) =>
+                            setGovernanceForm((current) => ({
+                              ...current,
+                              customerAccounts: current.customerAccounts.map((candidate, candidateIndex) =>
+                                candidateIndex === index
+                                  ? {
+                                      ...candidate,
+                                      requiredPlanTier: event.target.value as "pass" | "deep_help",
+                                    }
+                                  : candidate,
+                              ),
+                            }))
+                          }
+                          value={account.requiredPlanTier}
+                        >
+                          <option value="pass">Pass</option>
+                          <option value="deep_help">Deep Help</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="chip-row">
+                      <label className="field-toggle">
+                        <input
+                          checked={account.enabled}
+                          onChange={(event) =>
+                            setGovernanceForm((current) => ({
+                              ...current,
+                              customerAccounts: current.customerAccounts.map((candidate, candidateIndex) =>
+                                candidateIndex === index
+                                  ? { ...candidate, enabled: event.target.checked }
+                                  : candidate,
+                              ),
+                            }))
+                          }
+                          type="checkbox"
+                        />
+                        <span>{t.overlayFields.enabled}</span>
+                      </label>
+                      <label className="field-toggle">
+                        <input
+                          checked={account.browserRequiresApproval}
+                          onChange={(event) =>
+                            setGovernanceForm((current) => ({
+                              ...current,
+                              customerAccounts: current.customerAccounts.map((candidate, candidateIndex) =>
+                                candidateIndex === index
+                                  ? { ...candidate, browserRequiresApproval: event.target.checked }
+                                  : candidate,
+                              ),
+                            }))
+                          }
+                          type="checkbox"
+                        />
+                        <span>{t.overlayFields.browserApproval}</span>
+                      </label>
+                      <label className="field-toggle">
+                        <input
+                          checked={account.mcpRequiresApproval}
+                          onChange={(event) =>
+                            setGovernanceForm((current) => ({
+                              ...current,
+                              customerAccounts: current.customerAccounts.map((candidate, candidateIndex) =>
+                                candidateIndex === index
+                                  ? { ...candidate, mcpRequiresApproval: event.target.checked }
+                                  : candidate,
+                              ),
+                            }))
+                          }
+                          type="checkbox"
+                        />
+                        <span>{t.overlayFields.mcpApproval}</span>
+                      </label>
+                    </div>
+                    <div className="row-list">
+                      <span>{t.governanceCustomerContactsLabel}</span>
+                      {governanceForm.contactAssignments.length ? (
+                        <div className="skill-list">
+                          {governanceForm.contactAssignments.map((contact) => {
+                            const selected = account.contactIds.includes(contact.contactId);
+                            const assignedElsewhere = governanceForm.customerAccounts.some(
+                              (candidate, candidateIndex) =>
+                                candidateIndex !== index &&
+                                candidate.contactIds.includes(contact.contactId),
+                            );
+                            return (
+                              <label
+                                className={selected ? "skill-row skill-row-active" : "skill-row"}
+                                key={contact.contactId}
+                              >
+                                <input
+                                  checked={selected}
+                                  onChange={() =>
+                                    setGovernanceForm((current) => ({
+                                      ...current,
+                                      customerAccounts: current.customerAccounts.map(
+                                        (candidate, candidateIndex) => {
+                                          const nextIds = candidate.contactIds.filter(
+                                            (candidateId) => candidateId !== contact.contactId,
+                                          );
+                                          if (candidateIndex !== index) {
+                                            return {
+                                              ...candidate,
+                                              contactIds: nextIds,
+                                            };
+                                          }
+                                          const finalIds = candidate.contactIds.includes(contact.contactId)
+                                            ? nextIds
+                                            : [...nextIds, contact.contactId];
+                                          return {
+                                            ...candidate,
+                                            contactIds: finalIds,
+                                          };
+                                        },
+                                      ),
+                                    }))
+                                  }
+                                  type="checkbox"
+                                />
+                                <div className="skill-row-copy">
+                                  <strong>{contact.displayName || contact.username || contact.contactId.slice(0, 8)}</strong>
+                                  <span>
+                                    {contact.username ? `@${contact.username}` : contact.contactId.slice(0, 10)}
+                                    {contact.computeTrustTier ? ` · ${t.trustTiers[contact.computeTrustTier]}` : ""}
+                                    {assignedElsewhere && !selected ? ` · ${t.governanceAssignedElsewhere}` : ""}
+                                  </span>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="footer-note">{t.governanceNoContacts}</p>
+                      )}
+                    </div>
+                    <div className="button-row">
+                      <button
+                        className="button-secondary"
+                        onClick={() => removeCustomerGovernanceAccount(index)}
+                        type="button"
+                      >
+                        {t.governanceRemoveCustomer}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="muted">{t.governanceNoCustomers}</p>
+            )}
+
+            <div className="button-row">
+              <button
+                className="button-primary"
+                disabled={isPending || busyKey === "governance:save"}
+                onClick={() => void handleSaveGovernance()}
+                type="button"
+              >
+                {busyKey === "governance:save" ? t.savingGovernance : t.saveGovernance}
+              </button>
+              <span className="footer-note">{t.governanceFootnote}</span>
+            </div>
+          </div>
+        </DashboardSurface>
+
+        <DashboardSurface
           eyebrow={t.mcpEyebrow}
           meta={<span className="chip">{t.mcpChip(snapshot.representative.mcpBindings.length)}</span>}
           title={t.mcpTitle}
@@ -1085,6 +1901,12 @@ export function DashboardCompute({
                       <span className="chip">{binding.transportKind}</span>
                       <span className="chip">{binding.slug}</span>
                       <span className="chip">{t.mcpEstimatedCost(binding.estimatedCostCentsPerCall)}</span>
+                      <span className="chip">{t.mcpRetries(binding.maxRetries, binding.retryBackoffMs)}</span>
+                      {binding.consecutiveFailures > 0 ? (
+                        <span className="chip chip-danger">{t.mcpFailures(binding.consecutiveFailures)}</span>
+                      ) : (
+                        <span className="chip chip-safe">{t.mcpHealthy}</span>
+                      )}
                       {binding.defaultToolName ? <span className="chip">{binding.defaultToolName}</span> : null}
                       {binding.sourceSkillPack ? <span className="chip">{binding.sourceSkillPack}</span> : null}
                     </div>
@@ -1095,6 +1917,17 @@ export function DashboardCompute({
                     <p className="footer-note">
                       {binding.approvalRequired ? t.mcpRequiresApproval : t.mcpNoApproval}
                     </p>
+                    {binding.lastFailureReason ? (
+                      <p className="footer-note">
+                        {t.mcpLastFailure(
+                          binding.lastFailureReason,
+                          binding.lastFailureAt ?? binding.updatedAt,
+                        )}
+                      </p>
+                    ) : null}
+                    {binding.lastSuccessAt ? (
+                      <p className="footer-note">{t.mcpLastSuccess(binding.lastSuccessAt)}</p>
+                    ) : null}
                   </div>
 
                   <div className="button-row">
@@ -1151,6 +1984,23 @@ export function DashboardCompute({
                   />
                 </label>
                 <label className="field-label">
+                  <span>{t.mcpFields.transportKind}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setMcpForm((current) => ({
+                        ...current,
+                        transportKind:
+                          event.target.value === "sse" ? "sse" : "streamable_http",
+                      }))
+                    }
+                    value={mcpForm.transportKind}
+                  >
+                    <option value="streamable_http">streamable_http</option>
+                    <option value="sse">sse</option>
+                  </select>
+                </label>
+                <label className="field-label">
                   <span>{t.mcpFields.allowedTools}</span>
                   <input
                     className="field-input"
@@ -1181,6 +2031,42 @@ export function DashboardCompute({
                     }
                     type="number"
                     value={mcpForm.estimatedCostCentsPerCall}
+                  />
+                </label>
+                <label className="field-label">
+                  <span>{t.mcpFields.maxRetries}</span>
+                  <input
+                    className="field-input"
+                    max={5}
+                    min={0}
+                    onChange={(event) =>
+                      setMcpForm((current) => ({
+                        ...current,
+                        maxRetries: Math.max(0, Math.min(5, Number.parseInt(event.target.value || "0", 10) || 0)),
+                      }))
+                    }
+                    type="number"
+                    value={mcpForm.maxRetries}
+                  />
+                </label>
+                <label className="field-label">
+                  <span>{t.mcpFields.retryBackoffMs}</span>
+                  <input
+                    className="field-input"
+                    max={30000}
+                    min={100}
+                    onChange={(event) =>
+                      setMcpForm((current) => ({
+                        ...current,
+                        retryBackoffMs: Math.max(
+                          100,
+                          Math.min(30000, Number.parseInt(event.target.value || "1000", 10) || 1000),
+                        ),
+                      }))
+                    }
+                    step={100}
+                    type="number"
+                    value={mcpForm.retryBackoffMs}
                   />
                 </label>
                 <label className="field-label">
@@ -1712,6 +2598,24 @@ export function DashboardCompute({
                 </a>
                 <button
                   className="button-secondary"
+                  onClick={() =>
+                    setDeliverableForm({
+                      deliverableId: null,
+                      title: artifactDetail.artifact.kind,
+                      summary: artifactDetail.artifact.summary ?? "",
+                      kind: "download",
+                      visibility: "owner_only",
+                      sourceKind: "artifact",
+                      externalUrl: "",
+                      bundleItemArtifactIds: [],
+                    })
+                  }
+                  type="button"
+                >
+                  {t.prepareDeliverable}
+                </button>
+                <button
+                  className="button-secondary"
                   disabled={
                     isPending ||
                     busyKey === `artifact:${artifactDetail.artifact.id}:pin` ||
@@ -1743,6 +2647,266 @@ export function DashboardCompute({
           ) : (
             <p className="muted">{t.noArtifactSelected}</p>
           )}
+        </DashboardSurface>
+
+        <DashboardSurface
+          eyebrow={t.deliverablesEyebrow}
+          meta={<span className="chip">{t.deliverablesChip(deliverables.length)}</span>}
+          title={t.deliverablesTitle}
+        >
+          <div className="row-list">
+            {deliverables.length ? (
+              deliverables.map((deliverable) => (
+                <div className="skill-row" key={deliverable.id}>
+                  <div>
+                    <strong>{deliverable.title}</strong>
+                    <p>{deliverable.summary}</p>
+                    <div className="chip-row">
+                      <span className="chip">{deliverableKindLabels[deliverable.kind]}</span>
+                      <span className="chip">{deliverableSourceLabels[deliverable.sourceKind]}</span>
+                      <span
+                        className={
+                          deliverable.visibility === "public_material"
+                            ? "chip chip-safe"
+                            : "chip"
+                        }
+                      >
+                        {deliverable.visibility === "public_material"
+                          ? t.publicMaterialChip
+                          : t.ownerOnlyChip}
+                      </span>
+                      <span className="chip">{formatTimestamp(deliverable.updatedAt, locale)}</span>
+                      {deliverable.bundleItemArtifactIds.length ? (
+                        <span className="chip">
+                          {t.bundleItemCountChip(deliverable.bundleItemArtifactIds.length)}
+                        </span>
+                      ) : null}
+                    </div>
+                    {deliverable.artifactId ? (
+                      <p className="footer-note">{t.linkedArtifactLabel(deliverable.artifactId)}</p>
+                    ) : null}
+                  </div>
+
+                  <div className="button-row">
+                    {deliverable.sourceKind === "external_link" && deliverable.externalUrl ? (
+                      <a
+                        className="button-secondary"
+                        href={deliverable.externalUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        {t.openExternalDeliverable}
+                      </a>
+                    ) : (
+                      <a
+                        className="button-secondary"
+                        href={`/api/dashboard/representatives/${representativeSlug}/deliverables/${deliverable.id}/download`}
+                      >
+                        {t.downloadDeliverable}
+                      </a>
+                    )}
+                    <button
+                      className="button-secondary"
+                      onClick={() => startEditDeliverable(deliverable)}
+                      type="button"
+                    >
+                      {t.editDeliverable}
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="muted">{t.noDeliverables}</p>
+            )}
+          </div>
+        </DashboardSurface>
+
+        <DashboardSurface
+          eyebrow={t.deliverableComposerEyebrow}
+          meta={<span className="chip">{t.pinnedArtifactCountChip(pinnedArtifacts.length)}</span>}
+          title={t.deliverableComposerTitle}
+        >
+          <div className="row-list">
+            <label className="field-label">
+              <span>{t.deliverableTitleLabel}</span>
+              <input
+                className="field-input"
+                onChange={(event) =>
+                  setDeliverableForm((current) => ({ ...current, title: event.target.value }))
+                }
+                placeholder={t.deliverableTitlePlaceholder}
+                type="text"
+                value={deliverableForm.title}
+              />
+            </label>
+
+            <label className="field-label field-label-wide">
+              <span>{t.deliverableSummaryLabel}</span>
+              <textarea
+                className="field-textarea"
+                onChange={(event) =>
+                  setDeliverableForm((current) => ({ ...current, summary: event.target.value }))
+                }
+                placeholder={t.deliverableSummaryPlaceholder}
+                rows={4}
+                value={deliverableForm.summary}
+              />
+            </label>
+
+            <div className="row-list">
+              <label className="field-label">
+                <span>{t.deliverableKindLabel}</span>
+                <select
+                  className="field-input"
+                  onChange={(event) =>
+                    setDeliverableForm((current) => ({
+                      ...current,
+                      kind: event.target.value as DeliverableFormState["kind"],
+                    }))
+                  }
+                  value={deliverableForm.kind}
+                >
+                  {t.deliverableKinds.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-label">
+                <span>{t.deliverableVisibilityLabel}</span>
+                <select
+                  className="field-input"
+                  onChange={(event) =>
+                    setDeliverableForm((current) => ({
+                      ...current,
+                      visibility: event.target.value as DeliverableFormState["visibility"],
+                    }))
+                  }
+                  value={deliverableForm.visibility}
+                >
+                  {t.deliverableVisibilities.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <label className="field-label">
+              <span>{t.deliverableSourceLabel}</span>
+              <select
+                className="field-input"
+                onChange={(event) =>
+                  setDeliverableForm((current) => {
+                    const sourceKind = event.target.value as DeliverableFormState["sourceKind"];
+                    return {
+                      ...current,
+                      sourceKind,
+                      bundleItemArtifactIds:
+                        sourceKind === "bundle"
+                          ? current.bundleItemArtifactIds.length
+                            ? current.bundleItemArtifactIds
+                            : pinnedArtifacts
+                                .slice(0, maxDeliverableBundleItems)
+                                .map((artifact) => artifact.id)
+                          : current.bundleItemArtifactIds,
+                    };
+                  })
+                }
+                value={deliverableForm.sourceKind}
+              >
+                {t.deliverableSources.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {deliverableForm.sourceKind === "artifact" ? (
+              <p className="footer-note">
+                {selectedArtifactId
+                  ? t.selectedArtifactHelp(selectedArtifactId)
+                  : t.noSelectedArtifactHelp}
+              </p>
+            ) : null}
+            {deliverableForm.sourceKind === "bundle" ? (
+              <div className="row-list">
+                <p className="footer-note">
+                  {t.bundleHelp(
+                    pinnedArtifacts.length,
+                    deliverableForm.bundleItemArtifactIds.length,
+                    maxDeliverableBundleItems,
+                  )}
+                </p>
+                {pinnedArtifacts.length ? (
+                  <div className="skill-list">
+                    {pinnedArtifacts.map((artifact) => {
+                      const selected = deliverableForm.bundleItemArtifactIds.includes(artifact.id);
+                      const disabled =
+                        !selected &&
+                        deliverableForm.bundleItemArtifactIds.length >= maxDeliverableBundleItems;
+                      return (
+                        <label
+                          className={selected ? "skill-row skill-row-active" : "skill-row"}
+                          key={artifact.id}
+                        >
+                          <input
+                            checked={selected}
+                            disabled={disabled}
+                            onChange={() => toggleDeliverableBundleArtifact(artifact.id)}
+                            type="checkbox"
+                          />
+                          <div className="skill-row-copy">
+                            <strong>{artifact.kind.toLowerCase()}</strong>
+                            <span>{artifact.id.slice(0, 10)} · {formatBytes(artifact.sizeBytes)}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {deliverableForm.sourceKind === "external_link" ? (
+              <label className="field-label">
+                <span>{t.deliverableExternalUrlLabel}</span>
+                <input
+                  className="field-input"
+                  onChange={(event) =>
+                    setDeliverableForm((current) => ({
+                      ...current,
+                      externalUrl: event.target.value,
+                    }))
+                  }
+                  placeholder="https://"
+                  type="url"
+                  value={deliverableForm.externalUrl}
+                />
+              </label>
+            ) : null}
+
+            <div className="button-row">
+              <button
+                className="button-primary"
+                disabled={isPending || busyKey === "deliverable:create" || busyKey?.startsWith("deliverable:update:")}
+                onClick={() => void handleSaveDeliverable()}
+                type="button"
+              >
+                {deliverableForm.deliverableId ? t.updateDeliverable : t.createDeliverable}
+              </button>
+              <button
+                className="button-secondary"
+                onClick={() => setDeliverableForm(createEmptyDeliverableForm())}
+                type="button"
+              >
+                {t.resetDeliverableForm}
+              </button>
+            </div>
+          </div>
         </DashboardSurface>
 
         <DashboardSurface
@@ -1783,16 +2947,21 @@ async function refreshCompute(
   setSnapshot: (value: ComputeSnapshot | null) => void,
   setApprovals: (value: ComputeApprovalsSnapshot["approvals"]) => void,
   setArtifacts: (value: ComputeArtifactsSnapshot["artifacts"]) => void,
+  setDeliverables: (value: DeliverablesSnapshot["deliverables"]) => void,
   setError: (value: string | null) => void,
 ) {
   try {
     setError(null);
-    const [snapshotResponse, approvalsResponse, artifactsResponse] = await Promise.all([
+    const [snapshotResponse, approvalsResponse, artifactsResponse, deliverablesResponse] =
+      await Promise.all([
       fetch(`/api/dashboard/representatives/${representativeSlug}/compute`, { cache: "no-store" }),
       fetch(`/api/dashboard/representatives/${representativeSlug}/compute/approvals`, {
         cache: "no-store",
       }),
       fetch(`/api/dashboard/representatives/${representativeSlug}/compute/artifacts`, {
+        cache: "no-store",
+      }),
+      fetch(`/api/dashboard/representatives/${representativeSlug}/deliverables`, {
         cache: "no-store",
       }),
     ]);
@@ -1809,13 +2978,19 @@ async function refreshCompute(
       throw new Error(await extractError(artifactsResponse));
     }
 
+    if (!deliverablesResponse.ok) {
+      throw new Error(await extractError(deliverablesResponse));
+    }
+
     const snapshotPayload = (await snapshotResponse.json()) as ComputeSnapshot;
     const approvalsPayload = (await approvalsResponse.json()) as ComputeApprovalsSnapshot;
     const artifactsPayload = (await artifactsResponse.json()) as ComputeArtifactsSnapshot;
+    const deliverablesPayload = (await deliverablesResponse.json()) as DeliverablesSnapshot;
 
     setSnapshot(snapshotPayload);
     setApprovals(approvalsPayload.approvals);
     setArtifacts(artifactsPayload.artifacts);
+    setDeliverables(deliverablesPayload.deliverables);
   } catch (error) {
     setError(error instanceof Error ? error.message : "Failed to load compute control plane.");
   }
@@ -1869,6 +3044,26 @@ function createEmptyOverlayForm(): OverlayFormState {
   };
 }
 
+function createEmptyGovernanceForm(): GovernanceFormState {
+  return {
+    organization: {
+      id: null,
+      slug: "",
+      displayName: "",
+    },
+    organizationBaseline: {
+      enabled: true,
+      browserDecision: "ask",
+      browserRequiresApproval: true,
+      mcpDecision: "ask",
+      mcpRequiresApproval: true,
+      requiredPlanTier: "pass",
+    },
+    customerAccounts: [],
+    contactAssignments: [],
+  };
+}
+
 function createEmptyMcpBindingForm(): McpBindingFormState {
   return {
     bindingId: null,
@@ -1876,11 +3071,27 @@ function createEmptyMcpBindingForm(): McpBindingFormState {
     displayName: "",
     description: "",
     serverUrl: "",
+    transportKind: "streamable_http",
     allowedToolNames: "",
     defaultToolName: "",
     enabled: true,
     approvalRequired: true,
     estimatedCostCentsPerCall: 0,
+    maxRetries: 2,
+    retryBackoffMs: 1000,
+  };
+}
+
+function createEmptyDeliverableForm(): DeliverableFormState {
+  return {
+    deliverableId: null,
+    title: "",
+    summary: "",
+    kind: "download",
+    visibility: "owner_only",
+    sourceKind: "artifact",
+    externalUrl: "",
+    bundleItemArtifactIds: [],
   };
 }
 
@@ -1908,6 +3119,8 @@ const copy = {
       liveSessionsDetail: "仍然可以继续执行的会话数。",
       artifacts: "Artifacts",
       artifactsDetail: "已经落入对象存储的输出总数。",
+      deliverables: "Deliverables",
+      deliverablesDetail: "已经整理成可投递材料或打包下载的输出数。",
       browserSessions: "Browser sessions",
       browserSessionsDetail: "当前保留状态和导航历史的 browser 会话数。",
       nativeProviders: "Native lanes",
@@ -1969,14 +3182,44 @@ const copy = {
     },
     savePolicyOverlays: "Save owner overlays",
     savingPolicyOverlays: "Saving owner overlays...",
+    governanceEyebrow: "Org Governance",
+    governanceTitle: "Add organization baselines and customer-account overlays above owner defaults",
+    governanceChip: (count: number) => `${count} customer accounts`,
+    governanceOrgTitle: "Organization baseline",
+    governanceOrgSummary:
+      "Use this layer for broader organization-wide guardrails that should apply before owner overlays.",
+    governanceOrgNameLabel: "Organization name",
+    governanceOrgSlugLabel: "Organization slug",
+    governanceCustomerTitle: "Customer account overlays",
+    governanceCustomerSummary:
+      "Assign contacts to customer accounts, then tune browser and MCP lanes for each one.",
+    governanceCustomerNameLabel: "Customer account name",
+    governanceCustomerSlugLabel: "Customer account slug",
+    governanceCustomerContactsLabel: "Assigned contacts",
+    governanceCustomerChip: (count: number) => `${count} contacts`,
+    governanceUntitledCustomer: (index: number) => `Customer account ${index}`,
+    governanceAddCustomer: "Add customer account",
+    governanceRemoveCustomer: "Remove account",
+    governanceNoContacts: "There are no contacts to assign yet.",
+    governanceNoCustomers: "No customer-account overlays yet.",
+    governanceAssignedElsewhere: "assigned elsewhere",
+    saveGovernance: "Save governance",
+    savingGovernance: "Saving governance...",
+    governanceFootnote:
+      "Organization rules win before owner overlays. Customer-account overlays only apply to explicitly assigned contacts.",
     mcpEyebrow: "MCP Bindings",
     mcpTitle: "把远程 capability server 绑定成可审批、可追踪的代表能力",
     mcpChip: (count: number) => `${count} bindings`,
     noMcpBindings: "还没有 MCP binding。先把一个远程 capability server 绑进来，再让代表通过审批后的 compute 请求去调用它。",
     allowedTools: (value: string) => `Allowed tools · ${value}`,
     mcpEstimatedCost: (value: number) => `估算成本 ${value}¢ / call`,
+    mcpRetries: (retries: number, backoffMs: number) => `重试 ${retries} 次 · ${backoffMs}ms backoff`,
+    mcpFailures: (count: number) => `${count} 次连续失败`,
+    mcpHealthy: "最近健康",
     mcpRequiresApproval: "This binding still requires explicit approval before remote tool calls.",
     mcpNoApproval: "This binding can run without an extra binding-level approval flag.",
+    mcpLastFailure: (reason: string, at: string) => `最近失败 ${at} · ${reason}`,
+    mcpLastSuccess: (at: string) => `最近成功 ${at}`,
     editBinding: "编辑 binding",
     createBinding: "创建 binding",
     updateBinding: "更新 binding",
@@ -1986,9 +3229,12 @@ const copy = {
       slug: "Binding slug",
       displayName: "Display name",
       serverUrl: "Server URL",
+      transportKind: "Transport",
       allowedTools: "Allowed tools",
       defaultTool: "Default tool",
       estimatedCost: "Estimated cost / call (¢)",
+      maxRetries: "Max retries",
+      retryBackoffMs: "Retry backoff (ms)",
       description: "Description",
       enabled: "Enabled",
       approvalRequired: "Requires approval",
@@ -2057,11 +3303,59 @@ const copy = {
     noArtifactSelected: "先从左侧 artifact 列表里选择一个输出。",
     noArtifactPreview: "这个 artifact 当前没有可直接内联展示的文本预览。",
     downloadArtifact: "下载 artifact",
+    prepareDeliverable: "做成交付件",
     pinArtifact: "置顶 artifact",
     unpinArtifact: "取消置顶",
     pinningArtifact: "置顶中...",
     unpinningArtifact: "取消中...",
     previewTruncated: "预览已截断",
+    deliverablesEyebrow: "Deliverable Lane",
+    deliverablesTitle: "把 artifact、外部资料和打包下载整理成可投递交付件",
+    deliverablesChip: (count: number) => `${count} deliverables`,
+    noDeliverables: "还没有整理好的交付件。",
+    deliverableComposerEyebrow: "Deliverable Composer",
+    deliverableComposerTitle: "从当前 artifact、pinned outputs 或外部链接生成交付件",
+    deliverableTitleLabel: "交付件标题",
+    deliverableTitlePlaceholder: "例如：Founder intro deck",
+    deliverableSummaryLabel: "交付件摘要",
+    deliverableSummaryPlaceholder: "告诉 owner 或访客这份资料适合什么场景。",
+    deliverableKindLabel: "交付件类型",
+    deliverableKinds: [
+      { value: "deck", label: "介绍材料" },
+      { value: "case_study", label: "案例" },
+      { value: "download", label: "下载项" },
+      { value: "generated_document", label: "生成文档" },
+      { value: "package", label: "打包下载" },
+    ],
+    deliverableVisibilityLabel: "可见范围",
+    deliverableVisibilities: [
+      { value: "owner_only", label: "仅 owner 可见" },
+      { value: "public_material", label: "公开材料" },
+    ],
+    deliverableSourceLabel: "来源",
+    deliverableSources: [
+      { value: "artifact", label: "当前 artifact" },
+      { value: "bundle", label: "pinned artifacts 打包" },
+      { value: "external_link", label: "外部链接" },
+    ],
+    deliverableExternalUrlLabel: "外部链接",
+    selectedArtifactHelp: (artifactId: string) => `将使用当前选中的 artifact：${artifactId.slice(0, 10)}`,
+    noSelectedArtifactHelp: "先从左侧选一个 artifact，才能做 artifact-backed 交付件。",
+    bundleHelp: (count: number, selectedCount: number, limit: number) =>
+      count > 0
+        ? `已从 ${count} 个 pinned artifact 里选择 ${selectedCount} 个，最多可打包 ${limit} 个。`
+        : "先置顶至少一个 artifact，才能创建 bundle 交付件。",
+    createDeliverable: "创建交付件",
+    updateDeliverable: "更新交付件",
+    resetDeliverableForm: "重置表单",
+    downloadDeliverable: "下载交付件",
+    editDeliverable: "编辑交付件",
+    openExternalDeliverable: "打开外部资料",
+    publicMaterialChip: "公开材料",
+    ownerOnlyChip: "owner only",
+    bundleItemCountChip: (count: number) => `${count} items`,
+    pinnedArtifactCountChip: (count: number) => `${count} pinned`,
+    linkedArtifactLabel: (artifactId: string) => `关联 artifact · ${artifactId.slice(0, 10)}`,
     ledgerEyebrow: "Billing Ledger",
     ledgerTitle: "看清每次执行到底烧掉了多少 credits",
     ledgerChip: (count: number) => `${count} entries`,
@@ -2074,11 +3368,20 @@ const copy = {
       mcpUpdated: "MCP binding 已更新。",
       artifactPinned: "Artifact 已置顶，会保留在对象存储里供后续复用。",
       artifactUnpinned: "Artifact 已取消置顶，并恢复默认保留策略。",
+      deliverableCreated: "交付件已保存。现在它可以作为 owner-only 材料或公开材料继续复用。",
+      deliverableUpdated: "交付件已更新。",
+      deliverableFieldsRequired: "先补全交付件标题和摘要。",
+      deliverableArtifactRequired: "先从 artifact 列表中选一个输出。",
+      deliverableBundleRequired: "先置顶至少一个 artifact，再创建 bundle。",
+      deliverableBundleSelectionRequired: "先明确选择要打包的 artifact。",
+      deliverableBundleTooLarge: (limit: number) => `单个 bundle 最多只能包含 ${limit} 个 artifact。`,
+      deliverableUrlRequired: "外部链接型交付件需要一个有效 URL。",
       nativeMissingSession: "当前还没有可复用的 browser session，先跑一次受控 browser step。",
       nativeTaskRequired: "先填写这次 native browser 要完成的任务。",
       nativeExecuted: "Native computer-use loop 已完成，trace artifact 已写入对象存储。",
       nativeCompleted: (value: string) => `Native computer-use 完成：${value}`,
       policyOverlaysSaved: "Owner-managed policy overlays saved.",
+      governanceSaved: "Organization and customer governance rules saved.",
       error: "处理审批失败。",
     },
   },
@@ -2105,6 +3408,8 @@ const copy = {
       liveSessionsDetail: "Sessions that can still accept work.",
       artifacts: "Artifacts",
       artifactsDetail: "Outputs already persisted into object storage.",
+      deliverables: "Deliverables",
+      deliverablesDetail: "Outputs already shaped into reusable public or owner-facing materials.",
       browserSessions: "Browser sessions",
       browserSessionsDetail: "Browser profiles that still carry navigation state and recent history.",
       nativeProviders: "Native lanes",
@@ -2164,14 +3469,41 @@ const copy = {
     },
     savePolicyOverlays: "保存 owner overlay",
     savingPolicyOverlays: "正在保存 owner overlay...",
+    governanceEyebrow: "Org Governance",
+    governanceTitle: "把组织基线和客户账户 overlay 放进同一个治理面板",
+    governanceChip: (count: number) => `${count} 个客户账户`,
+    governanceOrgTitle: "组织级基线",
+    governanceOrgSummary: "这一层高于 owner 默认 overlay，用来表达更宽的团队或客户治理要求。",
+    governanceOrgNameLabel: "组织名称",
+    governanceOrgSlugLabel: "组织 slug",
+    governanceCustomerTitle: "客户账户 overlay",
+    governanceCustomerSummary: "按客户账户收窄或放宽 browser / MCP 通道，并把联系人明确归属到某个账户。",
+    governanceCustomerNameLabel: "客户账户名称",
+    governanceCustomerSlugLabel: "客户账户 slug",
+    governanceCustomerContactsLabel: "归属联系人",
+    governanceCustomerChip: (count: number) => `${count} 个联系人`,
+    governanceUntitledCustomer: (index: number) => `客户账户 ${index}`,
+    governanceAddCustomer: "新增客户账户",
+    governanceRemoveCustomer: "移除客户账户",
+    governanceNoContacts: "当前还没有可分配的联系人。",
+    governanceNoCustomers: "还没有客户账户 overlay。",
+    governanceAssignedElsewhere: "已分配到其他账户",
+    saveGovernance: "保存组织治理",
+    savingGovernance: "正在保存组织治理...",
+    governanceFootnote: "组织级规则会先于 owner overlay 生效；客户账户 overlay 只会命中被明确绑定的联系人。",
     mcpEyebrow: "MCP Bindings",
     mcpTitle: "Bind remote capability servers as governed representative tools",
     mcpChip: (count: number) => `${count} bindings`,
     noMcpBindings: "No MCP bindings yet. Attach a remote capability server here before routing approved work into it.",
     allowedTools: (value: string) => `Allowed tools · ${value}`,
     mcpEstimatedCost: (value: number) => `Estimated cost ${value}¢ / call`,
+    mcpRetries: (retries: number, backoffMs: number) => `${retries} retries · ${backoffMs}ms backoff`,
+    mcpFailures: (count: number) => `${count} consecutive failures`,
+    mcpHealthy: "healthy lately",
     mcpRequiresApproval: "This binding still requires explicit approval before remote tool calls.",
     mcpNoApproval: "This binding can run without an extra binding-level approval flag.",
+    mcpLastFailure: (reason: string, at: string) => `Last failure ${at} · ${reason}`,
+    mcpLastSuccess: (at: string) => `Last success ${at}`,
     editBinding: "Edit binding",
     createBinding: "Create binding",
     updateBinding: "Update binding",
@@ -2181,9 +3513,12 @@ const copy = {
       slug: "Binding slug",
       displayName: "Display name",
       serverUrl: "Server URL",
+      transportKind: "Transport",
       allowedTools: "Allowed tools",
       defaultTool: "Default tool",
       estimatedCost: "Estimated cost / call (¢)",
+      maxRetries: "Max retries",
+      retryBackoffMs: "Retry backoff (ms)",
       description: "Description",
       enabled: "Enabled",
       approvalRequired: "Requires approval",
@@ -2252,11 +3587,59 @@ const copy = {
     noArtifactSelected: "Select an artifact from the list to inspect it here.",
     noArtifactPreview: "This artifact does not currently have an inline text preview.",
     downloadArtifact: "Download artifact",
+    prepareDeliverable: "Turn into deliverable",
     pinArtifact: "Pin artifact",
     unpinArtifact: "Unpin artifact",
     pinningArtifact: "Pinning...",
     unpinningArtifact: "Unpinning...",
     previewTruncated: "Preview truncated",
+    deliverablesEyebrow: "Deliverable Lane",
+    deliverablesTitle: "Package artifacts, public links, and downloads into reusable deliverables",
+    deliverablesChip: (count: number) => `${count} deliverables`,
+    noDeliverables: "No deliverables yet.",
+    deliverableComposerEyebrow: "Deliverable Composer",
+    deliverableComposerTitle: "Turn the current artifact, pinned outputs, or an external link into a deliverable",
+    deliverableTitleLabel: "Deliverable title",
+    deliverableTitlePlaceholder: "For example: Founder intro deck",
+    deliverableSummaryLabel: "Deliverable summary",
+    deliverableSummaryPlaceholder: "Explain when this material should be shared.",
+    deliverableKindLabel: "Deliverable kind",
+    deliverableKinds: [
+      { value: "deck", label: "Deck" },
+      { value: "case_study", label: "Case study" },
+      { value: "download", label: "Download" },
+      { value: "generated_document", label: "Generated document" },
+      { value: "package", label: "Package" },
+    ],
+    deliverableVisibilityLabel: "Visibility",
+    deliverableVisibilities: [
+      { value: "owner_only", label: "Owner only" },
+      { value: "public_material", label: "Public material" },
+    ],
+    deliverableSourceLabel: "Source",
+    deliverableSources: [
+      { value: "artifact", label: "Selected artifact" },
+      { value: "bundle", label: "Pinned artifact bundle" },
+      { value: "external_link", label: "External link" },
+    ],
+    deliverableExternalUrlLabel: "External URL",
+    selectedArtifactHelp: (artifactId: string) => `Will use the selected artifact: ${artifactId.slice(0, 10)}`,
+    noSelectedArtifactHelp: "Select an artifact before creating an artifact-backed deliverable.",
+    bundleHelp: (count: number, selectedCount: number, limit: number) =>
+      count > 0
+        ? `${selectedCount} of ${count} pinned artifacts selected. A bundle can include up to ${limit} items.`
+        : "Pin at least one artifact before creating a bundle deliverable.",
+    createDeliverable: "Create deliverable",
+    updateDeliverable: "Update deliverable",
+    resetDeliverableForm: "Reset form",
+    downloadDeliverable: "Download deliverable",
+    editDeliverable: "Edit deliverable",
+    openExternalDeliverable: "Open external material",
+    publicMaterialChip: "public",
+    ownerOnlyChip: "owner only",
+    bundleItemCountChip: (count: number) => `${count} items`,
+    pinnedArtifactCountChip: (count: number) => `${count} pinned`,
+    linkedArtifactLabel: (artifactId: string) => `Linked artifact · ${artifactId.slice(0, 10)}`,
     ledgerEyebrow: "Billing Ledger",
     ledgerTitle: "See how many credits each execution actually burned",
     ledgerChip: (count: number) => `${count} entries`,
@@ -2269,11 +3652,20 @@ const copy = {
       mcpUpdated: "The MCP binding has been updated.",
       artifactPinned: "The artifact is pinned and will stay available beyond the default retention window.",
       artifactUnpinned: "The artifact has been unpinned and returned to the default retention policy.",
+      deliverableCreated: "The deliverable has been saved and can now be reused as owner-only or public material.",
+      deliverableUpdated: "The deliverable has been updated.",
+      deliverableFieldsRequired: "Add both a deliverable title and summary first.",
+      deliverableArtifactRequired: "Select an artifact before creating an artifact-backed deliverable.",
+      deliverableBundleRequired: "Pin at least one artifact before creating a bundle deliverable.",
+      deliverableBundleSelectionRequired: "Select at least one pinned artifact for the bundle.",
+      deliverableBundleTooLarge: (limit: number) => `A bundle may include at most ${limit} artifacts.`,
+      deliverableUrlRequired: "External-link deliverables need a valid URL.",
       nativeMissingSession: "There is no retained browser session yet. Run a governed browser step first.",
       nativeTaskRequired: "Enter a task for the native browser lane before running it.",
       nativeExecuted: "The native computer-use loop completed and stored a trace artifact.",
       nativeCompleted: (value: string) => `Native computer-use completed: ${value}`,
       policyOverlaysSaved: "Owner 管理的策略 overlay 已保存。",
+      governanceSaved: "组织与客户账户治理规则已保存。",
       error: "Failed to resolve approval.",
     },
   },

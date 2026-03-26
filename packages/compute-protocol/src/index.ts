@@ -19,6 +19,8 @@ export const managedPolicyScopeSchema = z.enum([
   "delegate_managed",
   "owner_managed",
   "customer_trust_tier",
+  "org_managed",
+  "customer_account",
 ]);
 export const contactComputeTrustTierSchema = z.enum([
   "standard",
@@ -32,7 +34,7 @@ export const policyResourceScopeSchema = z.enum([
   "browser_lane",
   "artifact_store",
 ]);
-export const mcpTransportKindSchema = z.enum(["streamable_http"]);
+export const mcpTransportKindSchema = z.enum(["streamable_http", "sse"]);
 export const policyChannelSchema = z.enum([
   "private_chat",
   "group_mention",
@@ -74,6 +76,16 @@ export const artifactKindSchema = z.enum([
   "json",
   "trace",
 ]);
+export const deliverableKindSchema = z.enum([
+  "deck",
+  "case_study",
+  "download",
+  "generated_document",
+  "package",
+]);
+export const deliverableVisibilitySchema = z.enum(["owner_only", "public_material"]);
+export const deliverableSourceKindSchema = z.enum(["artifact", "external_link", "bundle"]);
+export const maxDeliverableBundleItems = 20;
 export const computeRequestedBySchema = z.enum(["system", "owner", "audience"]);
 export const computeRunnerTypeSchema = z.enum(["docker", "vm"]);
 export const computeNetworkModeSchema = z.enum(["no_network", "allowlist", "full"]);
@@ -137,6 +149,8 @@ export const capabilityPolicyProfileSchema = z.object({
   id: z.string(),
   representativeId: z.string().nullable().optional(),
   ownerId: z.string().nullable().optional(),
+  organizationId: z.string().nullable().optional(),
+  customerAccountId: z.string().nullable().optional(),
   name: z.string(),
   isDefault: z.boolean(),
   enabled: z.boolean().default(true),
@@ -171,6 +185,33 @@ export const ownerManagedPolicyOverlaysSchema = z.object({
   trustedCustomer: ownerManagedOverlayConfigSchema.extend({
     trustTier: contactComputeTrustTierSchema.default("verified"),
   }),
+});
+
+export const governanceContactAssignmentSchema = z.object({
+  contactId: z.string(),
+  displayName: z.string().nullable().optional(),
+  username: z.string().nullable().optional(),
+  computeTrustTier: contactComputeTrustTierSchema.nullable().optional(),
+  customerAccountId: z.string().nullable().optional(),
+  customerAccountSlug: z.string().nullable().optional(),
+});
+
+export const customerAccountOverlaySchema = ownerManagedOverlayConfigSchema.extend({
+  id: z.string().nullable().optional(),
+  slug: z.string().trim().min(1),
+  displayName: z.string().trim().min(1),
+  contactIds: z.array(z.string()).max(50).default([]),
+});
+
+export const organizationGovernanceOverlaysSchema = z.object({
+  organization: z.object({
+    id: z.string().nullable().optional(),
+    slug: z.string().nullable().optional(),
+    displayName: z.string().nullable().optional(),
+  }),
+  organizationBaseline: ownerManagedOverlayConfigSchema,
+  customerAccounts: z.array(customerAccountOverlaySchema).max(12).default([]),
+  contactAssignments: z.array(governanceContactAssignmentSchema).max(100).default([]),
 });
 
 const computeSubagentAllowedCapabilities = {
@@ -398,6 +439,12 @@ export const mcpBindingSnapshotSchema = z.object({
   enabled: z.boolean(),
   approvalRequired: z.boolean(),
   estimatedCostCentsPerCall: z.number().int().nonnegative().default(0),
+  maxRetries: z.number().int().min(0).max(5).default(2),
+  retryBackoffMs: z.number().int().min(100).max(30_000).default(1000),
+  consecutiveFailures: z.number().int().nonnegative().default(0),
+  lastFailureAt: z.string().datetime().nullable().optional(),
+  lastFailureReason: z.string().nullable().optional(),
+  lastSuccessAt: z.string().datetime().nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -414,6 +461,8 @@ const mcpBindingFieldsSchema = z.object({
   enabled: z.boolean().default(true),
   approvalRequired: z.boolean().default(true),
   estimatedCostCentsPerCall: z.number().int().nonnegative().default(0),
+  maxRetries: z.number().int().min(0).max(5).default(2),
+  retryBackoffMs: z.number().int().min(100).max(30_000).default(1000),
 });
 
 function refineMcpBindingSchema<T extends z.ZodTypeAny>(schema: T) {
@@ -510,6 +559,94 @@ export const updateArtifactRequestSchema = z.object({
 
 export const updateArtifactResponseSchema = z.object({
   artifact: artifactSnapshotSchema,
+});
+
+export const deliverableSnapshotSchema = z.object({
+  id: z.string(),
+  representativeId: z.string(),
+  artifactId: z.string().nullable(),
+  title: z.string(),
+  summary: z.string(),
+  kind: deliverableKindSchema,
+  visibility: deliverableVisibilitySchema,
+  sourceKind: deliverableSourceKindSchema,
+  externalUrl: z.string().url().nullable(),
+  bundleItemArtifactIds: z.array(z.string()).default([]),
+  createdBy: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+const deliverableFieldsSchema = z.object({
+  title: z.string().trim().min(1),
+  summary: z.string().trim().min(1),
+  kind: deliverableKindSchema,
+  visibility: deliverableVisibilitySchema.default("owner_only"),
+  sourceKind: deliverableSourceKindSchema,
+  artifactId: z.string().trim().min(1).optional(),
+  externalUrl: z.string().url().optional(),
+  bundleItemArtifactIds: z.array(z.string().trim().min(1)).max(maxDeliverableBundleItems).default([]),
+  createdBy: z.string().trim().min(1).optional(),
+});
+
+function refineDeliverableSchema<T extends z.ZodTypeAny>(schema: T) {
+  return schema.superRefine((value, ctx) => {
+    if (!value || typeof value !== "object") {
+      return;
+    }
+
+    const record = value as {
+      sourceKind?: "artifact" | "external_link" | "bundle";
+      artifactId?: string;
+      externalUrl?: string;
+      bundleItemArtifactIds?: string[];
+    };
+
+    if (record.sourceKind === "artifact" && !record.artifactId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "artifactId is required for artifact-backed deliverables.",
+        path: ["artifactId"],
+      });
+    }
+
+    if (record.sourceKind === "external_link" && !record.externalUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "externalUrl is required for external-link deliverables.",
+        path: ["externalUrl"],
+      });
+    }
+
+    if (record.sourceKind === "bundle" && (!Array.isArray(record.bundleItemArtifactIds) || record.bundleItemArtifactIds.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "bundleItemArtifactIds are required for bundle deliverables.",
+        path: ["bundleItemArtifactIds"],
+      });
+    }
+  });
+}
+
+export const upsertDeliverableRequestSchema = refineDeliverableSchema(deliverableFieldsSchema);
+
+export const updateDeliverableRequestSchema = refineDeliverableSchema(
+  deliverableFieldsSchema.partial(),
+).refine((value) => Object.keys(value).length > 0, {
+  message: "At least one deliverable field is required.",
+});
+
+export const listDeliverablesResponseSchema = z.object({
+  representative: z.object({
+    slug: z.string(),
+    displayName: z.string(),
+  }),
+  deliverables: z.array(deliverableSnapshotSchema),
+});
+
+export const deliverableDownloadResponseSchema = z.object({
+  fileName: z.string(),
+  mimeType: z.string(),
 });
 
 export const toolExecutionSnapshotSchema = z.object({
@@ -625,6 +762,9 @@ export type ComputeLeaseStatus = z.infer<typeof computeLeaseStatusSchema>;
 export type ToolExecutionStatus = z.infer<typeof toolExecutionStatusSchema>;
 export type ApprovalStatus = z.infer<typeof approvalStatusSchema>;
 export type ArtifactKind = z.infer<typeof artifactKindSchema>;
+export type DeliverableKind = z.infer<typeof deliverableKindSchema>;
+export type DeliverableVisibility = z.infer<typeof deliverableVisibilitySchema>;
+export type DeliverableSourceKind = z.infer<typeof deliverableSourceKindSchema>;
 export type ComputeRequestedBy = z.infer<typeof computeRequestedBySchema>;
 export type ComputeRunnerType = z.infer<typeof computeRunnerTypeSchema>;
 export type ComputeNetworkMode = z.infer<typeof computeNetworkModeSchema>;
@@ -640,6 +780,9 @@ export type BrowserNavigationStatus = z.infer<typeof browserNavigationStatusSche
 export type CapabilityPolicyRule = z.infer<typeof capabilityPolicyRuleSchema>;
 export type CapabilityPolicyProfile = z.infer<typeof capabilityPolicyProfileSchema>;
 export type OwnerManagedPolicyOverlays = z.infer<typeof ownerManagedPolicyOverlaysSchema>;
+export type GovernanceContactAssignment = z.infer<typeof governanceContactAssignmentSchema>;
+export type CustomerAccountOverlay = z.infer<typeof customerAccountOverlaySchema>;
+export type OrganizationGovernanceOverlays = z.infer<typeof organizationGovernanceOverlaysSchema>;
 export type CreateComputeSessionRequest = z.infer<typeof createComputeSessionRequestSchema>;
 export type ComputeSessionLease = z.infer<typeof computeSessionLeaseSchema>;
 export type ComputeSessionSnapshot = z.infer<typeof computeSessionSnapshotSchema>;
@@ -667,6 +810,11 @@ export type ResolveApprovalResponse = z.infer<typeof resolveApprovalResponseSche
 export type ArtifactSnapshot = z.infer<typeof artifactSnapshotSchema>;
 export type UpdateArtifactRequest = z.infer<typeof updateArtifactRequestSchema>;
 export type UpdateArtifactResponse = z.infer<typeof updateArtifactResponseSchema>;
+export type DeliverableSnapshot = z.infer<typeof deliverableSnapshotSchema>;
+export type UpsertDeliverableRequest = z.infer<typeof upsertDeliverableRequestSchema>;
+export type UpdateDeliverableRequest = z.infer<typeof updateDeliverableRequestSchema>;
+export type ListDeliverablesResponse = z.infer<typeof listDeliverablesResponseSchema>;
+export type DeliverableDownloadResponse = z.infer<typeof deliverableDownloadResponseSchema>;
 export type ExecuteToolResponse = z.infer<typeof executeToolResponseSchema>;
 export type NativeComputerUseExecutionResponse = z.infer<
   typeof nativeComputerUseExecutionResponseSchema
