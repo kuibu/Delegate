@@ -290,6 +290,7 @@ The current governed compute slice now ships:
 - policy-driven `allow / ask / deny`
 - Delegate-managed policy overlays with channel / plan-tier conditions
 - approval creation and resolution for risky requests
+- team/customer approval insights for approvers, customer-account risk, stale workflow hygiene, and blocked hotspots
 - stdout/stderr artifact persistence to MinIO
 - owner dashboard compute lane with session, approval, artifact, and ledger visibility
 - Telegram `/compute` integration for representative-facing compute requests

@@ -222,13 +222,150 @@ type ComputeApprovalsSnapshot = {
     reason: string;
     requestedActionSummary: string;
     riskSummary: string;
+    riskScore: number;
     subagentId?: string;
     requestedAt: string;
     resolvedAt?: string;
     resolvedBy?: string;
     toolExecutionId?: string;
     sessionId?: string;
+    customerAccount: {
+      id: string | null;
+      slug: string;
+      displayName: string;
+      isUnassigned: boolean;
+    };
+    approver: {
+      key: string;
+      label: string;
+      kind: "org_member" | "team_proxy" | "system" | "external" | "unresolved";
+      role?: string;
+    };
+    workflowStatus?: string;
+    workflowScheduledAt?: string;
+    staleWorkflow: boolean;
   }>;
+};
+
+type ComputeApprovalInsightsSnapshot = {
+  representative: {
+    slug: string;
+    displayName: string;
+    organization?: {
+      id: string;
+      slug: string;
+      displayName: string;
+    } | null;
+  };
+  appliedFilters: {
+    approver: string;
+    customer: string;
+    subagent: string;
+    status: "all" | "pending" | "approved" | "rejected" | "expired";
+  };
+  filters: {
+    approvers: Array<{
+      key: string;
+      label: string;
+      kind: "org_member" | "team_proxy" | "system" | "external" | "unresolved";
+      role?: string;
+      resolvedCount: number;
+    }>;
+    customerAccounts: Array<{
+      key: string;
+      slug: string;
+      displayName: string;
+      isUnassigned: boolean;
+      approvalCount: number;
+      blockedCount: number;
+    }>;
+    subagents: Array<{
+      key: string;
+      label: string;
+      approvalCount: number;
+      blockedCount: number;
+      totalCostCents: number;
+    }>;
+    statuses: Array<"all" | "pending" | "approved" | "rejected" | "expired">;
+  };
+  summary: {
+    pendingApprovals: number;
+    approvalsResolvedLast7d: number;
+    blockedExecutionsLast7d: number;
+    avgApprovalLatencyMinutes: number;
+  };
+  byApprover: Array<{
+    key: string;
+    label: string;
+    kind: "org_member" | "team_proxy" | "system" | "external" | "unresolved";
+    role?: string;
+    resolvedCount: number;
+    approvedCount: number;
+    rejectedCount: number;
+    expiredCount: number;
+    latestResolvedAt?: string;
+  }>;
+  byCustomerAccount: Array<{
+    key: string;
+    slug: string;
+    displayName: string;
+    isUnassigned: boolean;
+    pendingCount: number;
+    blockedCount: number;
+    resolvedCount: number;
+    highRiskOpenCount: number;
+    latestActivityAt?: string;
+  }>;
+  bySubagent: Array<{
+    key: string;
+    label: string;
+    pendingCount: number;
+    approvedCount: number;
+    rejectedCount: number;
+    expiredCount: number;
+    blockedCount: number;
+    totalCostCents: number;
+  }>;
+  hotspots: {
+    longestPendingApprovals: Array<{
+      id: string;
+      requestedActionSummary: string;
+      customerLabel: string;
+      subagentLabel: string;
+      requestedAt: string;
+      pendingMinutes: number;
+      riskScore: number;
+    }>;
+    highestRiskOpenApprovals: Array<{
+      id: string;
+      requestedActionSummary: string;
+      customerLabel: string;
+      subagentLabel: string;
+      reason: string;
+      riskScore: number;
+      requestedAt: string;
+    }>;
+    mostFrequentlyBlockedCustomers: Array<{
+      key: string;
+      slug: string;
+      displayName: string;
+      isUnassigned: boolean;
+      blockedCount: number;
+      latestBlockedAt?: string;
+    }>;
+  };
+  auditHygiene: {
+    missingResolvedByCount: number;
+    missingCustomerContextCount: number;
+    staleWorkflowCount: number;
+    nonMemberApproverCount: number;
+    items: Array<{
+      key: string;
+      label: string;
+      detail: string;
+      count: number;
+    }>;
+  };
 };
 
 type ComputeArtifactsSnapshot = {
@@ -319,6 +456,12 @@ type NativeComputerFormState = {
 
 type OverlayFormState = ComputeSnapshot["representative"]["ownerManagedOverlays"];
 type GovernanceFormState = ComputeSnapshot["representative"]["governance"];
+type ApprovalFilterState = {
+  approver: string;
+  customer: string;
+  subagent: string;
+  status: "all" | "pending" | "approved" | "rejected" | "expired";
+};
 
 type DeliverableFormState = {
   deliverableId: string | null;
@@ -341,6 +484,13 @@ export function DashboardCompute({
   const t = pickCopy(locale, copy);
   const [snapshot, setSnapshot] = useState<ComputeSnapshot | null>(null);
   const [approvals, setApprovals] = useState<ComputeApprovalsSnapshot["approvals"]>([]);
+  const [approvalInsights, setApprovalInsights] = useState<ComputeApprovalInsightsSnapshot | null>(null);
+  const [approvalFilters, setApprovalFilters] = useState<ApprovalFilterState>({
+    approver: "all",
+    customer: "all",
+    subagent: "all",
+    status: "all",
+  });
   const [artifacts, setArtifacts] = useState<ComputeArtifactsSnapshot["artifacts"]>([]);
   const [deliverables, setDeliverables] = useState<DeliverablesSnapshot["deliverables"]>([]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
@@ -369,11 +519,22 @@ export function DashboardCompute({
       representativeSlug,
       setSnapshot,
       setApprovals,
+      setApprovalInsights,
+      approvalFilters,
       setArtifacts,
       setDeliverables,
       setError,
     );
   }, [representativeSlug]);
+
+  useEffect(() => {
+    void refreshApprovalInsights(
+      representativeSlug,
+      approvalFilters,
+      setApprovalInsights,
+      setError,
+    );
+  }, [approvalFilters, representativeSlug]);
 
   useEffect(() => {
     setMcpForm(createEmptyMcpBindingForm());
@@ -442,6 +603,29 @@ export function DashboardCompute({
   }, [representativeSlug, selectedArtifactId, t.messages.error]);
 
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending").length;
+  const filteredApprovals = useMemo(
+    () =>
+      approvals.filter((approval) => {
+        if (approvalFilters.approver !== "all" && approval.approver.key !== approvalFilters.approver) {
+          return false;
+        }
+        const customerKey = approval.customerAccount.isUnassigned
+          ? "unassigned"
+          : approval.customerAccount.id ?? approval.customerAccount.slug;
+        if (approvalFilters.customer !== "all" && customerKey !== approvalFilters.customer) {
+          return false;
+        }
+        const subagentKey = approval.subagentId ?? "other";
+        if (approvalFilters.subagent !== "all" && subagentKey !== approvalFilters.subagent) {
+          return false;
+        }
+        if (approvalFilters.status !== "all" && approval.status !== approvalFilters.status) {
+          return false;
+        }
+        return true;
+      }),
+    [approvalFilters, approvals],
+  );
   const liveSessions = snapshot
     ? snapshot.sessions.filter((session) =>
         ["requested", "starting", "running", "idle"].includes(session.status),
@@ -497,6 +681,35 @@ export function DashboardCompute({
       ) as Record<DeliverableFormState["sourceKind"], string>,
     [t],
   );
+  const approvalInsightCards = approvalInsights
+    ? [
+        {
+          label: t.approvalInsightsCards.pending,
+          value: `${approvalInsights.summary.pendingApprovals}`,
+          detail: t.approvalInsightsCards.pendingDetail,
+          tone: approvalInsights.summary.pendingApprovals > 0 ? ("accent" as const) : ("safe" as const),
+        },
+        {
+          label: t.approvalInsightsCards.resolved7d,
+          value: `${approvalInsights.summary.approvalsResolvedLast7d}`,
+          detail: t.approvalInsightsCards.resolved7dDetail,
+          tone: "safe" as const,
+        },
+        {
+          label: t.approvalInsightsCards.blocked7d,
+          value: `${approvalInsights.summary.blockedExecutionsLast7d}`,
+          detail: t.approvalInsightsCards.blocked7dDetail,
+          tone: approvalInsights.summary.blockedExecutionsLast7d > 0 ? ("accent" as const) : ("default" as const),
+        },
+        {
+          label: t.approvalInsightsCards.latency,
+          value: approvalInsights.summary.avgApprovalLatencyMinutes
+            ? t.approvalInsightsCards.latencyValue(approvalInsights.summary.avgApprovalLatencyMinutes)
+            : t.approvalInsightsCards.latencyEmpty,
+          detail: t.approvalInsightsCards.latencyDetail,
+        },
+      ]
+    : [];
   const signalCards = snapshot
     ? [
         {
@@ -626,6 +839,8 @@ export function DashboardCompute({
           representativeSlug,
           setSnapshot,
           setApprovals,
+          setApprovalInsights,
+          approvalFilters,
           setArtifacts,
           setDeliverables,
           setError,
@@ -692,6 +907,8 @@ export function DashboardCompute({
           representativeSlug,
           setSnapshot,
           setApprovals,
+          setApprovalInsights,
+          approvalFilters,
           setArtifacts,
           setDeliverables,
           setError,
@@ -762,6 +979,8 @@ export function DashboardCompute({
           representativeSlug,
           setSnapshot,
           setApprovals,
+          setApprovalInsights,
+          approvalFilters,
           setArtifacts,
           setDeliverables,
           setError,
@@ -806,6 +1025,8 @@ export function DashboardCompute({
           representativeSlug,
           setSnapshot,
           setApprovals,
+          setApprovalInsights,
+          approvalFilters,
           setArtifacts,
           setDeliverables,
           setError,
@@ -847,6 +1068,8 @@ export function DashboardCompute({
           representativeSlug,
           setSnapshot,
           setApprovals,
+          setApprovalInsights,
+          approvalFilters,
           setArtifacts,
           setDeliverables,
           setError,
@@ -919,6 +1142,8 @@ export function DashboardCompute({
           representativeSlug,
           setSnapshot,
           setApprovals,
+          setApprovalInsights,
+          approvalFilters,
           setArtifacts,
           setDeliverables,
           setError,
@@ -1019,6 +1244,8 @@ export function DashboardCompute({
           representativeSlug,
           setSnapshot,
           setApprovals,
+          setApprovalInsights,
+          approvalFilters,
           setArtifacts,
           setDeliverables,
           setError,
@@ -2153,14 +2380,336 @@ export function DashboardCompute({
         </DashboardSurface>
 
         <DashboardSurface
+          eyebrow={t.approvalInsightsEyebrow}
+          meta={
+            <span className="chip">
+              {approvalInsights
+                ? t.approvalInsightsChip(
+                    approvalInsights.summary.pendingApprovals,
+                    approvalInsights.auditHygiene.items.length,
+                  )
+                : t.loadingInsights}
+            </span>
+          }
+          title={t.approvalInsightsTitle}
+          tone="accent"
+        >
+          {approvalInsights ? (
+            <>
+              <div className="dashboard-highlight-grid">
+                <article className="dashboard-highlight-card dashboard-highlight-card-primary">
+                  <p className="panel-title">{t.approvalInsightsHeroEyebrow}</p>
+                  <h3>{t.approvalInsightsHeroTitle}</h3>
+                  <p>{t.approvalInsightsHeroCopy}</p>
+                  <div className="chip-row">
+                    <span className="chip">
+                      {approvalInsights.representative.organization?.displayName ?? t.approvalInsightsNoOrg}
+                    </span>
+                    <span className="chip">
+                      {t.approvalInsightsFilterState(
+                        approvalInsights.appliedFilters.approver,
+                        approvalInsights.appliedFilters.customer,
+                        approvalInsights.appliedFilters.subagent,
+                        approvalInsights.appliedFilters.status,
+                      )}
+                    </span>
+                  </div>
+                </article>
+
+                <DashboardSignalStrip cards={approvalInsightCards} />
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <label className="field-label">
+                  <span>{t.approvalFilters.approver}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setApprovalFilters((current) => ({
+                        ...current,
+                        approver: event.target.value,
+                      }))
+                    }
+                    value={approvalFilters.approver}
+                  >
+                    <option value="all">{t.approvalFilters.allApprovers}</option>
+                    {approvalInsights.filters.approvers.map((approver) => (
+                      <option key={approver.key} value={approver.key}>
+                        {t.approverFilterOption(approver.label, approver.kind, approver.resolvedCount)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field-label">
+                  <span>{t.approvalFilters.customer}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setApprovalFilters((current) => ({
+                        ...current,
+                        customer: event.target.value,
+                      }))
+                    }
+                    value={approvalFilters.customer}
+                  >
+                    <option value="all">{t.approvalFilters.allCustomers}</option>
+                    {approvalInsights.filters.customerAccounts.map((customer) => (
+                      <option key={customer.key} value={customer.key}>
+                        {t.customerFilterOption(
+                          customer.displayName,
+                          customer.blockedCount,
+                          customer.approvalCount,
+                        )}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field-label">
+                  <span>{t.approvalFilters.subagent}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setApprovalFilters((current) => ({
+                        ...current,
+                        subagent: event.target.value,
+                      }))
+                    }
+                    value={approvalFilters.subagent}
+                  >
+                    <option value="all">{t.approvalFilters.allSubagents}</option>
+                    {approvalInsights.filters.subagents.map((subagent) => (
+                      <option key={subagent.key} value={subagent.key}>
+                        {t.subagentFilterOption(
+                          subagent.label,
+                          subagent.approvalCount,
+                          subagent.blockedCount,
+                        )}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field-label">
+                  <span>{t.approvalFilters.status}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setApprovalFilters((current) => ({
+                        ...current,
+                        status: event.target.value as ApprovalFilterState["status"],
+                      }))
+                    }
+                    value={approvalFilters.status}
+                  >
+                    {approvalInsights.filters.statuses.map((status) => (
+                      <option key={status} value={status}>
+                        {t.approvalStatusOption(status)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.approvalTables.approversEyebrow}</p>
+                      <h3>{t.approvalTables.approversTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {approvalInsights.byApprover.length ? (
+                      approvalInsights.byApprover.map((approver) => (
+                        <div className="skill-row" key={approver.key}>
+                          <div>
+                            <strong>{approver.label}</strong>
+                            <p>{t.approverMeta(approver.kind, approver.role)}</p>
+                            <div className="chip-row">
+                              <span className="chip">{t.approvalOutcomeChip("approved", approver.approvedCount)}</span>
+                              <span className="chip">{t.approvalOutcomeChip("rejected", approver.rejectedCount)}</span>
+                              <span className="chip">{t.approvalOutcomeChip("expired", approver.expiredCount)}</span>
+                            </div>
+                          </div>
+                          <div className="footer-note">
+                            {t.approverResolvedCount(approver.resolvedCount)}
+                            {approver.latestResolvedAt
+                              ? ` · ${t.lastTouched(formatTimestamp(approver.latestResolvedAt, locale))}`
+                              : ""}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{t.approvalTables.noApprovers}</p>
+                    )}
+                  </div>
+                </article>
+
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.approvalTables.customerEyebrow}</p>
+                      <h3>{t.approvalTables.customerTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {approvalInsights.byCustomerAccount.length ? (
+                      approvalInsights.byCustomerAccount.map((customer) => (
+                        <div className="skill-row" key={customer.key}>
+                          <div>
+                            <strong>{customer.displayName}</strong>
+                            <p>{customer.slug}</p>
+                            <div className="chip-row">
+                              <span className="chip">{t.customerRiskChip("pending", customer.pendingCount)}</span>
+                              <span className="chip">{t.customerRiskChip("blocked", customer.blockedCount)}</span>
+                              <span className="chip">{t.customerRiskChip("high", customer.highRiskOpenCount)}</span>
+                            </div>
+                          </div>
+                          <div className="footer-note">
+                            {t.customerResolvedCount(customer.resolvedCount)}
+                            {customer.latestActivityAt
+                              ? ` · ${t.lastTouched(formatTimestamp(customer.latestActivityAt, locale))}`
+                              : ""}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{t.approvalTables.noCustomers}</p>
+                    )}
+                  </div>
+                </article>
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.approvalTables.subagentEyebrow}</p>
+                      <h3>{t.approvalTables.subagentTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {approvalInsights.bySubagent.length ? (
+                      approvalInsights.bySubagent.map((subagent) => (
+                        <div className="skill-row" key={subagent.key}>
+                          <div>
+                            <strong>{subagent.label}</strong>
+                            <div className="chip-row">
+                              <span className="chip">{t.customerRiskChip("pending", subagent.pendingCount)}</span>
+                              <span className="chip">{t.customerRiskChip("blocked", subagent.blockedCount)}</span>
+                              <span className="chip">{t.customerRiskChip("resolved", subagent.approvedCount + subagent.rejectedCount + subagent.expiredCount)}</span>
+                            </div>
+                          </div>
+                          <div className="footer-note">
+                            {t.subagentCostLabel(subagent.totalCostCents)}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{t.approvalTables.noSubagents}</p>
+                    )}
+                  </div>
+                </article>
+
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.approvalTables.auditEyebrow}</p>
+                      <h3>{t.approvalTables.auditTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {approvalInsights.auditHygiene.items.length ? (
+                      approvalInsights.auditHygiene.items.map((item) => (
+                        <div className="skill-row" key={item.key}>
+                          <div>
+                            <strong>{item.label}</strong>
+                            <p>{item.detail}</p>
+                          </div>
+                          <div className="chip">{t.auditCount(item.count)}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{t.approvalTables.noAuditIssues}</p>
+                    )}
+                  </div>
+                </article>
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.approvalTables.pendingHotspotsEyebrow}</p>
+                      <h3>{t.approvalTables.pendingHotspotsTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {approvalInsights.hotspots.longestPendingApprovals.length ? (
+                      approvalInsights.hotspots.longestPendingApprovals.map((item) => (
+                        <div className="skill-row" key={item.id}>
+                          <div>
+                            <strong>{item.requestedActionSummary}</strong>
+                            <p>{item.customerLabel}</p>
+                            <div className="chip-row">
+                              <span className="chip">{item.subagentLabel}</span>
+                              <span className="chip">{t.pendingMinutes(item.pendingMinutes)}</span>
+                              <span className="chip">{t.riskScore(item.riskScore)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{t.approvalTables.noPendingHotspots}</p>
+                    )}
+                  </div>
+                </article>
+
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.approvalTables.riskEyebrow}</p>
+                      <h3>{t.approvalTables.riskTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {approvalInsights.hotspots.highestRiskOpenApprovals.length ? (
+                      approvalInsights.hotspots.highestRiskOpenApprovals.map((item) => (
+                        <div className="skill-row" key={item.id}>
+                          <div>
+                            <strong>{item.requestedActionSummary}</strong>
+                            <p>{item.reason}</p>
+                            <div className="chip-row">
+                              <span className="chip">{item.customerLabel}</span>
+                              <span className="chip">{item.subagentLabel}</span>
+                              <span className="chip chip-danger">{t.riskScore(item.riskScore)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{t.approvalTables.noRiskHotspots}</p>
+                    )}
+                  </div>
+                </article>
+              </div>
+            </>
+          ) : (
+            <p className="muted">{t.loadingInsights}</p>
+          )}
+        </DashboardSurface>
+
+        <DashboardSurface
           eyebrow={t.approvalsEyebrow}
-          meta={<span className="chip">{t.pendingChip(pendingApprovals)}</span>}
+          meta={<span className="chip">{t.filteredApprovalsChip(filteredApprovals.length, pendingApprovals)}</span>}
           title={t.approvalsTitle}
           tone="accent"
         >
           <div className="row-list">
-            {approvals.length ? (
-              approvals.map((approval) => (
+            {filteredApprovals.length ? (
+              filteredApprovals.map((approval) => (
                 <div className="skill-row" key={approval.id}>
                   <div>
                     <strong>{approval.requestedActionSummary}</strong>
@@ -2168,11 +2717,32 @@ export function DashboardCompute({
                     <div className="chip-row">
                       <span className="chip">{approval.status}</span>
                       <span className="chip">{approval.reason}</span>
+                      <span className="chip">{approval.customerAccount.displayName}</span>
                       {approval.subagentId ? <span className="chip">{approval.subagentId}</span> : null}
+                      <span
+                        className={
+                          approval.approver.kind === "org_member"
+                            ? "chip chip-safe"
+                            : approval.approver.kind === "unresolved"
+                              ? "chip"
+                              : "chip chip-danger"
+                        }
+                      >
+                        {t.approverChip(approval.approver.label, approval.approver.kind)}
+                      </span>
                       <span className="chip">{formatTimestamp(approval.requestedAt, locale)}</span>
+                      {approval.staleWorkflow ? <span className="chip chip-danger">{t.staleWorkflowChip}</span> : null}
                     </div>
                     {approval.sessionId ? (
                       <p className="footer-note">{t.sessionLabel(approval.sessionId)}</p>
+                    ) : null}
+                    {approval.workflowStatus ? (
+                      <p className="footer-note">
+                        {t.workflowLabel(
+                          approval.workflowStatus,
+                          approval.workflowScheduledAt ? formatTimestamp(approval.workflowScheduledAt, locale) : t.workflowUnknown,
+                        )}
+                      </p>
                     ) : null}
                     {approval.resolvedAt ? (
                       <p className="footer-note">
@@ -2207,7 +2777,7 @@ export function DashboardCompute({
                 </div>
               ))
             ) : (
-              <p className="muted">{t.noApprovals}</p>
+              <p className="muted">{t.noFilteredApprovals}</p>
             )}
           </div>
         </DashboardSurface>
@@ -2946,16 +3516,21 @@ async function refreshCompute(
   representativeSlug: string,
   setSnapshot: (value: ComputeSnapshot | null) => void,
   setApprovals: (value: ComputeApprovalsSnapshot["approvals"]) => void,
+  setApprovalInsights: (value: ComputeApprovalInsightsSnapshot | null) => void,
+  approvalFilters: ApprovalFilterState,
   setArtifacts: (value: ComputeArtifactsSnapshot["artifacts"]) => void,
   setDeliverables: (value: DeliverablesSnapshot["deliverables"]) => void,
   setError: (value: string | null) => void,
 ) {
   try {
     setError(null);
-    const [snapshotResponse, approvalsResponse, artifactsResponse, deliverablesResponse] =
+    const [snapshotResponse, approvalsResponse, insightsResponse, artifactsResponse, deliverablesResponse] =
       await Promise.all([
       fetch(`/api/dashboard/representatives/${representativeSlug}/compute`, { cache: "no-store" }),
       fetch(`/api/dashboard/representatives/${representativeSlug}/compute/approvals`, {
+        cache: "no-store",
+      }),
+      fetch(buildInsightsPath(representativeSlug, approvalFilters), {
         cache: "no-store",
       }),
       fetch(`/api/dashboard/representatives/${representativeSlug}/compute/artifacts`, {
@@ -2978,22 +3553,62 @@ async function refreshCompute(
       throw new Error(await extractError(artifactsResponse));
     }
 
+    if (!insightsResponse.ok) {
+      throw new Error(await extractError(insightsResponse));
+    }
+
     if (!deliverablesResponse.ok) {
       throw new Error(await extractError(deliverablesResponse));
     }
 
     const snapshotPayload = (await snapshotResponse.json()) as ComputeSnapshot;
     const approvalsPayload = (await approvalsResponse.json()) as ComputeApprovalsSnapshot;
+    const insightsPayload = (await insightsResponse.json()) as ComputeApprovalInsightsSnapshot;
     const artifactsPayload = (await artifactsResponse.json()) as ComputeArtifactsSnapshot;
     const deliverablesPayload = (await deliverablesResponse.json()) as DeliverablesSnapshot;
 
     setSnapshot(snapshotPayload);
     setApprovals(approvalsPayload.approvals);
+    setApprovalInsights(insightsPayload);
     setArtifacts(artifactsPayload.artifacts);
     setDeliverables(deliverablesPayload.deliverables);
   } catch (error) {
     setError(error instanceof Error ? error.message : "Failed to load compute control plane.");
   }
+}
+
+async function refreshApprovalInsights(
+  representativeSlug: string,
+  approvalFilters: ApprovalFilterState,
+  setApprovalInsights: (value: ComputeApprovalInsightsSnapshot | null) => void,
+  setError: (value: string | null) => void,
+) {
+  try {
+    const response = await fetch(buildInsightsPath(representativeSlug, approvalFilters), {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(await extractError(response));
+    }
+
+    const payload = (await response.json()) as ComputeApprovalInsightsSnapshot;
+    setApprovalInsights(payload);
+  } catch (error) {
+    setError(error instanceof Error ? error.message : "Failed to load approval insights.");
+  }
+}
+
+function buildInsightsPath(representativeSlug: string, approvalFilters: ApprovalFilterState) {
+  const searchParams = new URLSearchParams();
+  if (approvalFilters.approver !== "all") searchParams.set("approver", approvalFilters.approver);
+  if (approvalFilters.customer !== "all") searchParams.set("customer", approvalFilters.customer);
+  if (approvalFilters.subagent !== "all") searchParams.set("subagent", approvalFilters.subagent);
+  if (approvalFilters.status !== "all") searchParams.set("status", approvalFilters.status);
+  const query = searchParams.toString();
+  return `/api/dashboard/representatives/${representativeSlug}/compute/insights${
+    query ? `?${query}` : ""
+  }`;
 }
 
 async function extractError(response: Response): Promise<string> {
@@ -3251,6 +3866,84 @@ const copy = {
     rejecting: "拒绝中...",
     reject: "拒绝",
     noApprovals: "当前没有待处理的审批请求。",
+    approvalInsightsEyebrow: "Approval Insights",
+    approvalInsightsTitle: "把审批、阻塞和责任链收成可读的团队治理视图",
+    approvalInsightsChip: (pending: number, hygiene: number) => `${pending} pending · ${hygiene} hygiene`,
+    loadingInsights: "正在加载审批洞察...",
+    approvalInsightsHeroEyebrow: "Team + customer governance",
+    approvalInsightsHeroTitle: "先看谁在批、谁总被拦，再决定怎么放宽或收紧策略",
+    approvalInsightsHeroCopy:
+      "这一层把平铺的审批记录收成团队、客户账户和 subagent 维度的风险视图，方便 owner 看清谁在替团队决策、哪里最容易卡住。",
+    approvalInsightsNoOrg: "No organization linked",
+    approvalInsightsFilterState: (
+      approver: string,
+      customer: string,
+      subagent: string,
+      status: string,
+    ) => `filters · ${approver} / ${customer} / ${subagent} / ${status}`,
+    approvalInsightsCards: {
+      pending: "Pending",
+      pendingDetail: "还在等待人工批准的请求数。",
+      resolved7d: "Resolved 7d",
+      resolved7dDetail: "最近 7 天内完成决定的审批数。",
+      blocked7d: "Blocked 7d",
+      blocked7dDetail: "最近 7 天内被 ask/blocked 的执行数。",
+      latency: "Avg latency",
+      latencyDetail: "从请求审批到做出决定的平均耗时。",
+      latencyValue: (minutes: number) => `${minutes} min`,
+      latencyEmpty: "n/a",
+    },
+    approvalFilters: {
+      approver: "Approver",
+      customer: "Customer account",
+      subagent: "Subagent",
+      status: "Status",
+      allApprovers: "All approvers",
+      allCustomers: "All customer accounts",
+      allSubagents: "All subagents",
+    },
+    approverFilterOption: (label: string, kind: string, count: number) => `${label} · ${kind} · ${count}`,
+    customerFilterOption: (label: string, blocked: number, approvals: number) =>
+      `${label} · ${blocked} blocked · ${approvals} approvals`,
+    subagentFilterOption: (label: string, approvals: number, blocked: number) =>
+      `${label} · ${approvals} approvals · ${blocked} blocked`,
+    approvalStatusOption: (status: string) => status,
+    approvalTables: {
+      approversEyebrow: "Approvers",
+      approversTitle: "谁在批准、拒绝，或者代团队处理这些请求",
+      customerEyebrow: "Customer accounts",
+      customerTitle: "哪些账户风险最高、最容易被拦",
+      subagentEyebrow: "Subagents",
+      subagentTitle: "哪些 delegated lanes 最烧钱、最容易卡住",
+      auditEyebrow: "Audit hygiene",
+      auditTitle: "哪些审批记录还缺 actor、客户上下文或 workflow 健康度",
+      pendingHotspotsEyebrow: "Pending hotspots",
+      pendingHotspotsTitle: "拖得最久的待批请求",
+      riskEyebrow: "Risk hotspots",
+      riskTitle: "风险最高的开放审批",
+      noApprovers: "当前没有已处理的审批 actor。",
+      noCustomers: "当前没有客户账户风险行。",
+      noSubagents: "当前没有 subagent 风险行。",
+      noAuditIssues: "当前没有突出的审计卫生问题。",
+      noPendingHotspots: "当前没有长时间挂起的审批。",
+      noRiskHotspots: "当前没有高风险开放审批。",
+    },
+    approverMeta: (kind: string, role?: string) => `${kind}${role ? ` · ${role}` : ""}`,
+    approvalOutcomeChip: (status: string, count: number) => `${status} ${count}`,
+    approverResolvedCount: (count: number) => `${count} resolved`,
+    customerRiskChip: (label: string, count: number) => `${label} ${count}`,
+    customerResolvedCount: (count: number) => `${count} resolved`,
+    subagentCostLabel: (cents: number) => `$${(cents / 100).toFixed(2)} internal cost`,
+    auditCount: (count: number) => `${count} issues`,
+    pendingMinutes: (minutes: number) => `${minutes} min pending`,
+    riskScore: (score: number) => `risk ${score}`,
+    lastTouched: (value: string) => `latest ${value}`,
+    filteredApprovalsChip: (filtered: number, pending: number) => `${filtered} visible · ${pending} pending`,
+    approverChip: (label: string, kind: string) => `${label} · ${kind}`,
+    staleWorkflowChip: "stale workflow",
+    workflowLabel: (status: string, scheduledAt: string) => `Workflow ${status} · ${scheduledAt}`,
+    workflowUnknown: "unknown",
+    noFilteredApprovals: "当前筛选条件下没有审批记录。",
     sessionsEyebrow: "Session Lane",
     sessionsTitle: "看到哪些 session 活着、失败了，最近执行了什么",
     liveChip: (live: number, failed: number) => `${live} live · ${failed} failed`,
@@ -3535,6 +4228,84 @@ const copy = {
     rejecting: "Rejecting...",
     reject: "Reject",
     noApprovals: "No approval requests right now.",
+    approvalInsightsEyebrow: "Approval Insights",
+    approvalInsightsTitle: "Turn approvals, blocks, and ownership into a readable governance view",
+    approvalInsightsChip: (pending: number, hygiene: number) => `${pending} pending · ${hygiene} hygiene`,
+    loadingInsights: "Loading approval insights...",
+    approvalInsightsHeroEyebrow: "Team + customer governance",
+    approvalInsightsHeroTitle: "See who approves what, who gets blocked, and where the risk clusters",
+    approvalInsightsHeroCopy:
+      "This layer turns flat approval rows into owner/team/customer views so you can see who is acting for the team, which accounts are risky, and which delegated lanes are costing the most.",
+    approvalInsightsNoOrg: "No organization linked",
+    approvalInsightsFilterState: (
+      approver: string,
+      customer: string,
+      subagent: string,
+      status: string,
+    ) => `filters · ${approver} / ${customer} / ${subagent} / ${status}`,
+    approvalInsightsCards: {
+      pending: "Pending",
+      pendingDetail: "Requests still waiting for a human decision.",
+      resolved7d: "Resolved 7d",
+      resolved7dDetail: "Approvals resolved during the last 7 days.",
+      blocked7d: "Blocked 7d",
+      blocked7dDetail: "Executions that recently hit ask/blocked.",
+      latency: "Avg latency",
+      latencyDetail: "Average time from request to approval outcome.",
+      latencyValue: (minutes: number) => `${minutes} min`,
+      latencyEmpty: "n/a",
+    },
+    approvalFilters: {
+      approver: "Approver",
+      customer: "Customer account",
+      subagent: "Subagent",
+      status: "Status",
+      allApprovers: "All approvers",
+      allCustomers: "All customer accounts",
+      allSubagents: "All subagents",
+    },
+    approverFilterOption: (label: string, kind: string, count: number) => `${label} · ${kind} · ${count}`,
+    customerFilterOption: (label: string, blocked: number, approvals: number) =>
+      `${label} · ${blocked} blocked · ${approvals} approvals`,
+    subagentFilterOption: (label: string, approvals: number, blocked: number) =>
+      `${label} · ${approvals} approvals · ${blocked} blocked`,
+    approvalStatusOption: (status: string) => status,
+    approvalTables: {
+      approversEyebrow: "Approvers",
+      approversTitle: "Who is approving, rejecting, or acting on behalf of the team",
+      customerEyebrow: "Customer accounts",
+      customerTitle: "Which accounts are riskiest or get blocked the most",
+      subagentEyebrow: "Subagents",
+      subagentTitle: "Which delegated lanes burn the most cost or trigger the most review",
+      auditEyebrow: "Audit hygiene",
+      auditTitle: "Which approvals are missing actors, customer context, or healthy workflow state",
+      pendingHotspotsEyebrow: "Pending hotspots",
+      pendingHotspotsTitle: "The oldest pending approvals",
+      riskEyebrow: "Risk hotspots",
+      riskTitle: "The highest-risk open approvals",
+      noApprovers: "No resolved approvers yet.",
+      noCustomers: "No customer risk rows yet.",
+      noSubagents: "No subagent risk rows yet.",
+      noAuditIssues: "No outstanding audit hygiene issues.",
+      noPendingHotspots: "No long-running pending approvals.",
+      noRiskHotspots: "No high-risk open approvals.",
+    },
+    approverMeta: (kind: string, role?: string) => `${kind}${role ? ` · ${role}` : ""}`,
+    approvalOutcomeChip: (status: string, count: number) => `${status} ${count}`,
+    approverResolvedCount: (count: number) => `${count} resolved`,
+    customerRiskChip: (label: string, count: number) => `${label} ${count}`,
+    customerResolvedCount: (count: number) => `${count} resolved`,
+    subagentCostLabel: (cents: number) => `$${(cents / 100).toFixed(2)} internal cost`,
+    auditCount: (count: number) => `${count} issues`,
+    pendingMinutes: (minutes: number) => `${minutes} min pending`,
+    riskScore: (score: number) => `risk ${score}`,
+    lastTouched: (value: string) => `latest ${value}`,
+    filteredApprovalsChip: (filtered: number, pending: number) => `${filtered} visible · ${pending} pending`,
+    approverChip: (label: string, kind: string) => `${label} · ${kind}`,
+    staleWorkflowChip: "stale workflow",
+    workflowLabel: (status: string, scheduledAt: string) => `Workflow ${status} · ${scheduledAt}`,
+    workflowUnknown: "unknown",
+    noFilteredApprovals: "No approvals match the current filters.",
     sessionsEyebrow: "Session Lane",
     sessionsTitle: "See which sessions are alive, failed, and what they last executed",
     liveChip: (live: number, failed: number) => `${live} live · ${failed} failed`,

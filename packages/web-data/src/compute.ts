@@ -23,6 +23,15 @@ import {
 import { resolveArtifactRetentionUntil } from "@delegate/artifacts";
 
 import { readArtifactObject } from "./artifact-store";
+import {
+  approvalRiskScore,
+  buildRepresentativeApprovalInsights,
+  normalizeApprover,
+  normalizeCustomerAccount,
+  type ApprovalInsightsFilters,
+  type ApprovalInsightsSource,
+  type RepresentativeApprovalInsightsSnapshot,
+} from "./compute-insights";
 import { prisma } from "./prisma";
 
 const computeSessionInclude = Prisma.validator<Prisma.ComputeSessionDefaultArgs>()({
@@ -56,6 +65,38 @@ type BrowserSessionRecord = Prisma.BrowserSessionGetPayload<{
   include: typeof browserSessionInclude.include;
 }>;
 
+const approvalInclude = Prisma.validator<Prisma.ApprovalRequestDefaultArgs>()({
+  include: {
+    contact: {
+      select: {
+        customerAccount: {
+          select: {
+            id: true,
+            slug: true,
+            displayName: true,
+          },
+        },
+      },
+    },
+    workflowRuns: {
+      where: {
+        kind: "APPROVAL_EXPIRATION",
+      },
+      orderBy: [{ scheduledAt: "desc" }],
+      take: 1,
+      select: {
+        id: true,
+        status: true,
+        scheduledAt: true,
+      },
+    },
+  },
+});
+
+type ApprovalRecord = Prisma.ApprovalRequestGetPayload<{
+  include: typeof approvalInclude.include;
+}>;
+
 type RepresentativeIdentity = {
   id: string;
   ownerId: string;
@@ -75,6 +116,12 @@ type RepresentativeIdentity = {
       id: string;
       slug: string;
       displayName: string;
+      members: Array<{
+        id: string;
+        displayName: string;
+        role: string;
+        canApproveCompute: boolean;
+      }>;
       capabilityProfiles: Array<{
         id: string;
         name: string;
@@ -342,12 +389,28 @@ export type RepresentativeComputeApprovalSnapshot = {
     reason: string;
     requestedActionSummary: string;
     riskSummary: string;
+    riskScore: number;
     subagentId?: string;
     requestedAt: string;
     resolvedAt?: string;
     resolvedBy?: string;
     toolExecutionId?: string;
     sessionId?: string;
+    customerAccount: {
+      id: string | null;
+      slug: string;
+      displayName: string;
+      isUnassigned: boolean;
+    };
+    approver: {
+      key: string;
+      label: string;
+      kind: "org_member" | "team_proxy" | "system" | "external" | "unresolved";
+      role?: string;
+    };
+    workflowStatus?: string;
+    workflowScheduledAt?: string;
+    staleWorkflow: boolean;
   }>;
 };
 
@@ -413,6 +476,8 @@ export type ExecuteRepresentativeNativeComputerUseInput = {
   maxSteps?: number;
   allowMutations?: boolean;
 };
+
+export type { RepresentativeApprovalInsightsSnapshot } from "./compute-insights";
 
 export async function getRepresentativeComputeSnapshot(
   representativeSlug: string,
@@ -485,31 +550,29 @@ export async function getRepresentativeComputeApprovals(
     return null;
   }
 
-  const approvals = await prisma.approvalRequest.findMany({
-    where: { representativeId: representative.id },
-    orderBy: [{ requestedAt: "desc" }],
-    take: 20,
-  });
+  const approvals = await queryRepresentativeApprovals(representative.id, 40);
 
   return {
     representative: {
       slug: representative.slug,
       displayName: representative.displayName,
     },
-    approvals: approvals.map((approval) => ({
-      id: approval.id,
-      status: approval.status.toLowerCase(),
-      reason: approval.reason,
-      requestedActionSummary: approval.requestedActionSummary,
-      riskSummary: approval.riskSummary,
-      ...(approval.subagentId ? { subagentId: approval.subagentId } : {}),
-      requestedAt: approval.requestedAt.toISOString(),
-      ...(approval.resolvedAt ? { resolvedAt: approval.resolvedAt.toISOString() } : {}),
-      ...(approval.resolvedBy ? { resolvedBy: approval.resolvedBy } : {}),
-      ...(approval.toolExecutionId ? { toolExecutionId: approval.toolExecutionId } : {}),
-      ...(approval.sessionId ? { sessionId: approval.sessionId } : {}),
-    })),
+    approvals: approvals.map((approval) => serializeRepresentativeApproval(approval, representative)),
   };
+}
+
+export async function getRepresentativeApprovalInsights(
+  representativeSlug: string,
+  filters: ApprovalInsightsFilters = {},
+): Promise<RepresentativeApprovalInsightsSnapshot | null> {
+  const representative = await getRepresentativeIdentity(representativeSlug);
+
+  if (!representative) {
+    return null;
+  }
+
+  const source = await buildRepresentativeApprovalInsightsSource(representative);
+  return buildRepresentativeApprovalInsights(source, filters);
 }
 
 export async function getRepresentativeComputeArtifacts(
@@ -1538,6 +1601,15 @@ async function getRepresentativeIdentity(
               id: true,
               slug: true,
               displayName: true,
+              members: {
+                orderBy: [{ createdAt: "asc" }],
+                select: {
+                  id: true,
+                  displayName: true,
+                  role: true,
+                  canApproveCompute: true,
+                },
+              },
               capabilityProfiles: {
                 where: {
                   isManaged: true,
@@ -1729,6 +1801,120 @@ async function getRepresentativeIdentity(
   });
 }
 
+async function queryRepresentativeApprovals(representativeId: string, take = 20) {
+  return prisma.approvalRequest.findMany({
+    where: { representativeId },
+    ...approvalInclude,
+    orderBy: [{ requestedAt: "desc" }],
+    take,
+  });
+}
+
+async function buildRepresentativeApprovalInsightsSource(
+  representative: RepresentativeIdentity,
+): Promise<ApprovalInsightsSource> {
+  const [approvals, blockedEvents, ledgerEntries] = await Promise.all([
+    queryRepresentativeApprovals(representative.id, 120),
+    prisma.eventAudit.findMany({
+      where: {
+        representativeId: representative.id,
+        type: "TOOL_EXECUTION_BLOCKED",
+        createdAt: {
+          gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        },
+      },
+      orderBy: [{ createdAt: "desc" }],
+      take: 120,
+      select: {
+        id: true,
+        createdAt: true,
+        payload: true,
+        contact: {
+          select: {
+            customerAccount: {
+              select: {
+                id: true,
+                slug: true,
+                displayName: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+    prisma.ledgerEntry.findMany({
+      where: {
+        representativeId: representative.id,
+        toolExecutionId: {
+          not: null,
+        },
+        createdAt: {
+          gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        },
+      },
+      orderBy: [{ createdAt: "desc" }],
+      take: 240,
+      select: {
+        toolExecutionId: true,
+        costCents: true,
+      },
+    }),
+  ]);
+
+  const toolExecutionIds = Array.from(
+    new Set(
+      ledgerEntries
+        .map((entry) => entry.toolExecutionId)
+        .filter((toolExecutionId): toolExecutionId is string => Boolean(toolExecutionId)),
+    ),
+  );
+  const toolExecutions = toolExecutionIds.length
+    ? await prisma.toolExecution.findMany({
+        where: {
+          id: {
+            in: toolExecutionIds,
+          },
+        },
+        select: {
+          id: true,
+          subagentId: true,
+        },
+      })
+    : [];
+  const toolExecutionMap = new Map(toolExecutions.map((execution) => [execution.id, execution]));
+
+  return {
+    representative: {
+      slug: representative.slug,
+      displayName: representative.displayName,
+      organization: representative.owner.organization
+        ? {
+            id: representative.owner.organization.id,
+            slug: representative.owner.organization.slug,
+            displayName: representative.owner.organization.displayName,
+          }
+        : null,
+    },
+    organizationMembers:
+      representative.owner.organization?.members.map((member) => ({
+        displayName: member.displayName,
+        role: member.role,
+        canApproveCompute: member.canApproveCompute,
+      })) ?? [],
+    approvals: approvals.map((approval) => serializeApprovalInsightRecord(approval, representative)),
+    blockedSignals: blockedEvents.map((event) => ({
+      id: event.id,
+      createdAt: event.createdAt.toISOString(),
+      customerAccount: normalizeCustomerAccount(event.contact?.customerAccount ?? null),
+      subagentId: parseEventAuditSubagentId(event.payload),
+    })),
+    costSignals: ledgerEntries.map((entry) => ({
+      subagentId: entry.toolExecutionId ? toolExecutionMap.get(entry.toolExecutionId)?.subagentId ?? null : null,
+      costCents: entry.costCents,
+    })),
+  };
+}
+
 async function getRepresentativeArtifactRecord(representativeSlug: string, artifactId: string) {
   return prisma.artifact.findFirst({
     where: {
@@ -1747,6 +1933,117 @@ async function getRepresentativeArtifactRecord(representativeSlug: string, artif
       },
     },
   });
+}
+
+function serializeRepresentativeApproval(
+  approval: ApprovalRecord,
+  representative: RepresentativeIdentity,
+) {
+  const workflow = approval.workflowRuns[0];
+  const customerAccount = normalizeCustomerAccount(approval.contact?.customerAccount ?? null);
+  const approver = normalizeApprover(
+    approval.resolvedBy,
+    representative.owner.organization?.members.map((member) => ({
+      displayName: member.displayName,
+      role: member.role,
+      canApproveCompute: member.canApproveCompute,
+    })) ?? [],
+  );
+  const staleWorkflow = isApprovalWorkflowStale(
+    approval.status,
+    workflow?.status ?? null,
+    workflow?.scheduledAt ?? null,
+  );
+
+  return {
+    id: approval.id,
+    status: approval.status.toLowerCase(),
+    reason: approval.reason,
+    requestedActionSummary: approval.requestedActionSummary,
+    riskSummary: approval.riskSummary,
+    riskScore: approvalRiskScore(approval.reason, approval.riskSummary),
+    customerAccount,
+    approver,
+    staleWorkflow,
+    ...(approval.subagentId ? { subagentId: approval.subagentId } : {}),
+    requestedAt: approval.requestedAt.toISOString(),
+    ...(approval.resolvedAt ? { resolvedAt: approval.resolvedAt.toISOString() } : {}),
+    ...(approval.resolvedBy ? { resolvedBy: approval.resolvedBy } : {}),
+    ...(approval.toolExecutionId ? { toolExecutionId: approval.toolExecutionId } : {}),
+    ...(approval.sessionId ? { sessionId: approval.sessionId } : {}),
+    ...(workflow ? { workflowStatus: workflow.status.toLowerCase() } : {}),
+    ...(workflow ? { workflowScheduledAt: workflow.scheduledAt.toISOString() } : {}),
+  };
+}
+
+function serializeApprovalInsightRecord(
+  approval: ApprovalRecord,
+  representative: RepresentativeIdentity,
+) {
+  const workflow = approval.workflowRuns[0];
+
+  return {
+    id: approval.id,
+    status: approval.status.toLowerCase() as "pending" | "approved" | "rejected" | "expired",
+    reason: approval.reason,
+    requestedActionSummary: approval.requestedActionSummary,
+    riskSummary: approval.riskSummary,
+    subagentId: approval.subagentId,
+    requestedAt: approval.requestedAt.toISOString(),
+    resolvedAt: approval.resolvedAt?.toISOString() ?? null,
+    resolvedBy: approval.resolvedBy ?? null,
+    toolExecutionId: approval.toolExecutionId ?? null,
+    sessionId: approval.sessionId ?? null,
+    customerAccount: normalizeCustomerAccount(approval.contact?.customerAccount ?? null),
+    approver: normalizeApprover(
+      approval.resolvedBy,
+      representative.owner.organization?.members.map((member) => ({
+        displayName: member.displayName,
+        role: member.role,
+        canApproveCompute: member.canApproveCompute,
+      })) ?? [],
+    ),
+    riskScore: approvalRiskScore(approval.reason, approval.riskSummary),
+    workflowStatus: workflow?.status.toLowerCase() ?? null,
+    workflowScheduledAt: workflow?.scheduledAt.toISOString() ?? null,
+    staleWorkflow: isApprovalWorkflowStale(
+      approval.status,
+      workflow?.status ?? null,
+      workflow?.scheduledAt ?? null,
+    ),
+  };
+}
+
+function isApprovalWorkflowStale(
+  approvalStatus: ApprovalRecord["status"],
+  workflowStatus: string | null,
+  workflowScheduledAt: Date | null,
+) {
+  if (approvalStatus !== "PENDING") {
+    return false;
+  }
+
+  if (!workflowStatus || !workflowScheduledAt) {
+    return true;
+  }
+
+  if (workflowStatus === "FAILED" || workflowStatus === "CANCELED" || workflowStatus === "COMPLETED") {
+    return true;
+  }
+
+  if (workflowStatus === "QUEUED") {
+    return workflowScheduledAt.getTime() < Date.now() - 15 * 60 * 1000;
+  }
+
+  return false;
+}
+
+function parseEventAuditSubagentId(payload: Prisma.JsonValue): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const maybeSubagentId = (payload as { subagentId?: unknown }).subagentId;
+  return typeof maybeSubagentId === "string" && maybeSubagentId.trim() ? maybeSubagentId : null;
 }
 
 function serializeRepresentativeIdentity(representative: RepresentativeIdentity) {
