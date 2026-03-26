@@ -14,6 +14,24 @@ export const computeSubagentIdSchema = z.enum([
 ]);
 export const capabilityPlanTierSchema = z.enum(["pass", "deep_help"]);
 export const policyDecisionSchema = z.enum(["allow", "ask", "deny"]);
+export const managedPolicyScopeSchema = z.enum([
+  "representative_default",
+  "delegate_managed",
+  "owner_managed",
+  "customer_trust_tier",
+]);
+export const contactComputeTrustTierSchema = z.enum([
+  "standard",
+  "verified",
+  "vip",
+  "restricted",
+]);
+export const policyResourceScopeSchema = z.enum([
+  "workspace",
+  "remote_mcp",
+  "browser_lane",
+  "artifact_store",
+]);
 export const mcpTransportKindSchema = z.enum(["streamable_http"]);
 export const policyChannelSchema = z.enum([
   "private_chat",
@@ -106,6 +124,7 @@ export const capabilityPolicyRuleSchema = z.object({
   commandPattern: z.string().optional(),
   pathPattern: z.string().optional(),
   domainPattern: z.string().optional(),
+  resourceScopeCondition: policyResourceScopeSchema.optional(),
   channelCondition: policyChannelSchema.optional(),
   requiredPlanTier: capabilityPlanTierSchema.optional(),
   maxCostCents: z.number().int().nonnegative().optional(),
@@ -116,11 +135,16 @@ export const capabilityPolicyRuleSchema = z.object({
 
 export const capabilityPolicyProfileSchema = z.object({
   id: z.string(),
-  representativeId: z.string(),
+  representativeId: z.string().nullable().optional(),
+  ownerId: z.string().nullable().optional(),
   name: z.string(),
   isDefault: z.boolean(),
+  enabled: z.boolean().default(true),
   isManaged: z.boolean().default(false),
+  managedScope: managedPolicyScopeSchema.default("representative_default"),
   managedSource: z.string().optional(),
+  editableByOwner: z.boolean().default(false),
+  contactTrustTierCondition: contactComputeTrustTierSchema.optional(),
   precedence: z.number().int().default(0),
   defaultDecision: policyDecisionSchema,
   maxSessionMinutes: z.number().int().positive(),
@@ -131,6 +155,22 @@ export const capabilityPolicyProfileSchema = z.object({
   networkAllowlist: computeNetworkAllowlistSchema,
   filesystemMode: computeFilesystemModeSchema,
   rules: z.array(capabilityPolicyRuleSchema).default([]),
+});
+
+export const ownerManagedOverlayConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  browserDecision: policyDecisionSchema,
+  browserRequiresApproval: z.boolean().default(true),
+  mcpDecision: policyDecisionSchema,
+  mcpRequiresApproval: z.boolean().default(true),
+  requiredPlanTier: capabilityPlanTierSchema.default("pass"),
+});
+
+export const ownerManagedPolicyOverlaysSchema = z.object({
+  baseline: ownerManagedOverlayConfigSchema,
+  trustedCustomer: ownerManagedOverlayConfigSchema.extend({
+    trustTier: contactComputeTrustTierSchema.default("verified"),
+  }),
 });
 
 const computeSubagentAllowedCapabilities = {
@@ -575,6 +615,9 @@ export type CapabilityKind = z.infer<typeof capabilityKindSchema>;
 export type ComputeSubagentId = z.infer<typeof computeSubagentIdSchema>;
 export type CapabilityPlanTier = z.infer<typeof capabilityPlanTierSchema>;
 export type PolicyDecision = z.infer<typeof policyDecisionSchema>;
+export type ManagedPolicyScope = z.infer<typeof managedPolicyScopeSchema>;
+export type ContactComputeTrustTier = z.infer<typeof contactComputeTrustTierSchema>;
+export type PolicyResourceScope = z.infer<typeof policyResourceScopeSchema>;
 export type McpTransportKind = z.infer<typeof mcpTransportKindSchema>;
 export type PolicyChannel = z.infer<typeof policyChannelSchema>;
 export type ComputeSessionStatus = z.infer<typeof computeSessionStatusSchema>;
@@ -596,6 +639,7 @@ export type BrowserSessionStatus = z.infer<typeof browserSessionStatusSchema>;
 export type BrowserNavigationStatus = z.infer<typeof browserNavigationStatusSchema>;
 export type CapabilityPolicyRule = z.infer<typeof capabilityPolicyRuleSchema>;
 export type CapabilityPolicyProfile = z.infer<typeof capabilityPolicyProfileSchema>;
+export type OwnerManagedPolicyOverlays = z.infer<typeof ownerManagedPolicyOverlaysSchema>;
 export type CreateComputeSessionRequest = z.infer<typeof createComputeSessionRequestSchema>;
 export type ComputeSessionLease = z.infer<typeof computeSessionLeaseSchema>;
 export type ComputeSessionSnapshot = z.infer<typeof computeSessionSnapshotSchema>;

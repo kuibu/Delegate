@@ -23,11 +23,24 @@ export async function loadSessionPolicyContext(sessionId: string) {
           owner: {
             include: {
               wallet: true,
+              capabilityProfiles: {
+                where: {
+                  isManaged: true,
+                  enabled: true,
+                },
+                orderBy: [{ precedence: "desc" }, { createdAt: "asc" }],
+                include: {
+                  rules: {
+                    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+                  },
+                },
+              },
             },
           },
           capabilityProfiles: {
             where: {
               isManaged: true,
+              enabled: true,
             },
             orderBy: [{ precedence: "desc" }, { createdAt: "asc" }],
             include: {
@@ -69,7 +82,10 @@ export async function loadSessionPolicyContext(sessionId: string) {
   return {
     session,
     profile: serializeCapabilityProfile(session.policyProfile),
-    managedProfiles: session.representative.capabilityProfiles.map((profile) =>
+    managedProfiles: [
+      ...session.representative.owner.capabilityProfiles,
+      ...session.representative.capabilityProfiles,
+    ].map((profile) =>
       serializeCapabilityProfile(profile),
     ),
   };
@@ -109,6 +125,7 @@ export async function evaluateExecutionRequest(sessionId: string, rawInput: unkn
       command: input.capability === "mcp" ? mcpToolName : input.command,
       path: normalizedPath,
       domain: input.capability === "mcp" ? bindingDomain : input.domain,
+      resourceScope: resolvePolicyResourceScope(input.capability),
       ...(context.session.conversation?.channel
         ? {
             channel: context.session.conversation.channel.toLowerCase() as
@@ -121,6 +138,7 @@ export async function evaluateExecutionRequest(sessionId: string, rawInput: unkn
       ...(entitlements.activePlanTier ? { activePlanTier: entitlements.activePlanTier } : {}),
       estimatedCostCents: input.estimatedCostCents,
       hasPaidEntitlement: entitlements.hasPaidEntitlement,
+      contactTrustTier: normalizeContactTrustTier(context.session.contact?.computeTrustTier),
     },
   );
 
@@ -174,4 +192,31 @@ export function assertExecutionSubagentRoute(params: {
   if (params.requestedSubagentId !== expectedSubagentId) {
     throw new SessionError(409, "compute_subagent_capability_mismatch");
   }
+}
+
+function resolvePolicyResourceScope(capability: CapabilityKind) {
+  if (capability === "browser") {
+    return "browser_lane" as const;
+  }
+
+  if (capability === "mcp") {
+    return "remote_mcp" as const;
+  }
+
+  return "workspace" as const;
+}
+
+function normalizeContactTrustTier(
+  rawTrustTier: string | null | undefined,
+): "standard" | "verified" | "vip" | "restricted" {
+  const normalized = rawTrustTier?.trim().toLowerCase();
+  if (
+    normalized === "verified" ||
+    normalized === "vip" ||
+    normalized === "restricted"
+  ) {
+    return normalized;
+  }
+
+  return "standard";
 }

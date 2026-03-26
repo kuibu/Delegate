@@ -414,11 +414,16 @@ export function serializeArtifact(artifact: {
 
 export function serializeCapabilityProfile(profile: {
   id: string;
-  representativeId: string;
+  representativeId: string | null;
+  ownerId: string | null;
   name: string;
   isDefault: boolean;
+  enabled: boolean;
   isManaged: boolean;
+  managedScope: string;
   managedSource: string | null;
+  editableByOwner: boolean;
+  contactTrustTierCondition: string | null;
   precedence: number;
   defaultDecision: string;
   maxSessionMinutes: number;
@@ -435,6 +440,7 @@ export function serializeCapabilityProfile(profile: {
     commandPattern: string | null;
     pathPattern: string | null;
     domainPattern: string | null;
+    resourceScopeCondition: string | null;
     channelCondition: string | null;
     requiredPlanTier: string | null;
     maxCostCents: number | null;
@@ -446,10 +452,27 @@ export function serializeCapabilityProfile(profile: {
   return capabilityPolicyProfileSchema.parse({
     id: profile.id,
     representativeId: profile.representativeId,
+    ownerId: profile.ownerId,
     name: profile.name,
     isDefault: profile.isDefault,
+    enabled: profile.enabled,
     isManaged: profile.isManaged,
+    managedScope: profile.managedScope.toLowerCase() as
+      | "representative_default"
+      | "delegate_managed"
+      | "owner_managed"
+      | "customer_trust_tier",
     ...(profile.managedSource ? { managedSource: profile.managedSource } : {}),
+    editableByOwner: profile.editableByOwner,
+    ...(profile.contactTrustTierCondition
+      ? {
+          contactTrustTierCondition: profile.contactTrustTierCondition.toLowerCase() as
+            | "standard"
+            | "verified"
+            | "vip"
+            | "restricted",
+        }
+      : {}),
     precedence: profile.precedence,
     defaultDecision: mapPolicyDecisionFromDb(profile.defaultDecision),
     maxSessionMinutes: profile.maxSessionMinutes,
@@ -466,6 +489,15 @@ export function serializeCapabilityProfile(profile: {
       ...(rule.commandPattern ? { commandPattern: rule.commandPattern } : {}),
       ...(rule.pathPattern ? { pathPattern: rule.pathPattern } : {}),
       ...(rule.domainPattern ? { domainPattern: rule.domainPattern } : {}),
+      ...(rule.resourceScopeCondition
+        ? {
+            resourceScopeCondition: rule.resourceScopeCondition.toLowerCase() as
+              | "workspace"
+              | "remote_mcp"
+              | "browser_lane"
+              | "artifact_store",
+          }
+        : {}),
       ...(rule.channelCondition
         ? { channelCondition: rule.channelCondition.toLowerCase() as any }
         : {}),

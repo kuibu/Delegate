@@ -29,7 +29,7 @@ type ComputeSnapshot = {
       sponsorPoolCredit: number;
       starsBalance: number;
     };
-    managedProfiles: Array<{
+    delegateManagedProfiles: Array<{
       id: string;
       name: string;
       managedSource?: string;
@@ -37,6 +37,25 @@ type ComputeSnapshot = {
       ruleCount: number;
       highlights: string[];
     }>;
+    ownerManagedOverlays: {
+      baseline: {
+        enabled: boolean;
+        browserDecision: "allow" | "ask" | "deny";
+        browserRequiresApproval: boolean;
+        mcpDecision: "allow" | "ask" | "deny";
+        mcpRequiresApproval: boolean;
+        requiredPlanTier: "pass" | "deep_help";
+      };
+      trustedCustomer: {
+        enabled: boolean;
+        trustTier: "standard" | "verified" | "vip" | "restricted";
+        browserDecision: "allow" | "ask" | "deny";
+        browserRequiresApproval: boolean;
+        mcpDecision: "allow" | "ask" | "deny";
+        mcpRequiresApproval: boolean;
+        requiredPlanTier: "pass" | "deep_help";
+      };
+    };
     mcpBindings: Array<{
       id: string;
       representativeId: string;
@@ -235,6 +254,8 @@ type NativeComputerFormState = {
   allowMutations: boolean;
 };
 
+type OverlayFormState = ComputeSnapshot["representative"]["ownerManagedOverlays"];
+
 export function DashboardCompute({
   representativeSlug,
   locale,
@@ -253,6 +274,7 @@ export function DashboardCompute({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [mcpForm, setMcpForm] = useState<McpBindingFormState>(() => createEmptyMcpBindingForm());
+  const [overlayForm, setOverlayForm] = useState<OverlayFormState>(createEmptyOverlayForm);
   const [nativeForm, setNativeForm] = useState<NativeComputerFormState>({
     task: "",
     provider: "auto",
@@ -267,6 +289,12 @@ export function DashboardCompute({
   useEffect(() => {
     setMcpForm(createEmptyMcpBindingForm());
   }, [representativeSlug]);
+
+  useEffect(() => {
+    if (snapshot) {
+      setOverlayForm(snapshot.representative.ownerManagedOverlays);
+    }
+  }, [snapshot]);
 
   useEffect(() => {
     setNativeForm({
@@ -590,6 +618,40 @@ export function DashboardCompute({
     });
   }
 
+  async function handleSavePolicyOverlays() {
+    setBusyKey("policy-overlays:save");
+    setMessage(null);
+    setError(null);
+
+    startTransition(() => {
+      void (async () => {
+        const response = await fetch(
+          `/api/dashboard/representatives/${representativeSlug}/compute/policy-overlays`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(overlayForm),
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(await extractError(response));
+        }
+
+        await refreshCompute(representativeSlug, setSnapshot, setApprovals, setArtifacts, setError);
+        setMessage(t.messages.policyOverlaysSaved);
+      })()
+        .catch((nextError: unknown) => {
+          setError(nextError instanceof Error ? nextError.message : t.messages.error);
+        })
+        .finally(() => {
+          setBusyKey(null);
+        });
+    });
+  }
+
   async function handleToggleArtifactPin(artifactId: string, pinned: boolean) {
     setBusyKey(`artifact:${artifactId}:${pinned ? "pin" : "unpin"}`);
     setMessage(null);
@@ -693,12 +755,16 @@ export function DashboardCompute({
       <DashboardSurfaceGrid columns={2}>
         <DashboardSurface
           eyebrow={t.managedPoliciesEyebrow}
-          meta={<span className="chip">{t.managedPoliciesChip(snapshot.representative.managedProfiles.length)}</span>}
+          meta={
+            <span className="chip">
+              {t.managedPoliciesChip(snapshot.representative.delegateManagedProfiles.length)}
+            </span>
+          }
           title={t.managedPoliciesTitle}
         >
           <div className="row-list">
-            {snapshot.representative.managedProfiles.length ? (
-              snapshot.representative.managedProfiles.map((profile) => (
+            {snapshot.representative.delegateManagedProfiles.length ? (
+              snapshot.representative.delegateManagedProfiles.map((profile) => (
                 <div className="skill-row" key={profile.id}>
                   <div>
                     <strong>{profile.name}</strong>
@@ -717,6 +783,286 @@ export function DashboardCompute({
             ) : (
               <p className="muted">{t.noManagedPolicies}</p>
             )}
+          </div>
+        </DashboardSurface>
+
+        <DashboardSurface
+          eyebrow={t.ownerManagedEyebrow}
+          meta={<span className="chip">{t.ownerManagedChip}</span>}
+          title={t.ownerManagedTitle}
+        >
+          <div className="row-list">
+            <div className="skill-row">
+              <div>
+                <strong>{t.ownerBaselineTitle}</strong>
+                <p className="footer-note">{t.ownerBaselineSummary}</p>
+              </div>
+              <div className="dashboard-form-grid">
+                <label className="field-label">
+                  <span>{t.overlayFields.browserDecision}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        baseline: {
+                          ...current.baseline,
+                          browserDecision: event.target.value as "allow" | "ask" | "deny",
+                        },
+                      }))
+                    }
+                    value={overlayForm.baseline.browserDecision}
+                  >
+                    <option value="deny">{t.overlayDecisions.deny}</option>
+                    <option value="ask">{t.overlayDecisions.ask}</option>
+                    <option value="allow">{t.overlayDecisions.allow}</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  <span>{t.overlayFields.mcpDecision}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        baseline: {
+                          ...current.baseline,
+                          mcpDecision: event.target.value as "allow" | "ask" | "deny",
+                        },
+                      }))
+                    }
+                    value={overlayForm.baseline.mcpDecision}
+                  >
+                    <option value="deny">{t.overlayDecisions.deny}</option>
+                    <option value="ask">{t.overlayDecisions.ask}</option>
+                    <option value="allow">{t.overlayDecisions.allow}</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  <span>{t.overlayFields.requiredPlanTier}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        baseline: {
+                          ...current.baseline,
+                          requiredPlanTier: event.target.value as "pass" | "deep_help",
+                        },
+                      }))
+                    }
+                    value={overlayForm.baseline.requiredPlanTier}
+                  >
+                    <option value="pass">Pass</option>
+                    <option value="deep_help">Deep Help</option>
+                  </select>
+                </label>
+              </div>
+              <div className="chip-row">
+                <label className="field-toggle">
+                  <input
+                    checked={overlayForm.baseline.enabled}
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        baseline: { ...current.baseline, enabled: event.target.checked },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.overlayFields.enabled}</span>
+                </label>
+                <label className="field-toggle">
+                  <input
+                    checked={overlayForm.baseline.browserRequiresApproval}
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        baseline: {
+                          ...current.baseline,
+                          browserRequiresApproval: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.overlayFields.browserApproval}</span>
+                </label>
+                <label className="field-toggle">
+                  <input
+                    checked={overlayForm.baseline.mcpRequiresApproval}
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        baseline: {
+                          ...current.baseline,
+                          mcpRequiresApproval: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.overlayFields.mcpApproval}</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="skill-row">
+              <div>
+                <strong>{t.trustedOverlayTitle}</strong>
+                <p className="footer-note">{t.trustedOverlaySummary}</p>
+              </div>
+              <div className="dashboard-form-grid">
+                <label className="field-label">
+                  <span>{t.overlayFields.trustTier}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        trustedCustomer: {
+                          ...current.trustedCustomer,
+                          trustTier: event.target.value as
+                            | "standard"
+                            | "verified"
+                            | "vip"
+                            | "restricted",
+                        },
+                      }))
+                    }
+                    value={overlayForm.trustedCustomer.trustTier}
+                  >
+                    <option value="standard">{t.trustTiers.standard}</option>
+                    <option value="verified">{t.trustTiers.verified}</option>
+                    <option value="vip">{t.trustTiers.vip}</option>
+                    <option value="restricted">{t.trustTiers.restricted}</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  <span>{t.overlayFields.browserDecision}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        trustedCustomer: {
+                          ...current.trustedCustomer,
+                          browserDecision: event.target.value as "allow" | "ask" | "deny",
+                        },
+                      }))
+                    }
+                    value={overlayForm.trustedCustomer.browserDecision}
+                  >
+                    <option value="deny">{t.overlayDecisions.deny}</option>
+                    <option value="ask">{t.overlayDecisions.ask}</option>
+                    <option value="allow">{t.overlayDecisions.allow}</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  <span>{t.overlayFields.mcpDecision}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        trustedCustomer: {
+                          ...current.trustedCustomer,
+                          mcpDecision: event.target.value as "allow" | "ask" | "deny",
+                        },
+                      }))
+                    }
+                    value={overlayForm.trustedCustomer.mcpDecision}
+                  >
+                    <option value="deny">{t.overlayDecisions.deny}</option>
+                    <option value="ask">{t.overlayDecisions.ask}</option>
+                    <option value="allow">{t.overlayDecisions.allow}</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  <span>{t.overlayFields.requiredPlanTier}</span>
+                  <select
+                    className="field-input"
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        trustedCustomer: {
+                          ...current.trustedCustomer,
+                          requiredPlanTier: event.target.value as "pass" | "deep_help",
+                        },
+                      }))
+                    }
+                    value={overlayForm.trustedCustomer.requiredPlanTier}
+                  >
+                    <option value="pass">Pass</option>
+                    <option value="deep_help">Deep Help</option>
+                  </select>
+                </label>
+              </div>
+              <div className="chip-row">
+                <label className="field-toggle">
+                  <input
+                    checked={overlayForm.trustedCustomer.enabled}
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        trustedCustomer: {
+                          ...current.trustedCustomer,
+                          enabled: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.overlayFields.enabled}</span>
+                </label>
+                <label className="field-toggle">
+                  <input
+                    checked={overlayForm.trustedCustomer.browserRequiresApproval}
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        trustedCustomer: {
+                          ...current.trustedCustomer,
+                          browserRequiresApproval: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.overlayFields.browserApproval}</span>
+                </label>
+                <label className="field-toggle">
+                  <input
+                    checked={overlayForm.trustedCustomer.mcpRequiresApproval}
+                    onChange={(event) =>
+                      setOverlayForm((current) => ({
+                        ...current,
+                        trustedCustomer: {
+                          ...current.trustedCustomer,
+                          mcpRequiresApproval: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>{t.overlayFields.mcpApproval}</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="button-row">
+              <button
+                className="button-primary"
+                disabled={isPending || busyKey === "policy-overlays:save"}
+                onClick={() => void handleSavePolicyOverlays()}
+                type="button"
+              >
+                {busyKey === "policy-overlays:save"
+                  ? t.savingPolicyOverlays
+                  : t.savePolicyOverlays}
+              </button>
+              <span className="footer-note">{t.ownerManagedFootnote}</span>
+            </div>
           </div>
         </DashboardSurface>
 
@@ -1501,6 +1847,28 @@ function formatBytes(value: number) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function createEmptyOverlayForm(): OverlayFormState {
+  return {
+    baseline: {
+      enabled: true,
+      browserDecision: "ask",
+      browserRequiresApproval: true,
+      mcpDecision: "ask",
+      mcpRequiresApproval: true,
+      requiredPlanTier: "pass",
+    },
+    trustedCustomer: {
+      enabled: true,
+      trustTier: "verified",
+      browserDecision: "ask",
+      browserRequiresApproval: true,
+      mcpDecision: "allow",
+      mcpRequiresApproval: false,
+      requiredPlanTier: "pass",
+    },
+  };
+}
+
 function createEmptyMcpBindingForm(): McpBindingFormState {
   return {
     bindingId: null,
@@ -1568,6 +1936,39 @@ const copy = {
     managedPoliciesChip: (count: number) => `${count} overlays`,
     managedPolicyMeta: (precedence: number, rules: number) => `precedence ${precedence} · ${rules} rules`,
     noManagedPolicies: "No managed overlays loaded yet.",
+    ownerManagedEyebrow: "Owner Overlays",
+    ownerManagedTitle: "Owner-managed defaults and trusted-customer overlays",
+    ownerManagedChip: "editable",
+    ownerBaselineTitle: "Owner baseline overlay",
+    ownerBaselineSummary:
+      "This layer sits above representative defaults and below Delegate-managed deny rules.",
+    trustedOverlayTitle: "Trusted customer overlay",
+    trustedOverlaySummary:
+      "Use this to grant a narrower fast lane to verified contacts without weakening global guardrails.",
+    ownerManagedFootnote:
+      "Contacts without an explicit trust tier are treated as standard. Delegate-managed deny rules still win.",
+    overlayFields: {
+      browserDecision: "Browser decision",
+      mcpDecision: "MCP decision",
+      requiredPlanTier: "Required plan tier",
+      trustTier: "Trust tier",
+      enabled: "Overlay enabled",
+      browserApproval: "Browser still needs approval",
+      mcpApproval: "MCP still needs approval",
+    },
+    overlayDecisions: {
+      allow: "Allow",
+      ask: "Ask",
+      deny: "Deny",
+    },
+    trustTiers: {
+      standard: "Standard",
+      verified: "Verified",
+      vip: "VIP",
+      restricted: "Restricted",
+    },
+    savePolicyOverlays: "Save owner overlays",
+    savingPolicyOverlays: "Saving owner overlays...",
     mcpEyebrow: "MCP Bindings",
     mcpTitle: "把远程 capability server 绑定成可审批、可追踪的代表能力",
     mcpChip: (count: number) => `${count} bindings`,
@@ -1677,6 +2078,7 @@ const copy = {
       nativeTaskRequired: "先填写这次 native browser 要完成的任务。",
       nativeExecuted: "Native computer-use loop 已完成，trace artifact 已写入对象存储。",
       nativeCompleted: (value: string) => `Native computer-use 完成：${value}`,
+      policyOverlaysSaved: "Owner-managed policy overlays saved.",
       error: "处理审批失败。",
     },
   },
@@ -1731,6 +2133,37 @@ const copy = {
     managedPoliciesChip: (count: number) => `${count} 个 overlay`,
     managedPolicyMeta: (precedence: number, rules: number) => `优先级 ${precedence} · ${rules} 条规则`,
     noManagedPolicies: "当前还没有托管 overlay。",
+    ownerManagedEyebrow: "Owner Overlay",
+    ownerManagedTitle: "把 owner 默认策略和可信客户 overlay 收进治理层",
+    ownerManagedChip: "可编辑",
+    ownerBaselineTitle: "Owner 基线 overlay",
+    ownerBaselineSummary: "这一层高于 representative 默认设置，但依然低于 Delegate 托管 deny 规则。",
+    trustedOverlayTitle: "可信客户 overlay",
+    trustedOverlaySummary: "给已验证联系人一条更窄的快车道，同时不放松全局护栏。",
+    ownerManagedFootnote:
+      "没有显式 trust tier 的联系人会按 standard 处理。Delegate 托管 deny 仍然优先。",
+    overlayFields: {
+      browserDecision: "Browser 决策",
+      mcpDecision: "MCP 决策",
+      requiredPlanTier: "需要的套餐层级",
+      trustTier: "信任等级",
+      enabled: "启用 overlay",
+      browserApproval: "Browser 仍需审批",
+      mcpApproval: "MCP 仍需审批",
+    },
+    overlayDecisions: {
+      allow: "允许",
+      ask: "审批",
+      deny: "拒绝",
+    },
+    trustTiers: {
+      standard: "标准",
+      verified: "已验证",
+      vip: "VIP",
+      restricted: "受限",
+    },
+    savePolicyOverlays: "保存 owner overlay",
+    savingPolicyOverlays: "正在保存 owner overlay...",
     mcpEyebrow: "MCP Bindings",
     mcpTitle: "Bind remote capability servers as governed representative tools",
     mcpChip: (count: number) => `${count} bindings`,
@@ -1840,6 +2273,7 @@ const copy = {
       nativeTaskRequired: "Enter a task for the native browser lane before running it.",
       nativeExecuted: "The native computer-use loop completed and stored a trace artifact.",
       nativeCompleted: (value: string) => `Native computer-use completed: ${value}`,
+      policyOverlaysSaved: "Owner 管理的策略 overlay 已保存。",
       error: "Failed to resolve approval.",
     },
   },

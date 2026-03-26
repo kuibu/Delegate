@@ -2,9 +2,11 @@ import type {
   CapabilityKind,
   CapabilityPlanTier,
   CapabilityPolicyProfile,
+  ContactComputeTrustTier,
   CapabilityPolicyRule,
   PolicyChannel,
   PolicyDecision,
+  PolicyResourceScope,
 } from "@delegate/compute-protocol";
 
 export type EvaluateCapabilityRequest = {
@@ -12,10 +14,12 @@ export type EvaluateCapabilityRequest = {
   command?: string | undefined;
   path?: string | undefined;
   domain?: string | undefined;
+  resourceScope?: PolicyResourceScope | undefined;
   channel?: PolicyChannel | undefined;
   activePlanTier?: CapabilityPlanTier | undefined;
   estimatedCostCents?: number | undefined;
   hasPaidEntitlement?: boolean | undefined;
+  contactTrustTier?: ContactComputeTrustTier | undefined;
 };
 
 export type EvaluatedCapabilityDecision = {
@@ -50,7 +54,12 @@ export function evaluateCapabilityPolicyStack(
     };
   }
 
-  const overlays = profiles.filter((profile) => profile.isManaged);
+  const overlays = profiles.filter(
+    (profile) =>
+      profile.isManaged &&
+      profile.enabled &&
+      matchesManagedProfile(profile, request),
+  );
   const baseProfile =
     profiles.find((profile) => !profile.isManaged && profile.isDefault) ??
     profiles.find((profile) => !profile.isManaged) ??
@@ -89,6 +98,10 @@ function evaluateCapabilityPolicyRules(
     }
 
     if (!matchesPattern(rule.domainPattern, request.domain)) {
+      continue;
+    }
+
+    if (rule.resourceScopeCondition && request.resourceScope !== rule.resourceScopeCondition) {
       continue;
     }
 
@@ -140,6 +153,17 @@ function evaluateCapabilityPolicyRules(
   }
 
   return null;
+}
+
+function matchesManagedProfile(
+  profile: CapabilityPolicyProfile,
+  request: EvaluateCapabilityRequest,
+): boolean {
+  if (!profile.contactTrustTierCondition) {
+    return true;
+  }
+
+  return request.contactTrustTier === profile.contactTrustTierCondition;
 }
 
 function matchesPattern(pattern: string | undefined, value: string | undefined): boolean {

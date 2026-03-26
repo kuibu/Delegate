@@ -5,6 +5,7 @@ import {
   nativeComputerUseExecutionResponseSchema,
   nativeComputerUseExecutionRequestSchema,
   nativeComputerUsePreflightResponseSchema,
+  ownerManagedPolicyOverlaysSchema,
   updateArtifactRequestSchema,
   updateArtifactResponseSchema,
   upsertMcpBindingRequestSchema,
@@ -12,6 +13,7 @@ import {
   type McpBindingSnapshot,
   type NativeComputerUseExecutionResponse,
   type NativeComputerUsePreflightSnapshot,
+  type OwnerManagedPolicyOverlays,
   type ResolveApprovalResponse,
   type UpdateArtifactResponse,
   type UpsertMcpBindingRequest,
@@ -54,6 +56,7 @@ type BrowserSessionRecord = Prisma.BrowserSessionGetPayload<{
 
 type RepresentativeIdentity = {
   id: string;
+  ownerId: string;
   slug: string;
   displayName: string;
   computeEnabled: boolean;
@@ -71,17 +74,42 @@ type RepresentativeIdentity = {
       sponsorPoolCredit: number;
       starsBalance: number;
     } | null;
+    capabilityProfiles: Array<{
+      id: string;
+      name: string;
+      enabled: boolean;
+      managedSource: string | null;
+      managedScope: string;
+      editableByOwner: boolean;
+      contactTrustTierCondition: string | null;
+      precedence: number;
+      rules: Array<{
+        id: string;
+        capability: string;
+        decision: string;
+        resourceScopeCondition: string | null;
+        channelCondition: string | null;
+        requiredPlanTier: string | null;
+        priority: number;
+        requiresHumanApproval: boolean;
+      }>;
+    }>;
   };
   capabilityProfiles: Array<{
     id: string;
     name: string;
+    enabled: boolean;
     isManaged: boolean;
     managedSource: string | null;
+    managedScope: string;
+    editableByOwner: boolean;
+    contactTrustTierCondition: string | null;
     precedence: number;
     rules: Array<{
       id: string;
       capability: string;
       decision: string;
+      resourceScopeCondition: string | null;
       channelCondition: string | null;
       requiredPlanTier: string | null;
       priority: number;
@@ -129,7 +157,7 @@ export type RepresentativeComputeSnapshot = {
       sponsorPoolCredit: number;
       starsBalance: number;
     };
-    managedProfiles: Array<{
+    delegateManagedProfiles: Array<{
       id: string;
       name: string;
       managedSource?: string;
@@ -137,6 +165,25 @@ export type RepresentativeComputeSnapshot = {
       ruleCount: number;
       highlights: string[];
     }>;
+    ownerManagedOverlays: {
+      baseline: {
+        enabled: boolean;
+        browserDecision: "allow" | "ask" | "deny";
+        browserRequiresApproval: boolean;
+        mcpDecision: "allow" | "ask" | "deny";
+        mcpRequiresApproval: boolean;
+        requiredPlanTier: "pass" | "deep_help";
+      };
+      trustedCustomer: {
+        enabled: boolean;
+        trustTier: "standard" | "verified" | "vip" | "restricted";
+        browserDecision: "allow" | "ask" | "deny";
+        browserRequiresApproval: boolean;
+        mcpDecision: "allow" | "ask" | "deny";
+        mcpRequiresApproval: boolean;
+        requiredPlanTier: "pass" | "deep_help";
+      };
+    };
     mcpBindings: Array<
       McpBindingSnapshot & {
         sourceSkillPack?: string;
@@ -270,6 +317,11 @@ export type UpsertRepresentativeMcpBindingInput = {
   representativeSlug: string;
   bindingId?: string;
 } & UpsertMcpBindingRequest;
+
+export type UpdateRepresentativeManagedPolicyOverlaysInput = {
+  representativeSlug: string;
+  overlays: OwnerManagedPolicyOverlays;
+};
 
 export type ResolveRepresentativeComputeApprovalInput = {
   representativeSlug: string;
@@ -687,6 +739,169 @@ export async function executeRepresentativeNativeComputerUse(
   return nativeComputerUseExecutionResponseSchema.parse(brokerResponse);
 }
 
+export async function updateRepresentativeManagedPolicyOverlays(
+  input: UpdateRepresentativeManagedPolicyOverlaysInput,
+) {
+  const representative = await getRepresentativeIdentity(input.representativeSlug);
+
+  if (!representative) {
+    throw new Error(`Representative "${input.representativeSlug}" not found.`);
+  }
+
+  const parsed = ownerManagedPolicyOverlaysSchema.parse(input.overlays);
+  const baselineProfileId = `cap_profile_owner_baseline_${representative.ownerId}`;
+  const trustedProfileId = `cap_profile_owner_trusted_${representative.ownerId}`;
+
+  await prisma.$transaction(async (tx) => {
+    const [baselineProfile, trustedProfile] = await Promise.all([
+      tx.capabilityPolicyProfile.upsert({
+        where: { id: baselineProfileId },
+        update: {
+          ownerId: representative.ownerId,
+          representativeId: null,
+          name: "Owner Managed Baseline",
+          isDefault: false,
+          enabled: parsed.baseline.enabled,
+          isManaged: true,
+          managedScope: "OWNER_MANAGED",
+          managedSource: "owner-managed",
+          editableByOwner: true,
+          contactTrustTierCondition: null,
+          precedence: 80,
+          defaultDecision: parsed.baseline.browserDecision.toUpperCase() as "ALLOW" | "ASK" | "DENY",
+        },
+        create: {
+          id: baselineProfileId,
+          ownerId: representative.ownerId,
+          representativeId: null,
+          name: "Owner Managed Baseline",
+          isDefault: false,
+          enabled: parsed.baseline.enabled,
+          isManaged: true,
+          managedScope: "OWNER_MANAGED",
+          managedSource: "owner-managed",
+          editableByOwner: true,
+          precedence: 80,
+          defaultDecision: parsed.baseline.browserDecision.toUpperCase() as "ALLOW" | "ASK" | "DENY",
+        },
+      }),
+      tx.capabilityPolicyProfile.upsert({
+        where: { id: trustedProfileId },
+        update: {
+          ownerId: representative.ownerId,
+          representativeId: null,
+          name: "Trusted Customer Overlay",
+          isDefault: false,
+          enabled: parsed.trustedCustomer.enabled,
+          isManaged: true,
+          managedScope: "CUSTOMER_TRUST_TIER",
+          managedSource: "owner-managed",
+          editableByOwner: true,
+          contactTrustTierCondition: parsed.trustedCustomer.trustTier.toUpperCase(),
+          precedence: 90,
+          defaultDecision: parsed.trustedCustomer.browserDecision.toUpperCase() as
+            | "ALLOW"
+            | "ASK"
+            | "DENY",
+        },
+        create: {
+          id: trustedProfileId,
+          ownerId: representative.ownerId,
+          representativeId: null,
+          name: "Trusted Customer Overlay",
+          isDefault: false,
+          enabled: parsed.trustedCustomer.enabled,
+          isManaged: true,
+          managedScope: "CUSTOMER_TRUST_TIER",
+          managedSource: "owner-managed",
+          editableByOwner: true,
+          contactTrustTierCondition: parsed.trustedCustomer.trustTier.toUpperCase(),
+          precedence: 90,
+          defaultDecision: parsed.trustedCustomer.browserDecision.toUpperCase() as
+            | "ALLOW"
+            | "ASK"
+            | "DENY",
+        },
+      }),
+    ]);
+
+    await tx.capabilityPolicyRule.deleteMany({
+      where: {
+        profileId: {
+          in: [baselineProfile.id, trustedProfile.id],
+        },
+      },
+    });
+
+    await tx.capabilityPolicyRule.createMany({
+      data: [
+        {
+          id: `${baselineProfile.id}_browser_baseline`,
+          profileId: baselineProfile.id,
+          capability: "BROWSER",
+          decision: parsed.baseline.browserDecision.toUpperCase() as "ALLOW" | "ASK" | "DENY",
+          resourceScopeCondition: "BROWSER_LANE",
+          channelCondition: "PRIVATE_CHAT",
+          requiredPlanTier: parsed.baseline.requiredPlanTier.toUpperCase() as "PASS" | "DEEP_HELP",
+          priority: 160,
+          requiresPaidPlan: true,
+          requiresHumanApproval: parsed.baseline.browserRequiresApproval,
+        },
+        {
+          id: `${baselineProfile.id}_mcp_baseline`,
+          profileId: baselineProfile.id,
+          capability: "MCP",
+          decision: parsed.baseline.mcpDecision.toUpperCase() as "ALLOW" | "ASK" | "DENY",
+          resourceScopeCondition: "REMOTE_MCP",
+          channelCondition: "PRIVATE_CHAT",
+          requiredPlanTier: parsed.baseline.requiredPlanTier.toUpperCase() as "PASS" | "DEEP_HELP",
+          priority: 155,
+          requiresPaidPlan: true,
+          requiresHumanApproval: parsed.baseline.mcpRequiresApproval,
+        },
+        {
+          id: `${trustedProfile.id}_browser_trusted`,
+          profileId: trustedProfile.id,
+          capability: "BROWSER",
+          decision: parsed.trustedCustomer.browserDecision.toUpperCase() as
+            | "ALLOW"
+            | "ASK"
+            | "DENY",
+          resourceScopeCondition: "BROWSER_LANE",
+          channelCondition: "PRIVATE_CHAT",
+          requiredPlanTier: parsed.trustedCustomer.requiredPlanTier.toUpperCase() as
+            | "PASS"
+            | "DEEP_HELP",
+          priority: 170,
+          requiresPaidPlan: true,
+          requiresHumanApproval: parsed.trustedCustomer.browserRequiresApproval,
+        },
+        {
+          id: `${trustedProfile.id}_mcp_trusted`,
+          profileId: trustedProfile.id,
+          capability: "MCP",
+          decision: parsed.trustedCustomer.mcpDecision.toUpperCase() as "ALLOW" | "ASK" | "DENY",
+          resourceScopeCondition: "REMOTE_MCP",
+          channelCondition: "PRIVATE_CHAT",
+          requiredPlanTier: parsed.trustedCustomer.requiredPlanTier.toUpperCase() as
+            | "PASS"
+            | "DEEP_HELP",
+          priority: 165,
+          requiresPaidPlan: true,
+          requiresHumanApproval: parsed.trustedCustomer.mcpRequiresApproval,
+        },
+      ],
+    });
+  });
+
+  const snapshot = await getRepresentativeComputeSnapshot(input.representativeSlug);
+  if (!snapshot) {
+    throw new Error(`Representative "${input.representativeSlug}" not found after update.`);
+  }
+
+  return snapshot.representative.ownerManagedOverlays;
+}
+
 export async function upsertRepresentativeMcpBinding(
   input: UpsertRepresentativeMcpBindingInput,
 ): Promise<McpBindingSnapshot> {
@@ -880,6 +1095,7 @@ async function getRepresentativeIdentity(
     where: { slug: representativeSlug },
     select: {
       id: true,
+      ownerId: true,
       slug: true,
       displayName: true,
       computeEnabled: true,
@@ -900,6 +1116,35 @@ async function getRepresentativeIdentity(
               starsBalance: true,
             },
           },
+          capabilityProfiles: {
+            where: {
+              isManaged: true,
+            },
+            orderBy: [{ precedence: "desc" }, { createdAt: "asc" }],
+            select: {
+              id: true,
+              name: true,
+              enabled: true,
+              managedSource: true,
+              managedScope: true,
+              editableByOwner: true,
+              contactTrustTierCondition: true,
+              precedence: true,
+              rules: {
+                orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+                select: {
+                  id: true,
+                  capability: true,
+                  decision: true,
+                  resourceScopeCondition: true,
+                  channelCondition: true,
+                  requiredPlanTier: true,
+                  priority: true,
+                  requiresHumanApproval: true,
+                },
+              },
+            },
+          },
         },
       },
       capabilityProfiles: {
@@ -910,8 +1155,12 @@ async function getRepresentativeIdentity(
         select: {
           id: true,
           name: true,
+          enabled: true,
           isManaged: true,
           managedSource: true,
+          managedScope: true,
+          editableByOwner: true,
+          contactTrustTierCondition: true,
           precedence: true,
           rules: {
             orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
@@ -919,6 +1168,7 @@ async function getRepresentativeIdentity(
               id: true,
               capability: true,
               decision: true,
+              resourceScopeCondition: true,
               channelCondition: true,
               requiredPlanTier: true,
               priority: true,
@@ -1006,7 +1256,7 @@ function serializeRepresentativeIdentity(representative: RepresentativeIdentity)
       sponsorPoolCredit: representative.owner.wallet?.sponsorPoolCredit ?? 0,
       starsBalance: representative.owner.wallet?.starsBalance ?? 0,
     },
-    managedProfiles: representative.capabilityProfiles.map((profile) => ({
+    delegateManagedProfiles: representative.capabilityProfiles.map((profile) => ({
       id: profile.id,
       name: profile.name,
       ...(profile.managedSource ? { managedSource: profile.managedSource } : {}),
@@ -1015,11 +1265,86 @@ function serializeRepresentativeIdentity(representative: RepresentativeIdentity)
       highlights: profile.rules.slice(0, 3).map((rule) => {
         const channel = rule.channelCondition ? ` @ ${rule.channelCondition.toLowerCase()}` : "";
         const plan = rule.requiredPlanTier ? ` / ${rule.requiredPlanTier.toLowerCase()}` : "";
-        return `${rule.capability.toLowerCase()} -> ${rule.decision.toLowerCase()}${channel}${plan}`;
+        const scope = rule.resourceScopeCondition
+          ? ` / ${rule.resourceScopeCondition.toLowerCase()}`
+          : "";
+        return `${rule.capability.toLowerCase()} -> ${rule.decision.toLowerCase()}${scope}${channel}${plan}`;
       }),
     })),
+    ownerManagedOverlays: serializeOwnerManagedOverlays(representative.owner.capabilityProfiles),
     mcpBindings: representative.mcpBindings.map((binding) => serializeMcpBindingRecord(binding)),
   };
+}
+
+function serializeOwnerManagedOverlays(
+  profiles: RepresentativeIdentity["owner"]["capabilityProfiles"],
+) {
+  const baselineProfile = profiles.find((profile) => profile.managedScope === "OWNER_MANAGED");
+  const trustedProfile = profiles.find(
+    (profile) => profile.managedScope === "CUSTOMER_TRUST_TIER",
+  );
+
+  return ownerManagedPolicyOverlaysSchema.parse({
+    baseline: {
+      enabled: baselineProfile?.enabled ?? true,
+      browserDecision: resolveOverlayRuleDecision(baselineProfile, "BROWSER", "ASK"),
+      browserRequiresApproval: resolveOverlayRuleApproval(baselineProfile, "BROWSER", true),
+      mcpDecision: resolveOverlayRuleDecision(baselineProfile, "MCP", "ASK"),
+      mcpRequiresApproval: resolveOverlayRuleApproval(baselineProfile, "MCP", true),
+      requiredPlanTier: resolveOverlayRulePlanTier(baselineProfile, "BROWSER", "PASS"),
+    },
+    trustedCustomer: {
+      enabled: trustedProfile?.enabled ?? true,
+      trustTier: resolveOverlayTrustTier(trustedProfile?.contactTrustTierCondition),
+      browserDecision: resolveOverlayRuleDecision(trustedProfile, "BROWSER", "ASK"),
+      browserRequiresApproval: resolveOverlayRuleApproval(trustedProfile, "BROWSER", true),
+      mcpDecision: resolveOverlayRuleDecision(trustedProfile, "MCP", "ALLOW"),
+      mcpRequiresApproval: resolveOverlayRuleApproval(trustedProfile, "MCP", false),
+      requiredPlanTier: resolveOverlayRulePlanTier(trustedProfile, "BROWSER", "PASS"),
+    },
+  });
+}
+
+function resolveOverlayRuleDecision(
+  profile: RepresentativeIdentity["owner"]["capabilityProfiles"][number] | undefined,
+  capability: "BROWSER" | "MCP",
+  fallback: "ALLOW" | "ASK" | "DENY",
+) {
+  const rule = profile?.rules.find((candidate) => candidate.capability === capability);
+  return (rule?.decision ?? fallback).toLowerCase() as "allow" | "ask" | "deny";
+}
+
+function resolveOverlayRuleApproval(
+  profile: RepresentativeIdentity["owner"]["capabilityProfiles"][number] | undefined,
+  capability: "BROWSER" | "MCP",
+  fallback: boolean,
+) {
+  const rule = profile?.rules.find((candidate) => candidate.capability === capability);
+  return rule?.requiresHumanApproval ?? fallback;
+}
+
+function resolveOverlayRulePlanTier(
+  profile: RepresentativeIdentity["owner"]["capabilityProfiles"][number] | undefined,
+  capability: "BROWSER" | "MCP",
+  fallback: "PASS" | "DEEP_HELP",
+) {
+  const rule = profile?.rules.find((candidate) => candidate.capability === capability);
+  return (rule?.requiredPlanTier ?? fallback).toLowerCase() as "pass" | "deep_help";
+}
+
+function resolveOverlayTrustTier(
+  value: string | null | undefined,
+): "standard" | "verified" | "vip" | "restricted" {
+  const normalized = value?.trim().toLowerCase();
+  if (
+    normalized === "verified" ||
+    normalized === "vip" ||
+    normalized === "restricted"
+  ) {
+    return normalized;
+  }
+
+  return "standard";
 }
 
 function serializeMcpBindingRecord(binding: RepresentativeIdentity["mcpBindings"][number]) {

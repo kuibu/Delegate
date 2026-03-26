@@ -197,6 +197,7 @@ export async function seedDatabase(client: PrismaClient = prisma): Promise<void>
 
     const defaultPolicyProfile = await upsertDefaultCapabilityPolicyProfile(tx, representative.id);
     await upsertManagedCapabilityPolicyProfile(tx, representative.id);
+    await upsertOwnerManagedCapabilityProfiles(tx, DEMO_OWNER_ID);
 
     await tx.knowledgePack.upsert({
       where: { representativeId: representative.id },
@@ -797,7 +798,9 @@ async function upsertDefaultCapabilityPolicyProfile(
         data: {
           name: "Default Compute Guardrail",
           isDefault: true,
+          enabled: true,
           isManaged: false,
+          managedScope: "REPRESENTATIVE_DEFAULT",
           managedSource: null,
           precedence: 0,
           defaultDecision: PolicyDecision.ASK,
@@ -816,7 +819,9 @@ async function upsertDefaultCapabilityPolicyProfile(
           representativeId,
           name: "Default Compute Guardrail",
           isDefault: true,
+          enabled: true,
           isManaged: false,
+          managedScope: "REPRESENTATIVE_DEFAULT",
           precedence: 0,
           defaultDecision: PolicyDecision.ASK,
           maxSessionMinutes: 15,
@@ -853,6 +858,7 @@ async function upsertDefaultCapabilityPolicyProfile(
         capability: "READ",
         decision: "ALLOW",
         pathPattern: "^/workspace(?:/|$)",
+        resourceScopeCondition: "WORKSPACE",
         priority: 90,
         requiresPaidPlan: false,
         requiresHumanApproval: false,
@@ -863,6 +869,7 @@ async function upsertDefaultCapabilityPolicyProfile(
         capability: "WRITE",
         decision: "ASK",
         pathPattern: "^/workspace(?:/|$)",
+        resourceScopeCondition: "WORKSPACE",
         priority: 80,
         requiresPaidPlan: false,
         requiresHumanApproval: true,
@@ -873,6 +880,7 @@ async function upsertDefaultCapabilityPolicyProfile(
         capability: "BROWSER",
         decision: "ASK",
         domainPattern: ".*",
+        resourceScopeCondition: "BROWSER_LANE",
         priority: 70,
         requiresPaidPlan: true,
         requiresHumanApproval: true,
@@ -893,8 +901,13 @@ async function upsertManagedCapabilityPolicyProfile(
     update: {
       name: "Delegate Managed Guardrail",
       isDefault: false,
+      enabled: true,
       isManaged: true,
+      managedScope: "DELEGATE_MANAGED",
       managedSource: "delegate-default",
+      editableByOwner: false,
+      ownerId: null,
+      contactTrustTierCondition: null,
       precedence: 100,
       defaultDecision: PolicyDecision.ASK,
       maxSessionMinutes: 15,
@@ -910,8 +923,11 @@ async function upsertManagedCapabilityPolicyProfile(
       representativeId,
       name: "Delegate Managed Guardrail",
       isDefault: false,
+      enabled: true,
       isManaged: true,
+      managedScope: "DELEGATE_MANAGED",
       managedSource: "delegate-default",
+      editableByOwner: false,
       precedence: 100,
       defaultDecision: PolicyDecision.ASK,
       maxSessionMinutes: 15,
@@ -938,6 +954,7 @@ async function upsertManagedCapabilityPolicyProfile(
         capability: "BROWSER",
         decision: "ASK",
         domainPattern: ".*",
+        resourceScopeCondition: "BROWSER_LANE",
         channelCondition: Channel.PRIVATE_CHAT,
         requiredPlanTier: CapabilityPlanTier.PASS,
         priority: 220,
@@ -949,6 +966,7 @@ async function upsertManagedCapabilityPolicyProfile(
         profileId: profile.id,
         capability: "PROCESS",
         decision: "ASK",
+        resourceScopeCondition: "WORKSPACE",
         requiredPlanTier: CapabilityPlanTier.PASS,
         priority: 210,
         requiresPaidPlan: true,
@@ -959,6 +977,7 @@ async function upsertManagedCapabilityPolicyProfile(
         profileId: profile.id,
         capability: "MCP",
         decision: "ASK",
+        resourceScopeCondition: "REMOTE_MCP",
         requiredPlanTier: CapabilityPlanTier.PASS,
         priority: 208,
         requiresPaidPlan: true,
@@ -970,6 +989,7 @@ async function upsertManagedCapabilityPolicyProfile(
         capability: "WRITE",
         decision: "DENY",
         pathPattern: "^/workspace(?:/.*)?/(?:\\.env(?:\\..*)?|.*\\.pem|.*\\.key)$",
+        resourceScopeCondition: "WORKSPACE",
         priority: 205,
         requiresPaidPlan: false,
         requiresHumanApproval: false,
@@ -978,6 +998,168 @@ async function upsertManagedCapabilityPolicyProfile(
   });
 
   return profile;
+}
+
+async function upsertOwnerManagedCapabilityProfiles(
+  tx: Prisma.TransactionClient,
+  ownerId: string,
+) {
+  const baselineProfileId = `cap_profile_owner_baseline_${ownerId}`;
+  const trustedProfileId = `cap_profile_owner_trusted_${ownerId}`;
+
+  const baselineProfile = await tx.capabilityPolicyProfile.upsert({
+    where: { id: baselineProfileId },
+    update: {
+      ownerId,
+      representativeId: null,
+      name: "Owner Managed Baseline",
+      isDefault: false,
+      enabled: true,
+      isManaged: true,
+      managedScope: "OWNER_MANAGED",
+      managedSource: "owner-managed",
+      editableByOwner: true,
+      contactTrustTierCondition: null,
+      precedence: 80,
+      defaultDecision: PolicyDecision.ASK,
+      maxSessionMinutes: 15,
+      maxParallelSessions: 1,
+      maxCommandSeconds: 30,
+      artifactRetentionDays: 14,
+      networkMode: ComputeNetworkMode.NO_NETWORK,
+      networkAllowlist: [],
+      filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
+    },
+    create: {
+      id: baselineProfileId,
+      ownerId,
+      representativeId: null,
+      name: "Owner Managed Baseline",
+      isDefault: false,
+      enabled: true,
+      isManaged: true,
+      managedScope: "OWNER_MANAGED",
+      managedSource: "owner-managed",
+      editableByOwner: true,
+      precedence: 80,
+      defaultDecision: PolicyDecision.ASK,
+      maxSessionMinutes: 15,
+      maxParallelSessions: 1,
+      maxCommandSeconds: 30,
+      artifactRetentionDays: 14,
+      networkMode: ComputeNetworkMode.NO_NETWORK,
+      networkAllowlist: [],
+      filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
+    },
+  });
+
+  const trustedProfile = await tx.capabilityPolicyProfile.upsert({
+    where: { id: trustedProfileId },
+    update: {
+      ownerId,
+      representativeId: null,
+      name: "Trusted Customer Overlay",
+      isDefault: false,
+      enabled: true,
+      isManaged: true,
+      managedScope: "CUSTOMER_TRUST_TIER",
+      managedSource: "owner-managed",
+      editableByOwner: true,
+      contactTrustTierCondition: "VERIFIED",
+      precedence: 90,
+      defaultDecision: PolicyDecision.ASK,
+      maxSessionMinutes: 15,
+      maxParallelSessions: 1,
+      maxCommandSeconds: 30,
+      artifactRetentionDays: 14,
+      networkMode: ComputeNetworkMode.NO_NETWORK,
+      networkAllowlist: [],
+      filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
+    },
+    create: {
+      id: trustedProfileId,
+      ownerId,
+      representativeId: null,
+      name: "Trusted Customer Overlay",
+      isDefault: false,
+      enabled: true,
+      isManaged: true,
+      managedScope: "CUSTOMER_TRUST_TIER",
+      managedSource: "owner-managed",
+      editableByOwner: true,
+      contactTrustTierCondition: "VERIFIED",
+      precedence: 90,
+      defaultDecision: PolicyDecision.ASK,
+      maxSessionMinutes: 15,
+      maxParallelSessions: 1,
+      maxCommandSeconds: 30,
+      artifactRetentionDays: 14,
+      networkMode: ComputeNetworkMode.NO_NETWORK,
+      networkAllowlist: [],
+      filesystemMode: ComputeFilesystemMode.WORKSPACE_ONLY,
+    },
+  });
+
+  await tx.capabilityPolicyRule.deleteMany({
+    where: {
+      profileId: {
+        in: [baselineProfile.id, trustedProfile.id],
+      },
+    },
+  });
+
+  await tx.capabilityPolicyRule.createMany({
+    data: [
+      {
+        id: `${baselineProfile.id}_browser_baseline`,
+        profileId: baselineProfile.id,
+        capability: "BROWSER",
+        decision: "ASK",
+        resourceScopeCondition: "BROWSER_LANE",
+        channelCondition: Channel.PRIVATE_CHAT,
+        requiredPlanTier: CapabilityPlanTier.PASS,
+        priority: 160,
+        requiresPaidPlan: true,
+        requiresHumanApproval: true,
+      },
+      {
+        id: `${baselineProfile.id}_mcp_baseline`,
+        profileId: baselineProfile.id,
+        capability: "MCP",
+        decision: "ASK",
+        resourceScopeCondition: "REMOTE_MCP",
+        channelCondition: Channel.PRIVATE_CHAT,
+        requiredPlanTier: CapabilityPlanTier.PASS,
+        priority: 155,
+        requiresPaidPlan: true,
+        requiresHumanApproval: true,
+      },
+      {
+        id: `${trustedProfile.id}_browser_trusted`,
+        profileId: trustedProfile.id,
+        capability: "BROWSER",
+        decision: "ASK",
+        resourceScopeCondition: "BROWSER_LANE",
+        channelCondition: Channel.PRIVATE_CHAT,
+        requiredPlanTier: CapabilityPlanTier.PASS,
+        priority: 170,
+        requiresPaidPlan: true,
+        requiresHumanApproval: true,
+      },
+      {
+        id: `${trustedProfile.id}_mcp_trusted`,
+        profileId: trustedProfile.id,
+        capability: "MCP",
+        decision: "ALLOW",
+        resourceScopeCondition: "REMOTE_MCP",
+        channelCondition: Channel.PRIVATE_CHAT,
+        requiredPlanTier: CapabilityPlanTier.PASS,
+        priority: 165,
+        requiresPaidPlan: true,
+        requiresHumanApproval: false,
+      },
+    ],
+  });
 }
 
 function mapGroupActivationToDb(value: (typeof demoRepresentative.groupActivation)): GroupActivation {

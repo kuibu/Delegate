@@ -124,6 +124,20 @@ enum PolicyDecision {
   DENY
 }
 
+enum ManagedPolicyScope {
+  REPRESENTATIVE_DEFAULT
+  DELEGATE_MANAGED
+  OWNER_MANAGED
+  CUSTOMER_TRUST_TIER
+}
+
+enum PolicyResourceScope {
+  WORKSPACE
+  REMOTE_MCP
+  BROWSER_LANE
+  ARTIFACT_STORE
+}
+
 enum ComputeSessionStatus {
   REQUESTED
   STARTING
@@ -247,6 +261,7 @@ model Owner {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   wallet          Wallet?
+  capabilityProfiles CapabilityPolicyProfile[]
   representatives Representative[]
 }
 
@@ -589,11 +604,16 @@ model EventAudit {
 
 model CapabilityPolicyProfile {
   id                 String                @id @default(cuid())
-  representativeId   String
+  representativeId   String?
+  ownerId            String?
   name               String
   isDefault          Boolean               @default(true)
+  enabled            Boolean               @default(true)
   isManaged          Boolean               @default(false)
+  managedScope       ManagedPolicyScope    @default(REPRESENTATIVE_DEFAULT)
   managedSource      String?
+  editableByOwner    Boolean               @default(false)
+  contactTrustTierCondition String?
   precedence         Int                   @default(0)
   defaultDecision    PolicyDecision        @default(ASK)
   maxSessionMinutes  Int                   @default(15)
@@ -605,11 +625,13 @@ model CapabilityPolicyProfile {
   filesystemMode     ComputeFilesystemMode @default(WORKSPACE_ONLY)
   createdAt          DateTime              @default(now())
   updatedAt          DateTime              @updatedAt
-  representative     Representative        @relation(fields: [representativeId], references: [id])
+  representative     Representative?       @relation(fields: [representativeId], references: [id])
+  owner              Owner?                @relation(fields: [ownerId], references: [id])
   computeSessions    ComputeSession[]
   rules              CapabilityPolicyRule[]
 
   @@index([representativeId, isDefault])
+  @@index([ownerId, managedScope, enabled])
 }
 
 model CapabilityPolicyRule {
@@ -620,6 +642,7 @@ model CapabilityPolicyRule {
   commandPattern       String?
   pathPattern          String?
   domainPattern        String?
+  resourceScopeCondition PolicyResourceScope?
   channelCondition     Channel?
   requiredPlanTier     CapabilityPlanTier?
   maxCostCents         Int?

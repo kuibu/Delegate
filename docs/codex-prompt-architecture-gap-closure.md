@@ -27,11 +27,12 @@ Delegate already has a meaningful middle state:
 - cross-service compute/browser subagent transport, budget escalation, and subagent-aware approval/workflow metadata
 - an engine-aware durable workflow runner for approval expiration and owner follow-up timers
 - a real Temporal worker bridge boundary with engine-aware dispatch, worker bootstrap, and optional local Temporal profile support
+- owner-managed baseline and trusted-customer permission overlays layered above representative defaults and below Delegate-managed guardrails
 - owner dashboard control plane
 
 Delegate does **not** yet have the full target stack described in the architecture decisions doc. In particular:
 
-- no org/customer-managed permission layer
+- no broader org/customer governance beyond owner-level overlays
 
 Treat the matrix below as source of truth for "what is done vs. what is still next".
 
@@ -52,7 +53,7 @@ This matters because every future capability lane must inherit the same conversa
 | 1 | Model access layer | Partial, stronger | Public runtime now has an `OpenAI Responses` primary lane, Anthropic fallback, structured context assembly, usage ledger hooks, and env-configured internal model COGS | Sharpen provider cooldown/fallback state, model-specific pricing catalogs, and richer provider observability | The repo intentionally shipped the smallest trustworthy multi-provider path before adding heavier provider-management state | P1 |
 | 2 | General compute plane | Partial, strong foundation | Docker-isolated broker, reusable compute leases, capability policy, approval flow, artifact persistence, richer debit path, Telegram `/compute` entry | Keep the reusable lease model, then prepare runner abstraction hardening and microVM upgrade path | Docker-backed leases are now real, but the runner stack is still single-backend and not microVM-ready yet | P1 |
 | 3 | Browser / computer use | Partial, much stronger | A governed `browser` capability now runs through an isolated Playwright lane with approval, screenshot/json artifacts, persistent browser session history, dashboard preview support, native computer-use preflight snapshots, and actual OpenAI/Anthropic native computer-use loops | Add richer authenticated browser workflows, safer action replay, and broader provider-specific computer-use ergonomics | The repo now has a real native loop, but it still treats browser work as a single retained page lane rather than a broader desktop/browser automation surface | P1 |
-| 4 | Permission system | Partial, managed overlays landed | `allow / ask / deny`, capability rules, path/domain/cost/paid-plan gates, dashboard-editable compute defaults, managed overlay profiles with channel / plan-tier conditions, and conversation-scoped compute entitlements | Add richer resource scopes, customer/org policy overlays, and broader approval-aware capability binding across future transports | The product still has no org/IAM layer, and policy is still representative-centric rather than customer/org managed | P1 |
+| 4 | Permission system | Partial, stronger | `allow / ask / deny`, capability rules, explicit resource-scope checks, path/domain/cost/paid-plan gates, dashboard-editable compute defaults, Delegate-managed overlays, owner-managed baseline overlays, trusted-customer trust-tier overlays, and conversation-scoped compute entitlements | Add broader org/customer governance above the owner layer, plus approval-aware policy binding across additional transports | The repo now has a real owner/customer overlay layer, but not a fuller org/IAM or customer-admin governance model yet | P1 |
 | 5 | Hooks and audit | Partial, explicit bus landed | Lifecycle hook bus now exists for `PreToolUse`, `PostToolUse`, `SessionEnd`, `PreHandoff`, and model reply/context audit points | Expand hooks into retention, memory filtering, billing budget gates, and owner-facing webhookable summaries | The first hook slice focused on making lifecycle boundaries explicit before adding programmable policies | P1 |
 | 6 | Subagents / multi-agent | Partial, transport and budget boundary hardened | Runtime routing now resolves explicit `triage-agent`, `quote-agent`, `handoff-agent`, `compute-agent`, and `browser-agent` boundaries; model prompts validate subagent-to-step scope; compute sessions/executions persist `subagentId`; broker transport enforces compute-vs-browser routing; approvals and workflow runs now carry subagent metadata; subagent-specific compute budgets can escalate to approval | Add richer agent-to-agent orchestration and durable worker-style subagent execution | The repo now has real cross-service subagent semantics, but subagents still live inside one representative runtime rather than orchestrating as independent durable workers | P2 |
 | 7 | Context management | Partial, structured assembler landed | Postgres truth + OpenViking recall/commit + artifact store + ephemeral compute state are present, and the model lane now assembles contract/snapshot/collector/recent-turn/recall segments with token estimates | Add richer context editing, tool-result compaction, and adaptive recall/token budgeting | Advanced pruning is still heuristic and there is no Claude-style context editing or token-aware multi-provider stack yet | P1 |
@@ -99,13 +100,13 @@ Do **not** try to close all 12 rows in one pass.
 
 Recommended order:
 
-1. `P4-A` org/customer-managed permission overlays
-2. `P4-B` broader MCP transport coverage, retries, and approval UX
-3. `P4-C` unified file/material workflow and deliverable packaging
+1. `P4-B` broader MCP transport coverage, retries, and approval UX
+2. `P4-C` unified file/material workflow and deliverable packaging
+3. `P5-A` broader org/customer governance above owner overlays
 
 Why this order:
 
-- The near-term browser, billing, and subagent gaps are now meaningfully closed, so the next highest-value risk is policy governance above the representative layer
+- The first owner/customer overlay layer is now in place, so the next highest-value gap is the narrow MCP transport/runtime surface
 - Row `10` still has the narrowest transport surface, which makes broader MCP coverage and retry semantics the next leverage point
 - Row `8` is still operational rather than productized, so turning artifacts and materials into a clearer deliverable workflow is the next owner-facing quality jump
 
