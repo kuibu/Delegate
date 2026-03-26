@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 
-import { maxDeliverableBundleItems } from "@delegate/compute-protocol";
+import {
+  maxDeliverableBundleItems,
+  type RepresentativeGovernedActionSnapshot,
+} from "@delegate/compute-protocol";
 import {
   DashboardPanelFrame,
   DashboardSignalStrip,
@@ -622,6 +625,8 @@ type ResourceGovernanceSnapshot = {
   }>;
 };
 
+type GovernedActionsSnapshot = RepresentativeGovernedActionSnapshot;
+
 type McpBindingFormState = {
   bindingId: string | null;
   slug: string;
@@ -693,6 +698,7 @@ export function DashboardCompute({
   const [resourceGovernance, setResourceGovernance] = useState<ResourceGovernanceSnapshot | null>(
     null,
   );
+  const [governedActions, setGovernedActions] = useState<GovernedActionsSnapshot | null>(null);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [artifactDetail, setArtifactDetail] = useState<ComputeArtifactDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -726,6 +732,7 @@ export function DashboardCompute({
       setDeliverableInsights,
       setDeliverablePresets,
       setResourceGovernance,
+      setGovernedActions,
       setError,
     );
   }, [representativeSlug]);
@@ -888,6 +895,123 @@ export function DashboardCompute({
     () => t.packagingPresets.labels,
     [t],
   );
+  const governedActionText = useMemo(
+    () =>
+      locale === "zh"
+        ? {
+            eyebrow: "Governed Actions",
+            title: "把审批、资源和账单后果收成同一条治理动作时间线",
+            chip: (count: number, blocked: number) => `${count} actions · ${blocked} blocked/deny`,
+            heroEyebrow: "Unified control plane",
+            heroTitle: "别再在 approval、artifact、deliverable 和 ledger 之间来回跳",
+            heroCopy:
+              "这里把“谁发起了什么、命中了哪层治理、有没有审批、影响了什么资源、花了多少钱”收成同一种动作语言。",
+            heroResource: (count: number) => `${count} actions touch resources`,
+            heroBilling: (count: number) => `${count} actions carry billing`,
+            cards: {
+              total: "Governed actions",
+              totalDetail: "近端治理动作总量",
+              owner: "Owner required",
+              ownerDetail: "仍需 owner 才能继续的动作",
+              blocked: "Blocked / deny",
+              blockedDetail: "被拦住或直接拒绝的动作",
+              billing: "Billing linked",
+              billingDetail: "带内部成本或 credit 影响的动作",
+            },
+            tables: {
+              actionKindEyebrow: "Action Kinds",
+              actionKindTitle: "按动作类型看密度和成本",
+              actionKindMeta: (count: number, blocked: number) => `${count} total · ${blocked} blocked`,
+              outcomeEyebrow: "Outcomes",
+              outcomeTitle: "allow / ask / deny / resolved 到底落在哪",
+              outcomeMeta: (count: number) => `${count} actions`,
+              layerEyebrow: "Governance Layers",
+              layerTitle: "哪些动作主要受哪层治理影响",
+              layerMeta: (count: number, owner: number) => `${count} actions · ${owner} owner-only`,
+              billingEyebrow: "Billing Impact",
+              billingTitle: "别只看 ledger，要看哪类动作最花钱",
+              billingMeta: (cost: number, credits: number) => `${formatCurrency(cost)} · ${credits} credits`,
+              hotspotsEyebrow: "Hotspots",
+              hotspotsTitle: "最贵、最常被拦、最常卡在 owner 的动作",
+              staleEyebrow: "Stale Links",
+              staleTitle: "审批已经陈旧，但后果链仍挂着的动作",
+              timelineEyebrow: "Recent Actions",
+              timelineTitle: "最近发生了什么，为什么发生，后果落到了哪",
+              noData: "还没有 governed action 数据。",
+            },
+            buckets: {
+              mostExpensive: "Most expensive",
+              mostBlocked: "Most blocked",
+              ownerOnly: "Owner-only heavy",
+            },
+            labels: {
+              ownerRequired: "owner required",
+              publicMaterial: "affects public material",
+              hasBilling: "billing linked",
+              resourceLinked: "resource linked",
+              unassigned: "unassigned",
+              staleWorkflow: "stale workflow",
+              noStale: "没有 stale governed actions。",
+            },
+          }
+        : {
+            eyebrow: "Governed Actions",
+            title: "Unify approvals, resources, and billing into one governed-action console",
+            chip: (count: number, blocked: number) => `${count} actions · ${blocked} blocked/deny`,
+            heroEyebrow: "Unified control plane",
+            heroTitle: "Stop jumping between approvals, artifacts, deliverables, and the ledger",
+            heroCopy:
+              "This lane turns “who triggered what, which governance layer applied, whether approval happened, what resource changed, and what it cost” into one action language.",
+            heroResource: (count: number) => `${count} actions touch resources`,
+            heroBilling: (count: number) => `${count} actions carry billing`,
+            cards: {
+              total: "Governed actions",
+              totalDetail: "Recent governed action volume",
+              owner: "Owner required",
+              ownerDetail: "Actions that still need owner authority",
+              blocked: "Blocked / deny",
+              blockedDetail: "Actions that were blocked or denied",
+              billing: "Billing linked",
+              billingDetail: "Actions with cost or credit impact",
+            },
+            tables: {
+              actionKindEyebrow: "Action Kinds",
+              actionKindTitle: "See which actions are dense, blocked, and expensive",
+              actionKindMeta: (count: number, blocked: number) => `${count} total · ${blocked} blocked`,
+              outcomeEyebrow: "Outcomes",
+              outcomeTitle: "See where allow / ask / deny / resolved outcomes actually land",
+              outcomeMeta: (count: number) => `${count} actions`,
+              layerEyebrow: "Governance Layers",
+              layerTitle: "See which governance layer each action is really hitting",
+              layerMeta: (count: number, owner: number) => `${count} actions · ${owner} owner-only`,
+              billingEyebrow: "Billing Impact",
+              billingTitle: "Do not just scan the ledger; see which actions cost the most",
+              billingMeta: (cost: number, credits: number) => `${formatCurrency(cost)} · ${credits} credits`,
+              hotspotsEyebrow: "Hotspots",
+              hotspotsTitle: "Most expensive, most blocked, and most owner-heavy actions",
+              staleEyebrow: "Stale Links",
+              staleTitle: "Approvals that went stale while still linked to resource or billing consequences",
+              timelineEyebrow: "Recent Actions",
+              timelineTitle: "See what happened, why it happened, and what it affected",
+              noData: "No governed actions yet.",
+            },
+            buckets: {
+              mostExpensive: "Most expensive",
+              mostBlocked: "Most blocked",
+              ownerOnly: "Owner-only heavy",
+            },
+            labels: {
+              ownerRequired: "owner required",
+              publicMaterial: "affects public material",
+              hasBilling: "billing linked",
+              resourceLinked: "resource linked",
+              unassigned: "unassigned",
+              staleWorkflow: "stale workflow",
+              noStale: "No stale governed actions.",
+            },
+          },
+    [locale],
+  );
   const deliverableInsightCards = deliverableInsights
     ? [
         {
@@ -964,6 +1088,32 @@ export function DashboardCompute({
           value: `${resourceGovernance.hygiene.items.length}`,
           detail: t.resourceGovernanceCards.hygieneDetail,
           tone: resourceGovernance.hygiene.items.length ? ("accent" as const) : ("safe" as const),
+        },
+      ]
+    : [];
+  const governedActionCards = governedActions
+    ? [
+        {
+          label: governedActionText.cards.total,
+          value: `${governedActions.summary.totalGovernedActions}`,
+          detail: governedActionText.cards.totalDetail,
+        },
+        {
+          label: governedActionText.cards.owner,
+          value: `${governedActions.summary.actionsRequiringOwner}`,
+          detail: governedActionText.cards.ownerDetail,
+          tone: governedActions.summary.actionsRequiringOwner > 0 ? ("accent" as const) : ("safe" as const),
+        },
+        {
+          label: governedActionText.cards.blocked,
+          value: `${governedActions.summary.blockedOrDeniedActions}`,
+          detail: governedActionText.cards.blockedDetail,
+          tone: governedActions.summary.blockedOrDeniedActions > 0 ? ("accent" as const) : ("safe" as const),
+        },
+        {
+          label: governedActionText.cards.billing,
+          value: `${governedActions.summary.actionsWithBillingImpact}`,
+          detail: governedActionText.cards.billingDetail,
         },
       ]
     : [];
@@ -1132,6 +1282,7 @@ export function DashboardCompute({
           setDeliverableInsights,
           setDeliverablePresets,
           setResourceGovernance,
+          setGovernedActions,
           setError,
         );
         setMessage(
@@ -1203,6 +1354,7 @@ export function DashboardCompute({
           setDeliverableInsights,
           setDeliverablePresets,
           setResourceGovernance,
+          setGovernedActions,
           setError,
         );
         if (payload.nativeComputerUse?.traceArtifactId) {
@@ -1278,6 +1430,7 @@ export function DashboardCompute({
           setDeliverableInsights,
           setDeliverablePresets,
           setResourceGovernance,
+          setGovernedActions,
           setError,
         );
         setMcpForm(createEmptyMcpBindingForm());
@@ -1327,6 +1480,7 @@ export function DashboardCompute({
           setDeliverableInsights,
           setDeliverablePresets,
           setResourceGovernance,
+          setGovernedActions,
           setError,
         );
         setMessage(t.messages.policyOverlaysSaved);
@@ -1373,6 +1527,7 @@ export function DashboardCompute({
           setDeliverableInsights,
           setDeliverablePresets,
           setResourceGovernance,
+          setGovernedActions,
           setError,
         );
         setMessage(t.messages.governanceSaved);
@@ -1450,6 +1605,7 @@ export function DashboardCompute({
           setDeliverableInsights,
           setDeliverablePresets,
           setResourceGovernance,
+          setGovernedActions,
           setError,
         );
         setMessage(pinned ? t.messages.artifactPinned : t.messages.artifactUnpinned);
@@ -1555,6 +1711,7 @@ export function DashboardCompute({
           setDeliverableInsights,
           setDeliverablePresets,
           setResourceGovernance,
+          setGovernedActions,
           setError,
         );
         setDeliverableForm(createEmptyDeliverableForm());
@@ -3897,6 +4054,299 @@ export function DashboardCompute({
         </DashboardSurface>
 
         <DashboardSurface
+          eyebrow={governedActionText.eyebrow}
+          meta={
+            <span className="chip">
+              {governedActions
+                ? governedActionText.chip(
+                    governedActions.summary.totalGovernedActions,
+                    governedActions.summary.blockedOrDeniedActions,
+                  )
+                : t.loadingInsights}
+            </span>
+          }
+          title={governedActionText.title}
+          tone="accent"
+        >
+          {governedActions ? (
+            <>
+              <div className="dashboard-highlight-grid">
+                <article className="dashboard-highlight-card dashboard-highlight-card-primary">
+                  <p className="panel-title">{governedActionText.heroEyebrow}</p>
+                  <h3>{governedActionText.heroTitle}</h3>
+                  <p>{governedActionText.heroCopy}</p>
+                  <div className="chip-row">
+                    <span className="chip">
+                      {governedActionText.heroResource(
+                        governedActions.summary.actionsAffectingPublicMaterials,
+                      )}
+                    </span>
+                    <span className="chip">
+                      {governedActionText.heroBilling(
+                        governedActions.summary.actionsWithBillingImpact,
+                      )}
+                    </span>
+                  </div>
+                </article>
+
+                <DashboardSignalStrip cards={governedActionCards} />
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{governedActionText.tables.actionKindEyebrow}</p>
+                      <h3>{governedActionText.tables.actionKindTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {governedActions.byActionKind.length ? (
+                      governedActions.byActionKind.map((row) => (
+                        <div className="skill-row" key={row.key}>
+                          <div>
+                            <strong>{formatGovernedActionKind(row.key, locale)}</strong>
+                            <p>{governedActionText.tables.actionKindMeta(row.count, row.blockedCount)}</p>
+                          </div>
+                          <div className="chip-row">
+                            <span className="chip">{formatCurrency(row.totalCostCents)}</span>
+                            <span className="chip">{row.totalCreditDelta} credits</span>
+                            <span className="chip">
+                              {governedActionText.cards.ownerDetail}: {row.ownerRequiredCount}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{governedActionText.tables.noData}</p>
+                    )}
+                  </div>
+                </article>
+
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{governedActionText.tables.outcomeEyebrow}</p>
+                      <h3>{governedActionText.tables.outcomeTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {governedActions.byOutcome.length ? (
+                      governedActions.byOutcome.map((row) => (
+                        <div className="skill-row" key={row.key}>
+                          <div>
+                            <strong>{formatGovernedActionOutcome(row.key, locale)}</strong>
+                            <p>{governedActionText.tables.outcomeMeta(row.count)}</p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{governedActionText.tables.noData}</p>
+                    )}
+                  </div>
+                </article>
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{governedActionText.tables.layerEyebrow}</p>
+                      <h3>{governedActionText.tables.layerTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {governedActions.byGovernanceLayer.map((row) => (
+                      <div className="skill-row" key={row.key}>
+                        <div>
+                          <strong>{formatGovernanceLayer(row.key, locale)}</strong>
+                          <p>{governedActionText.tables.layerMeta(row.count, row.ownerRequiredCount)}</p>
+                        </div>
+                        <div className="chip-row">
+                          <span className="chip">
+                            {governedActionText.cards.billing}: {row.billingImpactCount}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{governedActionText.tables.billingEyebrow}</p>
+                      <h3>{governedActionText.tables.billingTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {governedActions.billingImpact.breakdown.length ? (
+                      governedActions.billingImpact.breakdown.map((row) => (
+                        <div className="skill-row" key={row.key}>
+                          <div>
+                            <strong>{formatGovernedBillingKey(row.key, locale)}</strong>
+                            <p>{governedActionText.tables.billingMeta(row.costCents, row.creditDelta)}</p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{governedActionText.tables.noData}</p>
+                    )}
+                  </div>
+                </article>
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{governedActionText.tables.hotspotsEyebrow}</p>
+                      <h3>{governedActionText.tables.hotspotsTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {governedActions.hotspots.mostExpensiveActions.map((item) => (
+                      <div className="skill-row" key={item.id}>
+                        <div>
+                          <strong>{item.summary}</strong>
+                          <p>{item.customerLabel}</p>
+                          <div className="chip-row">
+                            <span className="chip">{governedActionText.buckets.mostExpensive}</span>
+                            <span className="chip">{formatGovernedActionKind(item.actionKind, locale)}</span>
+                            <span className="chip chip-danger">{formatCurrency(item.totalCostCents)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {governedActions.hotspots.mostFrequentlyBlockedActions.map((item) => (
+                      <div className="skill-row" key={`blocked:${item.key}`}>
+                        <div>
+                          <strong>{formatGovernedActionKind(item.key, locale)}</strong>
+                          <p>{governedActionText.buckets.mostBlocked}</p>
+                        </div>
+                        <span className="chip">{item.count}</span>
+                      </div>
+                    ))}
+                    {governedActions.hotspots.mostCommonOwnerOnlyActions.map((item) => (
+                      <div className="skill-row" key={`owner:${item.key}`}>
+                        <div>
+                          <strong>{formatGovernedActionKind(item.key, locale)}</strong>
+                          <p>{governedActionText.buckets.ownerOnly}</p>
+                        </div>
+                        <span className="chip">{item.count}</span>
+                      </div>
+                    ))}
+                    {!governedActions.hotspots.mostExpensiveActions.length &&
+                    !governedActions.hotspots.mostFrequentlyBlockedActions.length &&
+                    !governedActions.hotspots.mostCommonOwnerOnlyActions.length ? (
+                      <p className="muted">{governedActionText.tables.noData}</p>
+                    ) : null}
+                  </div>
+                </article>
+
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{governedActionText.tables.staleEyebrow}</p>
+                      <h3>{governedActionText.tables.staleTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {governedActions.hotspots.staleApprovalsWithLinks.length ? (
+                      governedActions.hotspots.staleApprovalsWithLinks.map((item) => (
+                        <div className="skill-row" key={item.id}>
+                          <div>
+                            <strong>{item.summary}</strong>
+                            <p>{item.customerLabel}</p>
+                            <div className="chip-row">
+                              {item.workflowStatus ? (
+                                <span className="chip chip-danger">
+                                  {governedActionText.labels.staleWorkflow}
+                                </span>
+                              ) : null}
+                              {item.hasBillingLink ? (
+                                <span className="chip">{governedActionText.labels.hasBilling}</span>
+                              ) : null}
+                              {item.hasResourceLink ? (
+                                <span className="chip">{governedActionText.labels.resourceLinked}</span>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{governedActionText.labels.noStale}</p>
+                    )}
+                  </div>
+                </article>
+              </div>
+
+              <article className="table-card">
+                <div className="dashboard-card-heading">
+                  <div>
+                    <p className="eyebrow">{governedActionText.tables.timelineEyebrow}</p>
+                    <h3>{governedActionText.tables.timelineTitle}</h3>
+                  </div>
+                </div>
+                <div className="row-list">
+                  {governedActions.recentActions.length ? (
+                    governedActions.recentActions.slice(0, 16).map((action) => (
+                      <div className="skill-row" key={action.id}>
+                        <div>
+                          <strong>{action.summary}</strong>
+                          <p>
+                            {action.actor.label} · {formatGovernedActionKind(action.actionKind, locale)} ·{" "}
+                            {formatTimestamp(action.occurredAt, locale)}
+                          </p>
+                          <div className="chip-row">
+                            <span className="chip">
+                              {formatGovernanceLayer(action.primaryGovernanceLayer, locale)}
+                            </span>
+                            <span className="chip">
+                              {action.customerAccount.isUnassigned
+                                ? governedActionText.labels.unassigned
+                                : action.customerAccount.displayName}
+                            </span>
+                            <span className="chip">
+                              {formatGovernedActionOutcome(action.outcome, locale)}
+                            </span>
+                            {action.ownerRequired ? (
+                              <span className="chip chip-danger">
+                                {governedActionText.labels.ownerRequired}
+                              </span>
+                            ) : null}
+                            {action.publicMaterialAffecting ? (
+                              <span className="chip chip-safe">
+                                {governedActionText.labels.publicMaterial}
+                              </span>
+                            ) : null}
+                            {action.hasBillingImpact ? (
+                              <span className="chip">{governedActionText.labels.hasBilling}</span>
+                            ) : null}
+                            {action.subagentId ? <span className="chip">{action.subagentId}</span> : null}
+                          </div>
+                          <p className="footer-note">
+                            {formatGovernedActionLinks(action, locale)}
+                          </p>
+                        </div>
+                        <div className="footer-note">
+                          {formatCurrency(action.totalCostCents)}
+                          {action.totalCreditDelta ? ` · ${action.totalCreditDelta} credits` : ""}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="muted">{governedActionText.tables.noData}</p>
+                  )}
+                </div>
+              </article>
+            </>
+          ) : (
+            <p className="muted">{t.loadingInsights}</p>
+          )}
+        </DashboardSurface>
+
+        <DashboardSurface
           eyebrow={t.deliverablesEyebrow}
           meta={<span className="chip">{t.deliverablesChip(deliverables.length)}</span>}
           title={t.deliverablesTitle}
@@ -4264,6 +4714,7 @@ async function refreshCompute(
   setDeliverableInsights: (value: DeliverableInsightsSnapshot | null) => void,
   setDeliverablePresets: (value: DeliverablePackagingPresetsSnapshot["presets"]) => void,
   setResourceGovernance: (value: ResourceGovernanceSnapshot | null) => void,
+  setGovernedActions: (value: GovernedActionsSnapshot | null) => void,
   setError: (value: string | null) => void,
 ) {
   try {
@@ -4277,6 +4728,7 @@ async function refreshCompute(
       deliverableInsightsResponse,
       deliverablePresetsResponse,
       resourceGovernanceResponse,
+      governedActionsResponse,
     ] =
       await Promise.all([
       fetch(`/api/dashboard/representatives/${representativeSlug}/compute`, { cache: "no-store" }),
@@ -4299,6 +4751,9 @@ async function refreshCompute(
         cache: "no-store",
       }),
       fetch(`/api/dashboard/representatives/${representativeSlug}/resource-governance`, {
+        cache: "no-store",
+      }),
+      fetch(`/api/dashboard/representatives/${representativeSlug}/governed-actions`, {
         cache: "no-store",
       }),
     ]);
@@ -4335,6 +4790,10 @@ async function refreshCompute(
       throw new Error(await extractError(resourceGovernanceResponse));
     }
 
+    if (!governedActionsResponse.ok) {
+      throw new Error(await extractError(governedActionsResponse));
+    }
+
     const snapshotPayload = (await snapshotResponse.json()) as ComputeSnapshot;
     const approvalsPayload = (await approvalsResponse.json()) as ComputeApprovalsSnapshot;
     const insightsPayload = (await insightsResponse.json()) as ComputeApprovalInsightsSnapshot;
@@ -4346,6 +4805,8 @@ async function refreshCompute(
       (await deliverablePresetsResponse.json()) as DeliverablePackagingPresetsSnapshot;
     const resourceGovernancePayload =
       (await resourceGovernanceResponse.json()) as ResourceGovernanceSnapshot;
+    const governedActionsPayload =
+      (await governedActionsResponse.json()) as GovernedActionsSnapshot;
 
     setSnapshot(snapshotPayload);
     setApprovals(approvalsPayload.approvals);
@@ -4355,6 +4816,7 @@ async function refreshCompute(
     setDeliverableInsights(deliverableInsightsPayload);
     setDeliverablePresets(deliverablePresetsPayload.presets);
     setResourceGovernance(resourceGovernancePayload);
+    setGovernedActions(governedActionsPayload);
   } catch (error) {
     setError(error instanceof Error ? error.message : "Failed to load compute control plane.");
   }
@@ -4418,6 +4880,133 @@ function formatBytes(value: number) {
   }
 
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatCurrency(value: number) {
+  return `$${(value / 100).toFixed(2)}`;
+}
+
+function formatGovernedActionKind(
+  value: GovernedActionsSnapshot["recentActions"][number]["actionKind"],
+  locale: Locale,
+) {
+  const labels =
+    locale === "zh"
+      ? {
+          compute_execution: "计算执行",
+          approval_request: "审批请求",
+          artifact_pin: "置顶 artifact",
+          artifact_unpin: "取消置顶 artifact",
+          artifact_download: "下载 artifact",
+          deliverable_create: "创建交付件",
+          deliverable_update: "更新交付件",
+          deliverable_publish: "发布 public material",
+          package_rebuild: "重建 package",
+          package_download: "下载 package",
+          billing_debit: "账单扣减",
+          billing_credit: "账单入账",
+        }
+      : {
+          compute_execution: "Compute execution",
+          approval_request: "Approval request",
+          artifact_pin: "Artifact pin",
+          artifact_unpin: "Artifact unpin",
+          artifact_download: "Artifact download",
+          deliverable_create: "Deliverable create",
+          deliverable_update: "Deliverable update",
+          deliverable_publish: "Deliverable publish",
+          package_rebuild: "Package rebuild",
+          package_download: "Package download",
+          billing_debit: "Billing debit",
+          billing_credit: "Billing credit",
+        };
+
+  return labels[value];
+}
+
+function formatGovernedActionOutcome(
+  value: GovernedActionsSnapshot["recentActions"][number]["outcome"],
+  locale: Locale,
+) {
+  const labels =
+    locale === "zh"
+      ? {
+          allow: "allow",
+          ask: "ask",
+          deny: "deny",
+          approved: "approved",
+          rejected: "rejected",
+          expired: "expired",
+          blocked: "blocked",
+          completed: "completed",
+        }
+      : {
+          allow: "allow",
+          ask: "ask",
+          deny: "deny",
+          approved: "approved",
+          rejected: "rejected",
+          expired: "expired",
+          blocked: "blocked",
+          completed: "completed",
+        };
+
+  return labels[value];
+}
+
+function formatGovernedBillingKey(
+  value: GovernedActionsSnapshot["billingImpact"]["breakdown"][number]["key"],
+  locale: Locale,
+) {
+  const labels =
+    locale === "zh"
+      ? {
+          compute: "计算",
+          storage: "存储",
+          browser: "浏览器",
+          mcp: "MCP",
+          model: "模型",
+          egress: "流出",
+          plan_debit: "计划扣减",
+          sponsor_credit: "赞助入账",
+          other: "其他",
+        }
+      : {
+          compute: "Compute",
+          storage: "Storage",
+          browser: "Browser",
+          mcp: "MCP",
+          model: "Model",
+          egress: "Egress",
+          plan_debit: "Plan debit",
+          sponsor_credit: "Sponsor credit",
+          other: "Other",
+        };
+
+  return labels[value];
+}
+
+function formatGovernedActionLinks(
+  action: GovernedActionsSnapshot["recentActions"][number],
+  locale: Locale,
+) {
+  const parts: string[] = [];
+  if (action.links.approvalId) {
+    parts.push(`${locale === "zh" ? "approval" : "approval"} ${action.links.approvalId.slice(0, 8)}`);
+  }
+  if (action.links.toolExecutionId) {
+    parts.push(`${locale === "zh" ? "execution" : "execution"} ${action.links.toolExecutionId.slice(0, 8)}`);
+  }
+  if (action.links.artifactId) {
+    parts.push(`${locale === "zh" ? "artifact" : "artifact"} ${action.links.artifactId.slice(0, 8)}`);
+  }
+  if (action.links.deliverableId) {
+    parts.push(`${locale === "zh" ? "deliverable" : "deliverable"} ${action.links.deliverableId.slice(0, 8)}`);
+  }
+  if (action.links.ledgerEntryIds.length) {
+    parts.push(`${locale === "zh" ? "ledger" : "ledger"} ${action.links.ledgerEntryIds.length}`);
+  }
+  return parts.join(" · ");
 }
 
 function formatGovernanceLayer(

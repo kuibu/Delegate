@@ -6,6 +6,7 @@ import {
   nativeComputerUseExecutionRequestSchema,
   nativeComputerUsePreflightResponseSchema,
   organizationGovernanceOverlaysSchema,
+  representativeGovernedActionSnapshotSchema,
   representativeResourceGovernanceSnapshotSchema,
   ownerManagedPolicyOverlaysSchema,
   updateArtifactRequestSchema,
@@ -17,6 +18,7 @@ import {
   type NativeComputerUsePreflightSnapshot,
   type OrganizationGovernanceOverlays,
   type OwnerManagedPolicyOverlays,
+  type RepresentativeGovernedActionSnapshot,
   type RepresentativeResourceGovernanceSnapshot,
   type ResolveApprovalResponse,
   type UpdateArtifactResponse,
@@ -34,6 +36,7 @@ import {
   type ApprovalInsightsSource,
   type RepresentativeApprovalInsightsSnapshot,
 } from "./compute-insights";
+import { buildRepresentativeGovernedActionSnapshot } from "./governed-actions";
 import { prisma } from "./prisma";
 import { buildRepresentativeResourceGovernanceSnapshot } from "./resource-governance";
 
@@ -99,6 +102,47 @@ const approvalInclude = Prisma.validator<Prisma.ApprovalRequestDefaultArgs>()({
 type ApprovalRecord = Prisma.ApprovalRequestGetPayload<{
   include: typeof approvalInclude.include;
 }>;
+
+type ResourceArtifactRecord = {
+  id: string;
+  kind: string;
+  isPinned: boolean;
+  contactId: string | null;
+  createdAt: Date;
+  pinnedAt: Date | null;
+  pinnedBy: string | null;
+  downloadCount: number;
+  lastDownloadedAt: Date | null;
+  toolExecutionId: string | null;
+};
+
+type ResourceDeliverableRecord = {
+  id: string;
+  title: string;
+  kind: string;
+  visibility: string;
+  sourceKind: string;
+  artifactId: string | null;
+  bundleItemArtifactIds: string[];
+  createdBy: string | null;
+  packageBuiltAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  downloadCount: number;
+  lastDownloadedAt: Date | null;
+};
+
+type ResourceRecordBundle = {
+  artifacts: ResourceArtifactRecord[];
+  deliverables: ResourceDeliverableRecord[];
+  dependentDeliverablesByArtifact: Map<
+    string,
+    Array<{
+      id: string;
+      title: string;
+    }>
+  >;
+};
 
 type RepresentativeIdentity = {
   id: string;
@@ -587,91 +631,169 @@ export async function getRepresentativeResourceGovernance(
     return null;
   }
 
-  const governance = serializeOrganizationGovernance(representative);
+  const resourceRecords = await queryRepresentativeResourceRecords(representative.id);
+  return buildRepresentativeResourceGovernanceSnapshotForRepresentative(representative, resourceRecords);
+}
 
-  const [artifacts, deliverables] = await Promise.all([
-    prisma.artifact.findMany({
+export async function getRepresentativeGovernedActions(
+  representativeSlug: string,
+): Promise<RepresentativeGovernedActionSnapshot | null> {
+  const representative = await getRepresentativeIdentity(representativeSlug);
+
+  if (!representative) {
+    return null;
+  }
+
+  const [approvals, resourceRecords, executions, ledgerEntries] = await Promise.all([
+    queryRepresentativeApprovals(representative.id, 80),
+    queryRepresentativeResourceRecords(representative.id),
+    prisma.toolExecution.findMany({
       where: {
-        representativeId: representative.id,
-      },
-      select: {
-        id: true,
-        kind: true,
-        isPinned: true,
-        contactId: true,
+        session: {
+          representativeId: representative.id,
+        },
       },
       orderBy: [{ createdAt: "desc" }],
+      take: 120,
+      select: {
+        id: true,
+        sessionId: true,
+        capability: true,
+        subagentId: true,
+        status: true,
+        policyDecision: true,
+        approvalRequestId: true,
+        requestedCommand: true,
+        requestedPath: true,
+        createdAt: true,
+        finishedAt: true,
+        session: {
+          select: {
+            contact: {
+              select: {
+                customerAccount: {
+                  select: {
+                    id: true,
+                    slug: true,
+                    displayName: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     }),
-    prisma.deliverable.findMany({
+    prisma.ledgerEntry.findMany({
       where: {
         representativeId: representative.id,
       },
+      orderBy: [{ createdAt: "desc" }],
+      take: 160,
       select: {
         id: true,
-        title: true,
         kind: true,
-        visibility: true,
-        sourceKind: true,
-        artifactId: true,
-        bundleItemArtifactIds: true,
-        createdBy: true,
-        packageBuiltAt: true,
+        costCents: true,
+        creditDelta: true,
+        quantity: true,
+        unit: true,
+        createdAt: true,
+        notes: true,
+        sessionId: true,
+        toolExecutionId: true,
+        contact: {
+          select: {
+            customerAccount: {
+              select: {
+                id: true,
+                slug: true,
+                displayName: true,
+              },
+            },
+          },
+        },
       },
-      orderBy: [{ createdAt: "desc" }],
     }),
   ]);
 
-  const dependentDeliverablesByArtifact = new Map<
-    string,
-    Array<{
-      id: string;
-      title: string;
-    }>
-  >();
+  const resourceGovernance = buildRepresentativeResourceGovernanceSnapshotForRepresentative(
+    representative,
+    resourceRecords,
+  );
+  const artifactGovernanceById = new Map(
+    resourceGovernance.artifacts.map((artifact) => [artifact.id, artifact] as const),
+  );
+  const deliverableGovernanceById = new Map(
+    resourceGovernance.deliverables.map((deliverable) => [deliverable.id, deliverable] as const),
+  );
+  const hasOrganization = Boolean(representative.owner.organization?.id);
 
-  for (const deliverable of deliverables) {
-    const artifactIds = [
-      ...(deliverable.artifactId ? [deliverable.artifactId] : []),
-      ...deliverable.bundleItemArtifactIds,
-    ];
-    for (const artifactId of artifactIds) {
-      const bucket = dependentDeliverablesByArtifact.get(artifactId) ?? [];
-      bucket.push({
-        id: deliverable.id,
-        title: deliverable.title,
-      });
-      dependentDeliverablesByArtifact.set(artifactId, bucket);
-    }
-  }
-
-  return representativeResourceGovernanceSnapshotSchema.parse(
-    buildRepresentativeResourceGovernanceSnapshot({
+  return representativeGovernedActionSnapshotSchema.parse(
+    buildRepresentativeGovernedActionSnapshot({
       representative: {
         slug: representative.slug,
         displayName: representative.displayName,
       },
-      ownerManagedOverlays: serializeOwnerManagedOverlays(representative.owner.capabilityProfiles),
-      governance: {
-        ...governance,
-        organization: {
-          id: governance.organization.id ?? null,
-          slug: governance.organization.slug ?? null,
-          displayName: governance.organization.displayName ?? null,
-        },
-        customerAccounts: governance.customerAccounts.map((account) => ({
-          ...account,
-          id: account.id ?? null,
-        })),
-        contactAssignments: governance.contactAssignments.map((assignment) => ({
-          ...assignment,
-          displayName: assignment.displayName ?? null,
-          username: assignment.username ?? null,
-          computeTrustTier: assignment.computeTrustTier ?? null,
-          customerAccountId: assignment.customerAccountId ?? null,
-          customerAccountSlug: assignment.customerAccountSlug ?? null,
-        })),
-      },
-      artifacts: artifacts.map((artifact) => ({
+      approvals: approvals.map((approval) => {
+        const serialized = serializeApprovalInsightRecord(approval, representative);
+        const {
+          subagentId,
+          customerAccount,
+          resolvedAt,
+          resolvedBy,
+          toolExecutionId,
+          sessionId,
+          workflowStatus,
+          workflowScheduledAt,
+          ...rest
+        } = serialized;
+        return {
+          ...rest,
+          ...(subagentId ? { subagentId } : {}),
+          ...(resolvedAt ? { resolvedAt } : {}),
+          ...(resolvedBy ? { resolvedBy } : {}),
+          ...(toolExecutionId ? { toolExecutionId } : {}),
+          ...(sessionId ? { sessionId } : {}),
+          ...(workflowStatus ? { workflowStatus } : {}),
+          ...(workflowScheduledAt ? { workflowScheduledAt } : {}),
+          customerAccount: toGovernedCustomerRef(customerAccount),
+        };
+      }),
+      executions: executions.map((execution) => {
+        const customerAccount = toGovernedCustomerRef(
+          normalizeCustomerAccount(
+            execution.session.contact?.customerAccount ?? null,
+          ),
+        );
+        return {
+          id: execution.id,
+          sessionId: execution.sessionId,
+          capability: execution.capability.toLowerCase() as
+            | "exec"
+            | "read"
+            | "write"
+            | "process"
+            | "browser"
+            | "mcp",
+          subagentId: execution.subagentId,
+          status: execution.status.toLowerCase() as
+            | "queued"
+            | "running"
+            | "succeeded"
+            | "failed"
+            | "blocked"
+            | "canceled",
+          policyDecision: execution.policyDecision?.toLowerCase() as "allow" | "ask" | "deny" | null,
+          approvalRequestId: execution.approvalRequestId,
+          requestedCommand: execution.requestedCommand,
+          requestedPath: execution.requestedPath,
+          createdAt: execution.createdAt.toISOString(),
+          finishedAt: execution.finishedAt?.toISOString() ?? null,
+          customerAccount,
+          primaryLayer: resolveGovernedCustomerLayer(customerAccount, hasOrganization),
+        };
+      }),
+      artifacts: resourceRecords.artifacts.map((artifact) => ({
         id: artifact.id,
         kind: artifact.kind.toLowerCase() as
           | "stdout"
@@ -681,14 +803,15 @@ export async function getRepresentativeResourceGovernance(
           | "screenshot"
           | "json"
           | "trace",
-        isPinned: artifact.isPinned,
-        contactId: artifact.contactId,
-        dependentDeliverableIds:
-          dependentDeliverablesByArtifact.get(artifact.id)?.map((item) => item.id) ?? [],
-        dependentDeliverableTitles:
-          dependentDeliverablesByArtifact.get(artifact.id)?.map((item) => item.title) ?? [],
+        createdAt: artifact.createdAt.toISOString(),
+        pinnedAt: artifact.pinnedAt?.toISOString() ?? null,
+        pinnedBy: artifact.pinnedBy,
+        downloadCount: artifact.downloadCount,
+        lastDownloadedAt: artifact.lastDownloadedAt?.toISOString() ?? null,
+        toolExecutionId: artifact.toolExecutionId,
+        governance: artifactGovernanceById.get(artifact.id)!,
       })),
-      deliverables: deliverables.map((deliverable) => ({
+      deliverables: resourceRecords.deliverables.map((deliverable) => ({
         id: deliverable.id,
         title: deliverable.title,
         kind: deliverable.kind.toLowerCase() as
@@ -699,11 +822,36 @@ export async function getRepresentativeResourceGovernance(
           | "package",
         visibility: deliverable.visibility.toLowerCase() as "owner_only" | "public_material",
         sourceKind: deliverable.sourceKind.toLowerCase() as "artifact" | "external_link" | "bundle",
-        artifactId: deliverable.artifactId,
-        bundleItemArtifactIds: deliverable.bundleItemArtifactIds,
-        hasCachedPackage: Boolean(deliverable.packageBuiltAt),
+        createdAt: deliverable.createdAt.toISOString(),
+        updatedAt: deliverable.updatedAt.toISOString(),
         createdBy: deliverable.createdBy,
+        downloadCount: deliverable.downloadCount,
+        lastDownloadedAt: deliverable.lastDownloadedAt?.toISOString() ?? null,
+        packageBuiltAt: deliverable.packageBuiltAt?.toISOString() ?? null,
+        hasCachedPackage: Boolean(deliverable.packageBuiltAt),
+        governance: deliverableGovernanceById.get(deliverable.id)!,
       })),
+      ledgerEntries: ledgerEntries.map((entry) => {
+        const customerAccount = toGovernedCustomerRef(
+          normalizeCustomerAccount(entry.contact?.customerAccount ?? null),
+        );
+        return {
+          id: entry.id,
+          kind: entry.kind.toLowerCase(),
+          costCents: entry.costCents,
+          creditDelta: entry.creditDelta,
+          quantity: Math.round(entry.quantity),
+          unit: entry.unit,
+          createdAt: entry.createdAt.toISOString(),
+          notes: entry.notes ?? null,
+          sessionId: entry.sessionId ?? null,
+          toolExecutionId: entry.toolExecutionId ?? null,
+          customerAccount,
+          primaryLayer: resolveGovernedCustomerLayer(customerAccount, hasOrganization),
+          subagentId:
+            executions.find((execution) => execution.id === entry.toolExecutionId)?.subagentId ?? null,
+        };
+      }),
     }),
   );
 }
@@ -1943,6 +2091,81 @@ async function queryRepresentativeApprovals(representativeId: string, take = 20)
   });
 }
 
+async function queryRepresentativeResourceRecords(
+  representativeId: string,
+): Promise<ResourceRecordBundle> {
+  const [artifacts, deliverables] = await Promise.all([
+    prisma.artifact.findMany({
+      where: {
+        representativeId,
+      },
+      select: {
+        id: true,
+        kind: true,
+        isPinned: true,
+        contactId: true,
+        createdAt: true,
+        pinnedAt: true,
+        pinnedBy: true,
+        downloadCount: true,
+        lastDownloadedAt: true,
+        toolExecutionId: true,
+      },
+      orderBy: [{ createdAt: "desc" }],
+    }),
+    prisma.deliverable.findMany({
+      where: {
+        representativeId,
+      },
+      select: {
+        id: true,
+        title: true,
+        kind: true,
+        visibility: true,
+        sourceKind: true,
+        artifactId: true,
+        bundleItemArtifactIds: true,
+        createdBy: true,
+        packageBuiltAt: true,
+        createdAt: true,
+        updatedAt: true,
+        downloadCount: true,
+        lastDownloadedAt: true,
+      },
+      orderBy: [{ createdAt: "desc" }],
+    }),
+  ]);
+
+  const dependentDeliverablesByArtifact = new Map<
+    string,
+    Array<{
+      id: string;
+      title: string;
+    }>
+  >();
+
+  for (const deliverable of deliverables) {
+    const artifactIds = [
+      ...(deliverable.artifactId ? [deliverable.artifactId] : []),
+      ...deliverable.bundleItemArtifactIds,
+    ];
+    for (const artifactId of artifactIds) {
+      const bucket = dependentDeliverablesByArtifact.get(artifactId) ?? [];
+      bucket.push({
+        id: deliverable.id,
+        title: deliverable.title,
+      });
+      dependentDeliverablesByArtifact.set(artifactId, bucket);
+    }
+  }
+
+  return {
+    artifacts,
+    deliverables,
+    dependentDeliverablesByArtifact,
+  };
+}
+
 async function buildRepresentativeApprovalInsightsSource(
   representative: RepresentativeIdentity,
 ): Promise<ApprovalInsightsSource> {
@@ -2106,6 +2329,104 @@ function serializeRepresentativeApproval(
     ...(approval.sessionId ? { sessionId: approval.sessionId } : {}),
     ...(workflow ? { workflowStatus: workflow.status.toLowerCase() } : {}),
     ...(workflow ? { workflowScheduledAt: workflow.scheduledAt.toISOString() } : {}),
+  };
+}
+
+function buildRepresentativeResourceGovernanceSnapshotForRepresentative(
+  representative: RepresentativeIdentity,
+  resourceRecords: ResourceRecordBundle,
+) {
+  const governance = serializeOrganizationGovernance(representative);
+
+  return representativeResourceGovernanceSnapshotSchema.parse(
+    buildRepresentativeResourceGovernanceSnapshot({
+      representative: {
+        slug: representative.slug,
+        displayName: representative.displayName,
+      },
+      ownerManagedOverlays: serializeOwnerManagedOverlays(representative.owner.capabilityProfiles),
+      governance: {
+        ...governance,
+        organization: {
+          id: governance.organization.id ?? null,
+          slug: governance.organization.slug ?? null,
+          displayName: governance.organization.displayName ?? null,
+        },
+        customerAccounts: governance.customerAccounts.map((account) => ({
+          ...account,
+          id: account.id ?? null,
+        })),
+        contactAssignments: governance.contactAssignments.map((assignment) => ({
+          ...assignment,
+          displayName: assignment.displayName ?? null,
+          username: assignment.username ?? null,
+          computeTrustTier: assignment.computeTrustTier ?? null,
+          customerAccountId: assignment.customerAccountId ?? null,
+          customerAccountSlug: assignment.customerAccountSlug ?? null,
+        })),
+      },
+      artifacts: resourceRecords.artifacts.map((artifact) => ({
+        id: artifact.id,
+        kind: artifact.kind.toLowerCase() as
+          | "stdout"
+          | "stderr"
+          | "file"
+          | "archive"
+          | "screenshot"
+          | "json"
+          | "trace",
+        isPinned: artifact.isPinned,
+        contactId: artifact.contactId,
+        dependentDeliverableIds:
+          resourceRecords.dependentDeliverablesByArtifact.get(artifact.id)?.map((item) => item.id) ?? [],
+        dependentDeliverableTitles:
+          resourceRecords.dependentDeliverablesByArtifact.get(artifact.id)?.map((item) => item.title) ?? [],
+      })),
+      deliverables: resourceRecords.deliverables.map((deliverable) => ({
+        id: deliverable.id,
+        title: deliverable.title,
+        kind: deliverable.kind.toLowerCase() as
+          | "deck"
+          | "case_study"
+          | "download"
+          | "generated_document"
+          | "package",
+        visibility: deliverable.visibility.toLowerCase() as "owner_only" | "public_material",
+        sourceKind: deliverable.sourceKind.toLowerCase() as "artifact" | "external_link" | "bundle",
+        artifactId: deliverable.artifactId,
+        bundleItemArtifactIds: deliverable.bundleItemArtifactIds,
+        hasCachedPackage: Boolean(deliverable.packageBuiltAt),
+        createdBy: deliverable.createdBy,
+      })),
+    }),
+  );
+}
+
+function resolveGovernedCustomerLayer(
+  customerAccount: {
+    isUnassigned: boolean;
+  },
+  hasOrganization: boolean,
+) {
+  if (!customerAccount.isUnassigned) {
+    return "customer_account" as const;
+  }
+
+  if (hasOrganization) {
+    return "org_managed" as const;
+  }
+
+  return "owner_managed" as const;
+}
+
+function toGovernedCustomerRef(
+  customerAccount: ReturnType<typeof normalizeCustomerAccount>,
+) {
+  return {
+    key: customerAccount.id ?? "unassigned",
+    slug: customerAccount.slug,
+    displayName: customerAccount.displayName,
+    isUnassigned: customerAccount.isUnassigned,
   };
 }
 

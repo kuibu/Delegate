@@ -872,6 +872,220 @@ export const representativeResourceGovernanceSnapshotSchema = z.object({
   ),
 });
 
+export const governedActionKindSchema = z.enum([
+  "compute_execution",
+  "approval_request",
+  "artifact_pin",
+  "artifact_unpin",
+  "artifact_download",
+  "deliverable_create",
+  "deliverable_update",
+  "deliverable_publish",
+  "package_rebuild",
+  "package_download",
+  "billing_debit",
+  "billing_credit",
+]);
+
+export const governedActionOutcomeSchema = z.enum([
+  "allow",
+  "ask",
+  "deny",
+  "approved",
+  "rejected",
+  "expired",
+  "blocked",
+  "completed",
+]);
+
+export const governedActionActorKindSchema = z.enum([
+  "owner",
+  "team_member",
+  "system",
+  "audience",
+  "workflow",
+  "external",
+  "unknown",
+]);
+
+export const governedActionResourceKindSchema = z.enum([
+  "tool_execution",
+  "approval_request",
+  "artifact",
+  "deliverable",
+  "ledger_entry",
+]);
+
+export const governedActionBillingBreakdownKeySchema = z.enum([
+  "compute",
+  "storage",
+  "browser",
+  "mcp",
+  "model",
+  "egress",
+  "plan_debit",
+  "sponsor_credit",
+  "other",
+]);
+
+const governedActionRecordSchema = z.object({
+  id: z.string(),
+  actionKind: governedActionKindSchema,
+  actor: z.object({
+    key: z.string(),
+    label: z.string(),
+    kind: governedActionActorKindSchema,
+  }),
+  target: z.object({
+    resourceKind: governedActionResourceKindSchema,
+    id: z.string(),
+  }),
+  primaryGovernanceLayer: resourceGovernanceLayerSchema,
+  customerAccount: resourceGovernanceCustomerRefSchema,
+  subagentId: computeSubagentIdSchema.nullable().optional(),
+  policyOutcome: policyDecisionSchema.nullable().optional(),
+  approvalStatus: approvalStatusSchema.nullable().optional(),
+  workflowStatus: z.string().nullable().optional(),
+  outcome: governedActionOutcomeSchema,
+  ownerRequired: z.boolean(),
+  publicMaterialAffecting: z.boolean(),
+  hasBillingImpact: z.boolean(),
+  totalCostCents: z.number().int(),
+  totalCreditDelta: z.number().int(),
+  occurredAt: z.string().datetime(),
+  summary: z.string(),
+  links: z.object({
+    approvalId: z.string().nullable().optional(),
+    toolExecutionId: z.string().nullable().optional(),
+    artifactId: z.string().nullable().optional(),
+    deliverableId: z.string().nullable().optional(),
+    ledgerEntryIds: z.array(z.string()),
+  }),
+});
+
+export const representativeGovernedActionSnapshotSchema = z.object({
+  representative: z.object({
+    slug: z.string(),
+    displayName: z.string(),
+  }),
+  summary: z.object({
+    totalGovernedActions: z.number().int().nonnegative(),
+    actionsRequiringOwner: z.number().int().nonnegative(),
+    actionsResolvedAutomatically: z.number().int().nonnegative(),
+    blockedOrDeniedActions: z.number().int().nonnegative(),
+    actionsWithBillingImpact: z.number().int().nonnegative(),
+    actionsAffectingPublicMaterials: z.number().int().nonnegative(),
+  }),
+  byActionKind: z.array(
+    z.object({
+      key: governedActionKindSchema,
+      count: z.number().int().nonnegative(),
+      blockedCount: z.number().int().nonnegative(),
+      ownerRequiredCount: z.number().int().nonnegative(),
+      billingImpactCount: z.number().int().nonnegative(),
+      totalCostCents: z.number().int(),
+      totalCreditDelta: z.number().int(),
+    }),
+  ),
+  byOutcome: z.array(
+    z.object({
+      key: governedActionOutcomeSchema,
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+  byGovernanceLayer: z.array(
+    z.object({
+      key: resourceGovernanceLayerSchema,
+      count: z.number().int().nonnegative(),
+      ownerRequiredCount: z.number().int().nonnegative(),
+      billingImpactCount: z.number().int().nonnegative(),
+    }),
+  ),
+  byCustomerAccount: z.array(
+    z.object({
+      key: z.string(),
+      slug: z.string(),
+      displayName: z.string(),
+      isUnassigned: z.boolean(),
+      count: z.number().int().nonnegative(),
+      ownerRequiredCount: z.number().int().nonnegative(),
+      blockedCount: z.number().int().nonnegative(),
+      billingImpactCount: z.number().int().nonnegative(),
+    }),
+  ),
+  bySubagent: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      count: z.number().int().nonnegative(),
+      blockedCount: z.number().int().nonnegative(),
+      totalCostCents: z.number().int(),
+      totalCreditDelta: z.number().int(),
+    }),
+  ),
+  billingImpact: z.object({
+    totalInternalCostCents: z.number().int(),
+    totalCreditDelta: z.number().int(),
+    breakdown: z.array(
+      z.object({
+        key: governedActionBillingBreakdownKeySchema,
+        label: z.string(),
+        costCents: z.number().int(),
+        creditDelta: z.number().int(),
+      }),
+    ),
+  }),
+  hotspots: z.object({
+    mostExpensiveActions: z.array(
+      z.object({
+        id: z.string(),
+        actionKind: governedActionKindSchema,
+        summary: z.string(),
+        totalCostCents: z.number().int(),
+        customerLabel: z.string(),
+        occurredAt: z.string().datetime(),
+      }),
+    ),
+    mostFrequentlyBlockedActions: z.array(
+      z.object({
+        key: governedActionKindSchema,
+        count: z.number().int().nonnegative(),
+      }),
+    ),
+    mostCommonOwnerOnlyActions: z.array(
+      z.object({
+        key: governedActionKindSchema,
+        count: z.number().int().nonnegative(),
+      }),
+    ),
+    staleApprovalsWithLinks: z.array(
+      z.object({
+        id: z.string(),
+        summary: z.string(),
+        customerLabel: z.string(),
+        hasBillingLink: z.boolean(),
+        hasResourceLink: z.boolean(),
+        workflowStatus: z.string().optional(),
+      }),
+    ),
+  }),
+  hygiene: z.object({
+    missingCustomerContextCount: z.number().int().nonnegative(),
+    missingApproverAttributionCount: z.number().int().nonnegative(),
+    missingBillingLinkCount: z.number().int().nonnegative(),
+    missingResourceLinkCount: z.number().int().nonnegative(),
+    items: z.array(
+      z.object({
+        key: z.string(),
+        label: z.string(),
+        detail: z.string(),
+        count: z.number().int().nonnegative(),
+      }),
+    ),
+  }),
+  recentActions: z.array(governedActionRecordSchema),
+});
+
 export const deliverableDownloadResponseSchema = z.object({
   fileName: z.string(),
   mimeType: z.string(),
@@ -995,6 +1209,10 @@ export type DeliverableVisibility = z.infer<typeof deliverableVisibilitySchema>;
 export type DeliverableSourceKind = z.infer<typeof deliverableSourceKindSchema>;
 export type DeliverablePackagingPresetKey = z.infer<typeof deliverablePackagingPresetKeySchema>;
 export type ResourceGovernanceLayer = z.infer<typeof resourceGovernanceLayerSchema>;
+export type GovernedActionKind = z.infer<typeof governedActionKindSchema>;
+export type GovernedActionOutcome = z.infer<typeof governedActionOutcomeSchema>;
+export type GovernedActionActorKind = z.infer<typeof governedActionActorKindSchema>;
+export type GovernedActionResourceKind = z.infer<typeof governedActionResourceKindSchema>;
 export type ComputeRequestedBy = z.infer<typeof computeRequestedBySchema>;
 export type ComputeRunnerType = z.infer<typeof computeRunnerTypeSchema>;
 export type ComputeNetworkMode = z.infer<typeof computeNetworkModeSchema>;
@@ -1055,6 +1273,9 @@ export type RepresentativeDeliverableInsightsSnapshot = z.infer<
 >;
 export type RepresentativeResourceGovernanceSnapshot = z.infer<
   typeof representativeResourceGovernanceSnapshotSchema
+>;
+export type RepresentativeGovernedActionSnapshot = z.infer<
+  typeof representativeGovernedActionSnapshotSchema
 >;
 export type DeliverableDownloadResponse = z.infer<typeof deliverableDownloadResponseSchema>;
 export type ExecuteToolResponse = z.infer<typeof executeToolResponseSchema>;

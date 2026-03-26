@@ -39,6 +39,7 @@ This repository starts with the narrowest useful wedge:
 - An OpenAI Responses-backed answer lane with deterministic fallback when model credentials are missing or calls fail
 - A Telegram `/compute` lane that can create sandboxed sessions, run `exec / read / write / process / browser` requests, and surface approval outcomes back to chat
 - Org/customer governance that now spans compute policy, artifacts, deliverables, and package delivery visibility inside the owner dashboard
+- A governed-action control plane that now unifies approval, artifact, deliverable, and billing consequences into one owner-facing dashboard view
 - An engine-aware workflow runner that processes approval expiry and owner follow-up as the first durable workflow slice
 - Three distinct Next.js surfaces: a marketing site, a public representative app, and an owner dashboard
 - Telegram Stars invoice handling that writes back into conversations, wallet state, and owner inbox
@@ -57,6 +58,8 @@ The core product decision is that the representative is its own public runtime, 
 - org/customer governance can narrow control-plane behavior, but it never widens public-user access past owner-defined and Delegate-managed boundaries
 
 This repo encodes that boundary in both docs and code through the `Action Gate` policy layer.
+
+The dashboard now also surfaces that boundary as a governed-action console, so owners can inspect one shared timeline of policy decisions, approvals, resource changes, and billing effects instead of piecing them together across separate panels.
 
 ## Workspace layout
 
