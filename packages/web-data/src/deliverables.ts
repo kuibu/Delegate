@@ -1,18 +1,29 @@
+import { createHash } from "node:crypto";
+
 import JSZip from "jszip";
 import { Prisma } from "@prisma/client";
 import {
+  listDeliverablePackagingPresetsResponseSchema,
   deliverableDownloadResponseSchema,
   listDeliverablesResponseSchema,
   maxDeliverableBundleItems,
+  representativeDeliverableInsightsSnapshotSchema,
   updateDeliverableRequestSchema,
   upsertDeliverableRequestSchema,
   type DeliverableDownloadResponse,
+  type ListDeliverablePackagingPresetsResponse,
   type ListDeliverablesResponse,
+  type RepresentativeDeliverableInsightsSnapshot,
   type UpdateDeliverableRequest,
   type UpsertDeliverableRequest,
 } from "@delegate/compute-protocol";
 
-import { readArtifactObject } from "./artifact-store";
+import { readArtifactObject, writeArtifactObject } from "./artifact-store";
+import {
+  buildDeliverablePackagingPresets,
+  buildRepresentativeDeliverableInsights,
+  computeDeliverablePackageCacheKey,
+} from "./deliverable-insights";
 import { prisma } from "./prisma";
 
 const maxDeliverableBundleBytes = 25 * 1024 * 1024;
@@ -103,10 +114,154 @@ export async function getRepresentativeDeliverables(
       sourceKind: deliverable.sourceKind.toLowerCase(),
       externalUrl: deliverable.externalUrl,
       bundleItemArtifactIds: deliverable.bundleItemArtifactIds,
+      downloadCount: deliverable.downloadCount,
+      lastDownloadedAt: deliverable.lastDownloadedAt?.toISOString() ?? null,
+      packageBuiltAt: deliverable.packageBuiltAt?.toISOString() ?? null,
+      packageSizeBytes: deliverable.packageSizeBytes ?? null,
+      hasCachedPackage: Boolean(deliverable.packageObjectKey && deliverable.packageBuiltAt),
       createdBy: deliverable.createdBy,
       createdAt: deliverable.createdAt.toISOString(),
       updatedAt: deliverable.updatedAt.toISOString(),
     })),
+  });
+}
+
+export async function getRepresentativeDeliverableInsights(
+  representativeSlug: string,
+): Promise<RepresentativeDeliverableInsightsSnapshot | null> {
+  const representative = await prisma.representative.findUnique({
+    where: { slug: representativeSlug },
+    select: {
+      id: true,
+      slug: true,
+      displayName: true,
+    },
+  });
+
+  if (!representative) {
+    return null;
+  }
+
+  const [deliverables, artifacts] = await Promise.all([
+    prisma.deliverable.findMany({
+      where: {
+        representativeId: representative.id,
+      },
+      orderBy: [{ createdAt: "desc" }],
+    }),
+    prisma.artifact.findMany({
+      where: {
+        representativeId: representative.id,
+        isPinned: true,
+      },
+      select: {
+        id: true,
+        kind: true,
+        isPinned: true,
+        sizeBytes: true,
+        createdAt: true,
+      },
+    }),
+  ]);
+
+  return representativeDeliverableInsightsSnapshotSchema.parse(
+    buildRepresentativeDeliverableInsights({
+      representative: {
+        slug: representative.slug,
+        displayName: representative.displayName,
+      },
+      deliverables: deliverables.map((deliverable) => ({
+        id: deliverable.id,
+        title: deliverable.title,
+        summary: deliverable.summary,
+        kind: deliverable.kind.toLowerCase() as
+          | "deck"
+          | "case_study"
+          | "download"
+          | "generated_document"
+          | "package",
+        visibility: deliverable.visibility.toLowerCase() as "owner_only" | "public_material",
+        sourceKind: deliverable.sourceKind.toLowerCase() as "artifact" | "external_link" | "bundle",
+        artifactId: deliverable.artifactId,
+        bundleItemArtifactIds: deliverable.bundleItemArtifactIds,
+        downloadCount: deliverable.downloadCount,
+        lastDownloadedAt: deliverable.lastDownloadedAt?.toISOString() ?? null,
+        updatedAt: deliverable.updatedAt.toISOString(),
+        packageBuiltAt: deliverable.packageBuiltAt?.toISOString() ?? null,
+        packageSizeBytes: deliverable.packageSizeBytes,
+        packageCacheKey: deliverable.packageCacheKey,
+      })),
+      artifacts: artifacts.map((artifact) => ({
+        id: artifact.id,
+        kind: artifact.kind.toLowerCase() as
+          | "stdout"
+          | "stderr"
+          | "file"
+          | "archive"
+          | "screenshot"
+          | "json"
+          | "trace",
+        isPinned: artifact.isPinned,
+        sizeBytes: artifact.sizeBytes,
+        createdAt: artifact.createdAt.toISOString(),
+      })),
+    }),
+  );
+}
+
+export async function getRepresentativeDeliverablePackagingPresets(
+  representativeSlug: string,
+): Promise<ListDeliverablePackagingPresetsResponse | null> {
+  const representative = await prisma.representative.findUnique({
+    where: { slug: representativeSlug },
+    select: {
+      id: true,
+      slug: true,
+      displayName: true,
+    },
+  });
+
+  if (!representative) {
+    return null;
+  }
+
+  const artifacts = await prisma.artifact.findMany({
+    where: {
+      representativeId: representative.id,
+      isPinned: true,
+    },
+    select: {
+      id: true,
+      kind: true,
+      isPinned: true,
+      sizeBytes: true,
+      createdAt: true,
+    },
+    orderBy: [{ createdAt: "desc" }],
+  });
+
+  return listDeliverablePackagingPresetsResponseSchema.parse({
+    representative: {
+      slug: representative.slug,
+      displayName: representative.displayName,
+    },
+    presets: buildDeliverablePackagingPresets({
+      representativeDisplayName: representative.displayName,
+      artifacts: artifacts.map((artifact) => ({
+        id: artifact.id,
+        kind: artifact.kind.toLowerCase() as
+          | "stdout"
+          | "stderr"
+          | "file"
+          | "archive"
+          | "screenshot"
+          | "json"
+          | "trace",
+        isPinned: artifact.isPinned,
+        sizeBytes: artifact.sizeBytes,
+        createdAt: artifact.createdAt.toISOString(),
+      })),
+    }),
   });
 }
 
@@ -158,6 +313,16 @@ export async function upsertRepresentativeDeliverable(
           externalUrl: nextShape.sourceKind === "external_link" ? nextShape.externalUrl ?? null : null,
           bundleItemArtifactIds:
             nextShape.sourceKind === "bundle" ? nextShape.bundleItemArtifactIds : [],
+          ...(nextShape.sourceKind === "bundle"
+            ? {}
+            : {
+                packageObjectKey: null,
+                packageMimeType: null,
+                packageSizeBytes: null,
+                packageSha256: null,
+                packageBuiltAt: null,
+                packageCacheKey: null,
+              }),
           createdBy: nextShape.createdBy ?? existing.createdBy,
         },
       })
@@ -176,6 +341,16 @@ export async function upsertRepresentativeDeliverable(
           createdBy: nextShape.createdBy ?? "owner-dashboard",
         },
       });
+
+  if (nextShape.sourceKind === "bundle") {
+    await ensurePersistedDeliverablePackage({
+      representativeSlug: representative.slug,
+      representativeId: representative.id,
+      deliverableId: persisted.id,
+      deliverableTitle: nextShape.title,
+      bundleItemArtifactIds: nextShape.bundleItemArtifactIds,
+    });
+  }
 
   const result = await prisma.deliverable.findUnique({
     where: { id: persisted.id },
@@ -236,7 +411,10 @@ export async function getRepresentativeDeliverableDownload(
 
     const { buffer } = await readArtifactObject(artifact.objectKey);
     if (options?.recordDownload !== false) {
-      await recordArtifactDownload(artifact, buffer.byteLength);
+      await Promise.all([
+        recordArtifactDownload(artifact, buffer.byteLength),
+        recordDeliverableDownload(deliverable.id),
+      ]);
     }
 
     return {
@@ -252,53 +430,23 @@ export async function getRepresentativeDeliverableDownload(
     };
   }
 
-  const bundleArtifacts = await loadBundleArtifacts(
-    deliverable.representativeId,
-    deliverable.bundleItemArtifactIds,
-  );
-  if (bundleArtifacts.length > maxDeliverableBundleItems) {
-    throw new Error(
-      `Bundle deliverables may include at most ${maxDeliverableBundleItems} artifacts.`,
-    );
-  }
-  const totalSourceBytes = bundleArtifacts.reduce((sum, artifact) => sum + artifact.sizeBytes, 0);
-  if (totalSourceBytes > maxDeliverableBundleBytes) {
-    throw new Error(
-      `Bundle deliverables may include at most ${formatBytes(maxDeliverableBundleBytes)} of source artifacts.`,
-    );
-  }
-  const zip = new JSZip();
-  const usedFileNames = new Set<string>();
-
-  for (const artifact of bundleArtifacts) {
-    const { buffer } = await readArtifactObject(artifact.objectKey);
-    const fileName = ensureUniqueFileName(
-      buildArtifactFileName(artifact),
-      usedFileNames,
-    );
-    zip.file(fileName, buffer);
-  }
-
-  const buffer = await zip.generateAsync({
-    type: "nodebuffer",
-    compression: "DEFLATE",
-    compressionOptions: {
-      level: 6,
-    },
-  });
+  const { buffer } = await readPersistedDeliverablePackage(deliverable);
 
   if (options?.recordDownload !== false) {
-    await prisma.ledgerEntry.create({
-      data: {
-        representativeId: deliverable.representativeId,
-        kind: "ARTIFACT_EGRESS",
-        quantity: buffer.byteLength,
-        unit: "byte",
-        costCents: Math.max(1, Math.ceil(buffer.byteLength / 65536)),
-        creditDelta: 0,
-        notes: `deliverable_bundle_download:${deliverable.id}`,
-      },
-    });
+    await Promise.all([
+      recordDeliverableDownload(deliverable.id),
+      prisma.ledgerEntry.create({
+        data: {
+          representativeId: deliverable.representativeId,
+          kind: "ARTIFACT_EGRESS",
+          quantity: buffer.byteLength,
+          unit: "byte",
+          costCents: Math.max(1, Math.ceil(buffer.byteLength / 65536)),
+          creditDelta: 0,
+          notes: `deliverable_bundle_download:${deliverable.id}`,
+        },
+      }),
+    ]);
   }
 
   return {
@@ -496,6 +644,11 @@ function serializeDeliverable(deliverable: DeliverableRecord) {
     sourceKind: deliverable.sourceKind.toLowerCase() as "artifact" | "external_link" | "bundle",
     externalUrl: deliverable.externalUrl,
     bundleItemArtifactIds: deliverable.bundleItemArtifactIds,
+    downloadCount: deliverable.downloadCount,
+    lastDownloadedAt: deliverable.lastDownloadedAt?.toISOString() ?? null,
+    packageBuiltAt: deliverable.packageBuiltAt?.toISOString() ?? null,
+    packageSizeBytes: deliverable.packageSizeBytes ?? null,
+    hasCachedPackage: Boolean(deliverable.packageObjectKey && deliverable.packageBuiltAt),
     createdBy: deliverable.createdBy,
     createdAt: deliverable.createdAt.toISOString(),
     updatedAt: deliverable.updatedAt.toISOString(),
@@ -580,6 +733,163 @@ async function recordArtifactDownload(
   ]);
 }
 
+async function recordDeliverableDownload(deliverableId: string) {
+  await prisma.deliverable.update({
+    where: { id: deliverableId },
+    data: {
+      downloadCount: {
+        increment: 1,
+      },
+      lastDownloadedAt: new Date(),
+    },
+  });
+}
+
+async function ensurePersistedDeliverablePackage(input: {
+  representativeSlug: string;
+  representativeId: string;
+  deliverableId: string;
+  deliverableTitle: string;
+  bundleItemArtifactIds: string[];
+}) {
+  const bundleArtifacts = await loadBundleArtifacts(input.representativeId, input.bundleItemArtifactIds);
+  const packagePayload = await buildBundlePackagePayload({
+    representativeSlug: input.representativeSlug,
+    deliverableId: input.deliverableId,
+    deliverableTitle: input.deliverableTitle,
+    bundleArtifacts,
+  });
+
+  await writeArtifactObject({
+    objectKey: packagePayload.objectKey,
+    body: packagePayload.buffer,
+    contentType: "application/zip",
+  });
+
+  await prisma.deliverable.update({
+    where: { id: input.deliverableId },
+    data: {
+      packageObjectKey: packagePayload.objectKey,
+      packageMimeType: "application/zip",
+      packageSizeBytes: packagePayload.buffer.byteLength,
+      packageSha256: packagePayload.sha256,
+      packageBuiltAt: new Date(),
+      packageCacheKey: packagePayload.cacheKey,
+    },
+  });
+}
+
+async function readPersistedDeliverablePackage(deliverable: DeliverableRecord) {
+  if (deliverable.packageObjectKey) {
+    return readArtifactObject(deliverable.packageObjectKey);
+  }
+
+  const bundleArtifacts = await loadBundleArtifacts(
+    deliverable.representativeId,
+    deliverable.bundleItemArtifactIds,
+  );
+  const packagePayload = await buildBundlePackagePayload({
+    representativeSlug: deliverable.representative.slug,
+    deliverableId: deliverable.id,
+    deliverableTitle: deliverable.title,
+    bundleArtifacts,
+  });
+
+  await writeArtifactObject({
+    objectKey: packagePayload.objectKey,
+    body: packagePayload.buffer,
+    contentType: "application/zip",
+  });
+
+  await prisma.deliverable.update({
+    where: { id: deliverable.id },
+    data: {
+      packageObjectKey: packagePayload.objectKey,
+      packageMimeType: "application/zip",
+      packageSizeBytes: packagePayload.buffer.byteLength,
+      packageSha256: packagePayload.sha256,
+      packageBuiltAt: new Date(),
+      packageCacheKey: packagePayload.cacheKey,
+    },
+  });
+
+  return {
+    buffer: packagePayload.buffer,
+    contentType: "application/zip",
+  };
+}
+
+async function buildBundlePackagePayload(input: {
+  representativeSlug: string;
+  deliverableId: string;
+  deliverableTitle: string;
+  bundleArtifacts: ArtifactRecord[];
+}) {
+  if (input.bundleArtifacts.length > maxDeliverableBundleItems) {
+    throw new Error(
+      `Bundle deliverables may include at most ${maxDeliverableBundleItems} artifacts.`,
+    );
+  }
+
+  const totalSourceBytes = input.bundleArtifacts.reduce((sum, artifact) => sum + artifact.sizeBytes, 0);
+  if (totalSourceBytes > maxDeliverableBundleBytes) {
+    throw new Error(
+      `Bundle deliverables may include at most ${formatBytes(maxDeliverableBundleBytes)} of source artifacts.`,
+    );
+  }
+
+  const zip = new JSZip();
+  const usedFileNames = new Set<string>();
+  const artifactFingerprints: Array<{
+    id: string;
+    sha256: string;
+    sizeBytes: number;
+    fileName: string;
+  }> = [];
+
+  for (const artifact of input.bundleArtifacts) {
+    const { buffer } = await readArtifactObject(artifact.objectKey);
+    const fileName = ensureUniqueFileName(buildArtifactFileName(artifact), usedFileNames);
+    artifactFingerprints.push({
+      id: artifact.id,
+      sha256: artifact.sha256,
+      sizeBytes: artifact.sizeBytes,
+      fileName,
+    });
+    zip.file(fileName, buffer);
+  }
+
+  const buffer = await zip.generateAsync({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+    compressionOptions: {
+      level: 6,
+    },
+  });
+  const sha256 = createHash("sha256").update(buffer).digest("hex");
+  const cacheKey = createHash("sha256")
+    .update(
+      computeDeliverablePackageCacheKey({
+        representativeSlug: input.representativeSlug,
+        deliverableId: input.deliverableId,
+        artifactIds: input.bundleArtifacts.map((artifact) => artifact.id),
+        artifactFingerprints,
+      }),
+    )
+    .digest("hex");
+
+  return {
+    buffer,
+    sha256,
+    cacheKey,
+    objectKey: buildDeliverablePackageObjectKey(
+      input.representativeSlug,
+      input.deliverableId,
+      cacheKey,
+    ),
+  };
+}
+
 function ensureUniqueFileName(candidate: string, used: Set<string>) {
   if (!used.has(candidate)) {
     used.add(candidate);
@@ -620,6 +930,14 @@ function buildArtifactFileName(artifact: ArtifactRecord) {
   const extension = extensionFromMimeType(artifact.mimeType);
   const base = `${artifact.kind.toLowerCase()}-${artifact.id}`;
   return extension ? `${base}.${extension}` : base;
+}
+
+function buildDeliverablePackageObjectKey(
+  representativeSlug: string,
+  deliverableId: string,
+  cacheKey: string,
+) {
+  return `deliverables/${representativeSlug}/${deliverableId}/${cacheKey}.zip`;
 }
 
 function extensionFromMimeType(mimeType: string) {

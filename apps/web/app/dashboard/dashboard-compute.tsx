@@ -425,9 +425,92 @@ type DeliverablesSnapshot = {
     sourceKind: "artifact" | "external_link" | "bundle";
     externalUrl?: string | null;
     bundleItemArtifactIds: string[];
+    downloadCount: number;
+    lastDownloadedAt?: string | null;
+    packageBuiltAt?: string | null;
+    packageSizeBytes?: number | null;
+    hasCachedPackage: boolean;
     createdBy?: string | null;
     createdAt: string;
     updatedAt: string;
+  }>;
+};
+
+type DeliverableInsightsSnapshot = {
+  representative: {
+    slug: string;
+    displayName: string;
+  };
+  summary: {
+    totalDeliverables: number;
+    publicMaterials: number;
+    totalDownloads: number;
+    bundlePackageDownloads: number;
+    pinnedArtifactsReused: number;
+  };
+  byKind: Array<{
+    key: DeliverableFormState["kind"];
+    count: number;
+    totalDownloads: number;
+  }>;
+  bySourceKind: Array<{
+    key: DeliverableFormState["sourceKind"];
+    count: number;
+    totalDownloads: number;
+  }>;
+  byVisibility: Array<{
+    key: DeliverableFormState["visibility"];
+    count: number;
+    totalDownloads: number;
+  }>;
+  topDeliverables: {
+    mostDownloaded: Array<{
+      id: string;
+      title: string;
+      downloadCount: number;
+      visibility: DeliverableFormState["visibility"];
+    }>;
+    mostRecentlyDownloaded: Array<{
+      id: string;
+      title: string;
+      lastDownloadedAt: string;
+      downloadCount: number;
+    }>;
+    mostRecentlyUpdated: Array<{
+      id: string;
+      title: string;
+      updatedAt: string;
+    }>;
+  };
+  artifactReuseHotspots: Array<{
+    artifactId: string;
+    artifactKind: string;
+    reuseCount: number;
+    isPinned: boolean;
+  }>;
+  packageHealth: {
+    cachedPackageCount: number;
+    stalePackageCount: number;
+    oversizedBundleAttempts: number;
+  };
+};
+
+type DeliverablePackagingPresetsSnapshot = {
+  representative: {
+    slug: string;
+    displayName: string;
+  };
+  presets: Array<{
+    key: "deck" | "package" | "case_study" | "download_pack" | "generated_document";
+    kind: DeliverableFormState["kind"];
+    visibility: DeliverableFormState["visibility"];
+    sourceKind: DeliverableFormState["sourceKind"];
+    title: string;
+    summary: string;
+    recommendedPublicMaterial: boolean;
+    suggestedArtifactKinds: string[];
+    bundleItemArtifactIds: string[];
+    artifactId?: string | null;
   }>;
 };
 
@@ -493,6 +576,12 @@ export function DashboardCompute({
   });
   const [artifacts, setArtifacts] = useState<ComputeArtifactsSnapshot["artifacts"]>([]);
   const [deliverables, setDeliverables] = useState<DeliverablesSnapshot["deliverables"]>([]);
+  const [deliverableInsights, setDeliverableInsights] = useState<DeliverableInsightsSnapshot | null>(
+    null,
+  );
+  const [deliverablePresets, setDeliverablePresets] = useState<
+    DeliverablePackagingPresetsSnapshot["presets"]
+  >([]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [artifactDetail, setArtifactDetail] = useState<ComputeArtifactDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -523,6 +612,8 @@ export function DashboardCompute({
       approvalFilters,
       setArtifacts,
       setDeliverables,
+      setDeliverableInsights,
+      setDeliverablePresets,
       setError,
     );
   }, [representativeSlug]);
@@ -681,6 +772,40 @@ export function DashboardCompute({
       ) as Record<DeliverableFormState["sourceKind"], string>,
     [t],
   );
+  const deliverablePresetLabels = useMemo(
+    () => t.packagingPresets.labels,
+    [t],
+  );
+  const deliverableInsightCards = deliverableInsights
+    ? [
+        {
+          label: t.deliverableInsightsCards.total,
+          value: `${deliverableInsights.summary.totalDeliverables}`,
+          detail: t.deliverableInsightsCards.totalDetail,
+        },
+        {
+          label: t.deliverableInsightsCards.publicMaterials,
+          value: `${deliverableInsights.summary.publicMaterials}`,
+          detail: t.deliverableInsightsCards.publicMaterialsDetail,
+          tone: deliverableInsights.summary.publicMaterials > 0 ? ("safe" as const) : ("default" as const),
+        },
+        {
+          label: t.deliverableInsightsCards.downloads,
+          value: `${deliverableInsights.summary.totalDownloads}`,
+          detail: t.deliverableInsightsCards.downloadsDetail,
+        },
+        {
+          label: t.deliverableInsightsCards.bundleDownloads,
+          value: `${deliverableInsights.summary.bundlePackageDownloads}`,
+          detail: t.deliverableInsightsCards.bundleDownloadsDetail,
+        },
+        {
+          label: t.deliverableInsightsCards.reusedPinned,
+          value: `${deliverableInsights.summary.pinnedArtifactsReused}`,
+          detail: t.deliverableInsightsCards.reusedPinnedDetail,
+        },
+      ]
+    : [];
   const approvalInsightCards = approvalInsights
     ? [
         {
@@ -843,6 +968,8 @@ export function DashboardCompute({
           approvalFilters,
           setArtifacts,
           setDeliverables,
+          setDeliverableInsights,
+          setDeliverablePresets,
           setError,
         );
         setMessage(
@@ -911,6 +1038,8 @@ export function DashboardCompute({
           approvalFilters,
           setArtifacts,
           setDeliverables,
+          setDeliverableInsights,
+          setDeliverablePresets,
           setError,
         );
         if (payload.nativeComputerUse?.traceArtifactId) {
@@ -983,6 +1112,8 @@ export function DashboardCompute({
           approvalFilters,
           setArtifacts,
           setDeliverables,
+          setDeliverableInsights,
+          setDeliverablePresets,
           setError,
         );
         setMcpForm(createEmptyMcpBindingForm());
@@ -1029,6 +1160,8 @@ export function DashboardCompute({
           approvalFilters,
           setArtifacts,
           setDeliverables,
+          setDeliverableInsights,
+          setDeliverablePresets,
           setError,
         );
         setMessage(t.messages.policyOverlaysSaved);
@@ -1072,6 +1205,8 @@ export function DashboardCompute({
           approvalFilters,
           setArtifacts,
           setDeliverables,
+          setDeliverableInsights,
+          setDeliverablePresets,
           setError,
         );
         setMessage(t.messages.governanceSaved);
@@ -1146,6 +1281,8 @@ export function DashboardCompute({
           approvalFilters,
           setArtifacts,
           setDeliverables,
+          setDeliverableInsights,
+          setDeliverablePresets,
           setError,
         );
         setMessage(pinned ? t.messages.artifactPinned : t.messages.artifactUnpinned);
@@ -1248,6 +1385,8 @@ export function DashboardCompute({
           approvalFilters,
           setArtifacts,
           setDeliverables,
+          setDeliverableInsights,
+          setDeliverablePresets,
           setError,
         );
         setDeliverableForm(createEmptyDeliverableForm());
@@ -1301,6 +1440,24 @@ export function DashboardCompute({
       setSelectedArtifactId(deliverable.artifactId);
     }
     setMessage(null);
+    setError(null);
+  }
+
+  function applyDeliverablePreset(
+    preset: DeliverablePackagingPresetsSnapshot["presets"][number],
+  ) {
+    setDeliverableForm({
+      deliverableId: null,
+      title: preset.title,
+      summary: preset.summary,
+      kind: preset.kind,
+      visibility: preset.visibility,
+      sourceKind: preset.sourceKind,
+      externalUrl: "",
+      bundleItemArtifactIds: preset.bundleItemArtifactIds,
+    });
+    setSelectedArtifactId(preset.artifactId ?? null);
+    setMessage(t.messages.deliverablePresetApplied(deliverablePresetLabels[preset.key]));
     setError(null);
   }
 
@@ -3220,6 +3377,160 @@ export function DashboardCompute({
         </DashboardSurface>
 
         <DashboardSurface
+          eyebrow={t.deliverableInsightsEyebrow}
+          meta={
+            <span className="chip">
+              {deliverableInsights
+                ? t.deliverableInsightsChip(deliverableInsights.summary.totalDownloads)
+                : t.loadingInsights}
+            </span>
+          }
+          title={t.deliverableInsightsTitle}
+          tone="accent"
+        >
+          {deliverableInsights ? (
+            <>
+              <div className="dashboard-highlight-grid">
+                <article className="dashboard-highlight-card dashboard-highlight-card-primary">
+                  <p className="panel-title">{t.deliverableInsightsHeroEyebrow}</p>
+                  <h3>{t.deliverableInsightsHeroTitle}</h3>
+                  <p>{t.deliverableInsightsHeroCopy}</p>
+                  <div className="chip-row">
+                    <span className="chip">{t.deliverableInsightsHeroDeliverables(deliverables.length)}</span>
+                    <span className="chip">
+                      {t.deliverableInsightsHeroPackageHealth(
+                        deliverableInsights.packageHealth.cachedPackageCount,
+                        deliverableInsights.packageHealth.stalePackageCount,
+                      )}
+                    </span>
+                  </div>
+                </article>
+
+                <DashboardSignalStrip cards={deliverableInsightCards} />
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.deliverableTables.kindEyebrow}</p>
+                      <h3>{t.deliverableTables.kindTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {deliverableInsights.byKind.map((row) => (
+                      <div className="skill-row" key={row.key}>
+                        <div>
+                          <strong>{deliverableKindLabels[row.key]}</strong>
+                          <p>{t.deliverableTables.kindDetail(row.count)}</p>
+                        </div>
+                        <div className="footer-note">{t.deliverableTables.downloadCount(row.totalDownloads)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.deliverableTables.sourceEyebrow}</p>
+                      <h3>{t.deliverableTables.sourceTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {deliverableInsights.bySourceKind.map((row) => (
+                      <div className="skill-row" key={row.key}>
+                        <div>
+                          <strong>{deliverableSourceLabels[row.key]}</strong>
+                          <p>{t.deliverableTables.kindDetail(row.count)}</p>
+                        </div>
+                        <div className="footer-note">{t.deliverableTables.downloadCount(row.totalDownloads)}</div>
+                      </div>
+                    ))}
+                    <div className="skill-row">
+                      <div>
+                        <strong>{t.deliverableTables.visibilityTitle}</strong>
+                        <p>{t.deliverableTables.visibilityCopy}</p>
+                      </div>
+                    </div>
+                    {deliverableInsights.byVisibility.map((row) => (
+                      <div className="skill-row" key={row.key}>
+                        <div>
+                          <strong>
+                            {row.key === "public_material" ? t.publicMaterialChip : t.ownerOnlyChip}
+                          </strong>
+                          <p>{t.deliverableTables.kindDetail(row.count)}</p>
+                        </div>
+                        <div className="footer-note">{t.deliverableTables.downloadCount(row.totalDownloads)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.deliverableTables.topEyebrow}</p>
+                      <h3>{t.deliverableTables.topTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {deliverableInsights.topDeliverables.mostDownloaded.length ? (
+                      deliverableInsights.topDeliverables.mostDownloaded.map((item) => (
+                        <div className="skill-row" key={item.id}>
+                          <div>
+                            <strong>{item.title}</strong>
+                            <p>
+                              {item.visibility === "public_material"
+                                ? t.publicMaterialChip
+                                : t.ownerOnlyChip}
+                            </p>
+                          </div>
+                          <div className="footer-note">{t.deliverableTables.downloadCount(item.downloadCount)}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{t.deliverableTables.noTopDeliverables}</p>
+                    )}
+                  </div>
+                </article>
+
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.deliverableTables.reuseEyebrow}</p>
+                      <h3>{t.deliverableTables.reuseTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {deliverableInsights.artifactReuseHotspots.length ? (
+                      deliverableInsights.artifactReuseHotspots.map((item) => (
+                        <div className="skill-row" key={item.artifactId}>
+                          <div>
+                            <strong>{item.artifactKind}</strong>
+                            <p>{item.artifactId}</p>
+                          </div>
+                          <div className="chip-row">
+                            <span className="chip">{t.deliverableTables.reuseCount(item.reuseCount)}</span>
+                            {item.isPinned ? <span className="chip chip-safe">{t.pinArtifact}</span> : null}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{t.deliverableTables.noReuseHotspots}</p>
+                    )}
+                  </div>
+                </article>
+              </div>
+            </>
+          ) : (
+            <p className="muted">{t.loadingInsights}</p>
+          )}
+        </DashboardSurface>
+
+        <DashboardSurface
           eyebrow={t.deliverablesEyebrow}
           meta={<span className="chip">{t.deliverablesChip(deliverables.length)}</span>}
           title={t.deliverablesTitle}
@@ -3234,6 +3545,7 @@ export function DashboardCompute({
                     <div className="chip-row">
                       <span className="chip">{deliverableKindLabels[deliverable.kind]}</span>
                       <span className="chip">{deliverableSourceLabels[deliverable.sourceKind]}</span>
+                      <span className="chip">{t.downloadCountChip(deliverable.downloadCount)}</span>
                       <span
                         className={
                           deliverable.visibility === "public_material"
@@ -3246,6 +3558,20 @@ export function DashboardCompute({
                           : t.ownerOnlyChip}
                       </span>
                       <span className="chip">{formatTimestamp(deliverable.updatedAt, locale)}</span>
+                      {deliverable.lastDownloadedAt ? (
+                        <span className="chip">
+                          {t.lastDownloadedChip(formatTimestamp(deliverable.lastDownloadedAt, locale))}
+                        </span>
+                      ) : null}
+                      {deliverable.hasCachedPackage ? (
+                        <span className="chip chip-safe">
+                          {t.cachedPackageChip(
+                            deliverable.packageSizeBytes ? formatBytes(deliverable.packageSizeBytes) : null,
+                          )}
+                        </span>
+                      ) : deliverable.sourceKind === "bundle" ? (
+                        <span className="chip">{t.pendingPackageChip}</span>
+                      ) : null}
                       {deliverable.bundleItemArtifactIds.length ? (
                         <span className="chip">
                           {t.bundleItemCountChip(deliverable.bundleItemArtifactIds.length)}
@@ -3297,6 +3623,22 @@ export function DashboardCompute({
           title={t.deliverableComposerTitle}
         >
           <div className="row-list">
+            <div className="row-list">
+              <p className="footer-note">{t.packagingPresets.copy}</p>
+              <div className="button-row">
+                {deliverablePresets.map((preset) => (
+                  <button
+                    className="button-secondary"
+                    key={preset.key}
+                    onClick={() => applyDeliverablePreset(preset)}
+                    type="button"
+                  >
+                    {deliverablePresetLabels[preset.key]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <label className="field-label">
               <span>{t.deliverableTitleLabel}</span>
               <input
@@ -3520,11 +3862,21 @@ async function refreshCompute(
   approvalFilters: ApprovalFilterState,
   setArtifacts: (value: ComputeArtifactsSnapshot["artifacts"]) => void,
   setDeliverables: (value: DeliverablesSnapshot["deliverables"]) => void,
+  setDeliverableInsights: (value: DeliverableInsightsSnapshot | null) => void,
+  setDeliverablePresets: (value: DeliverablePackagingPresetsSnapshot["presets"]) => void,
   setError: (value: string | null) => void,
 ) {
   try {
     setError(null);
-    const [snapshotResponse, approvalsResponse, insightsResponse, artifactsResponse, deliverablesResponse] =
+    const [
+      snapshotResponse,
+      approvalsResponse,
+      insightsResponse,
+      artifactsResponse,
+      deliverablesResponse,
+      deliverableInsightsResponse,
+      deliverablePresetsResponse,
+    ] =
       await Promise.all([
       fetch(`/api/dashboard/representatives/${representativeSlug}/compute`, { cache: "no-store" }),
       fetch(`/api/dashboard/representatives/${representativeSlug}/compute/approvals`, {
@@ -3537,6 +3889,12 @@ async function refreshCompute(
         cache: "no-store",
       }),
       fetch(`/api/dashboard/representatives/${representativeSlug}/deliverables`, {
+        cache: "no-store",
+      }),
+      fetch(`/api/dashboard/representatives/${representativeSlug}/deliverables/insights`, {
+        cache: "no-store",
+      }),
+      fetch(`/api/dashboard/representatives/${representativeSlug}/deliverables/presets`, {
         cache: "no-store",
       }),
     ]);
@@ -3561,17 +3919,31 @@ async function refreshCompute(
       throw new Error(await extractError(deliverablesResponse));
     }
 
+    if (!deliverableInsightsResponse.ok) {
+      throw new Error(await extractError(deliverableInsightsResponse));
+    }
+
+    if (!deliverablePresetsResponse.ok) {
+      throw new Error(await extractError(deliverablePresetsResponse));
+    }
+
     const snapshotPayload = (await snapshotResponse.json()) as ComputeSnapshot;
     const approvalsPayload = (await approvalsResponse.json()) as ComputeApprovalsSnapshot;
     const insightsPayload = (await insightsResponse.json()) as ComputeApprovalInsightsSnapshot;
     const artifactsPayload = (await artifactsResponse.json()) as ComputeArtifactsSnapshot;
     const deliverablesPayload = (await deliverablesResponse.json()) as DeliverablesSnapshot;
+    const deliverableInsightsPayload =
+      (await deliverableInsightsResponse.json()) as DeliverableInsightsSnapshot;
+    const deliverablePresetsPayload =
+      (await deliverablePresetsResponse.json()) as DeliverablePackagingPresetsSnapshot;
 
     setSnapshot(snapshotPayload);
     setApprovals(approvalsPayload.approvals);
     setApprovalInsights(insightsPayload);
     setArtifacts(artifactsPayload.artifacts);
     setDeliverables(deliverablesPayload.deliverables);
+    setDeliverableInsights(deliverableInsightsPayload);
+    setDeliverablePresets(deliverablePresetsPayload.presets);
   } catch (error) {
     setError(error instanceof Error ? error.message : "Failed to load compute control plane.");
   }
@@ -4005,6 +4377,55 @@ const copy = {
     deliverablesEyebrow: "Deliverable Lane",
     deliverablesTitle: "把 artifact、外部资料和打包下载整理成可投递交付件",
     deliverablesChip: (count: number) => `${count} deliverables`,
+    deliverableInsightsEyebrow: "Deliverable Insights",
+    deliverableInsightsTitle: "看清哪些交付件最常被下载、哪些 package 已经缓存好、哪些 artifact 最常复用",
+    deliverableInsightsChip: (downloads: number) => `${downloads} downloads tracked`,
+    deliverableInsightsHeroEyebrow: "Packaging Health",
+    deliverableInsightsHeroTitle: "把“能下载”升级成“可分析、可复用、可稳定交付”",
+    deliverableInsightsHeroCopy:
+      "这一层不是只看有没有 deliverable，而是看哪些材料最常被打开、哪些 bundle 已经预打包、哪些 artifact 正在反复复用。",
+    deliverableInsightsHeroDeliverables: (count: number) => `${count} deliverables in lane`,
+    deliverableInsightsHeroPackageHealth: (cached: number, stale: number) =>
+      `${cached} cached · ${stale} stale bundles`,
+    deliverableInsightsCards: {
+      total: "Total deliverables",
+      totalDetail: "已经整理成可分享条目的交付件总数。",
+      publicMaterials: "Public materials",
+      publicMaterialsDetail: "可以直接出现在公开代表页里的材料数。",
+      downloads: "Downloads",
+      downloadsDetail: "交付件级下载总量，不只是 artifact 下载。",
+      bundleDownloads: "Bundle/package downloads",
+      bundleDownloadsDetail: "走打包交付路径的下载量。",
+      reusedPinned: "Pinned artifacts reused",
+      reusedPinnedDetail: "被 deliverable 复用过的 pinned artifact 数。",
+    },
+    deliverableTables: {
+      kindEyebrow: "By Kind",
+      kindTitle: "哪些交付件类型最常被整理出来",
+      sourceEyebrow: "Source + Visibility",
+      sourceTitle: "来源结构和公开程度",
+      visibilityTitle: "Visibility split",
+      visibilityCopy: "对比 owner-only 和 public material 的使用差异。",
+      topEyebrow: "Top Deliverables",
+      topTitle: "最常被下载的交付件",
+      reuseEyebrow: "Artifact Reuse",
+      reuseTitle: "哪些 artifact 最常被打进交付件",
+      kindDetail: (count: number) => `${count} items`,
+      downloadCount: (count: number) => `${count} downloads`,
+      reuseCount: (count: number) => `reused ${count}x`,
+      noTopDeliverables: "还没有产生明显的下载热点。",
+      noReuseHotspots: "还没有明显的 artifact 复用热点。",
+    },
+    packagingPresets: {
+      copy: "用 preset 直接预填交付件类型、可见范围和推荐素材，减少重复配置。",
+      labels: {
+        deck: "介绍材料",
+        package: "交付包",
+        case_study: "案例包",
+        download_pack: "下载包",
+        generated_document: "生成文档",
+      },
+    },
     noDeliverables: "还没有整理好的交付件。",
     deliverableComposerEyebrow: "Deliverable Composer",
     deliverableComposerTitle: "从当前 artifact、pinned outputs 或外部链接生成交付件",
@@ -4049,6 +4470,9 @@ const copy = {
     bundleItemCountChip: (count: number) => `${count} items`,
     pinnedArtifactCountChip: (count: number) => `${count} pinned`,
     linkedArtifactLabel: (artifactId: string) => `关联 artifact · ${artifactId.slice(0, 10)}`,
+    cachedPackageChip: (size: string | null) => (size ? `cached package · ${size}` : "cached package"),
+    pendingPackageChip: "package pending",
+    lastDownloadedChip: (value: string) => `下载于 ${value}`,
     ledgerEyebrow: "Billing Ledger",
     ledgerTitle: "看清每次执行到底烧掉了多少 credits",
     ledgerChip: (count: number) => `${count} entries`,
@@ -4069,6 +4493,7 @@ const copy = {
       deliverableBundleSelectionRequired: "先明确选择要打包的 artifact。",
       deliverableBundleTooLarge: (limit: number) => `单个 bundle 最多只能包含 ${limit} 个 artifact。`,
       deliverableUrlRequired: "外部链接型交付件需要一个有效 URL。",
+      deliverablePresetApplied: (label: string) => `${label} preset 已应用到交付件表单。`,
       nativeMissingSession: "当前还没有可复用的 browser session，先跑一次受控 browser step。",
       nativeTaskRequired: "先填写这次 native browser 要完成的任务。",
       nativeExecuted: "Native computer-use loop 已完成，trace artifact 已写入对象存储。",
@@ -4367,6 +4792,55 @@ const copy = {
     deliverablesEyebrow: "Deliverable Lane",
     deliverablesTitle: "Package artifacts, public links, and downloads into reusable deliverables",
     deliverablesChip: (count: number) => `${count} deliverables`,
+    deliverableInsightsEyebrow: "Deliverable Insights",
+    deliverableInsightsTitle: "See what gets downloaded, what is already packaged, and which artifacts are reused the most",
+    deliverableInsightsChip: (downloads: number) => `${downloads} downloads tracked`,
+    deliverableInsightsHeroEyebrow: "Packaging Health",
+    deliverableInsightsHeroTitle: "Turn deliverables into a measurable, reusable delivery lane",
+    deliverableInsightsHeroCopy:
+      "This is where the owner sees which materials get opened, which bundles are already cached, and which artifacts keep getting repackaged.",
+    deliverableInsightsHeroDeliverables: (count: number) => `${count} deliverables in lane`,
+    deliverableInsightsHeroPackageHealth: (cached: number, stale: number) =>
+      `${cached} cached · ${stale} stale bundles`,
+    deliverableInsightsCards: {
+      total: "Total deliverables",
+      totalDetail: "All deliverables already shaped for sharing or reuse.",
+      publicMaterials: "Public materials",
+      publicMaterialsDetail: "Deliverables that can already appear on the public representative page.",
+      downloads: "Downloads",
+      downloadsDetail: "Deliverable-level downloads, not just raw artifact pulls.",
+      bundleDownloads: "Bundle/package downloads",
+      bundleDownloadsDetail: "Downloads flowing through the packaged delivery path.",
+      reusedPinned: "Pinned artifacts reused",
+      reusedPinnedDetail: "Pinned artifacts already reused across deliverables.",
+    },
+    deliverableTables: {
+      kindEyebrow: "By Kind",
+      kindTitle: "Which deliverable formats the owner is shaping most often",
+      sourceEyebrow: "Source + Visibility",
+      sourceTitle: "How deliverables are composed and exposed",
+      visibilityTitle: "Visibility split",
+      visibilityCopy: "Compare owner-only materials against public-facing ones.",
+      topEyebrow: "Top Deliverables",
+      topTitle: "The deliverables getting the most traction",
+      reuseEyebrow: "Artifact Reuse",
+      reuseTitle: "Artifacts most often pulled into packages and decks",
+      kindDetail: (count: number) => `${count} items`,
+      downloadCount: (count: number) => `${count} downloads`,
+      reuseCount: (count: number) => `reused ${count}x`,
+      noTopDeliverables: "No download hotspots yet.",
+      noReuseHotspots: "No reuse hotspots yet.",
+    },
+    packagingPresets: {
+      copy: "Use a preset to prefill kind, visibility, and recommended material selection before editing details.",
+      labels: {
+        deck: "Deck",
+        package: "Package",
+        case_study: "Case study",
+        download_pack: "Download pack",
+        generated_document: "Generated document",
+      },
+    },
     noDeliverables: "No deliverables yet.",
     deliverableComposerEyebrow: "Deliverable Composer",
     deliverableComposerTitle: "Turn the current artifact, pinned outputs, or an external link into a deliverable",
@@ -4411,6 +4885,9 @@ const copy = {
     bundleItemCountChip: (count: number) => `${count} items`,
     pinnedArtifactCountChip: (count: number) => `${count} pinned`,
     linkedArtifactLabel: (artifactId: string) => `Linked artifact · ${artifactId.slice(0, 10)}`,
+    cachedPackageChip: (size: string | null) => (size ? `cached package · ${size}` : "cached package"),
+    pendingPackageChip: "package pending",
+    lastDownloadedChip: (value: string) => `downloaded ${value}`,
     ledgerEyebrow: "Billing Ledger",
     ledgerTitle: "See how many credits each execution actually burned",
     ledgerChip: (count: number) => `${count} entries`,
@@ -4431,6 +4908,7 @@ const copy = {
       deliverableBundleSelectionRequired: "Select at least one pinned artifact for the bundle.",
       deliverableBundleTooLarge: (limit: number) => `A bundle may include at most ${limit} artifacts.`,
       deliverableUrlRequired: "External-link deliverables need a valid URL.",
+      deliverablePresetApplied: (label: string) => `Applied the ${label} preset to the deliverable form.`,
       nativeMissingSession: "There is no retained browser session yet. Run a governed browser step first.",
       nativeTaskRequired: "Enter a task for the native browser lane before running it.",
       nativeExecuted: "The native computer-use loop completed and stored a trace artifact.",

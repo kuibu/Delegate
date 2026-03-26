@@ -292,5 +292,8 @@ The current governed compute slice now ships:
 - approval creation and resolution for risky requests
 - team/customer approval insights for approvers, customer-account risk, stale workflow hygiene, and blocked hotspots
 - stdout/stderr artifact persistence to MinIO
+- deliverable analytics for downloads, reuse hotspots, visibility splits, and cached package health
+- owner-facing packaging presets for decks, packages, case studies, download packs, and generated documents
+- persisted bundle package caching so public downloads no longer rebuild every zip on every request
 - owner dashboard compute lane with session, approval, artifact, and ledger visibility
 - Telegram `/compute` integration for representative-facing compute requests

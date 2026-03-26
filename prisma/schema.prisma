@@ -889,7 +889,15 @@ model Deliverable {
   visibility          DeliverableVisibility @default(OWNER_ONLY)
   sourceKind          DeliverableSourceKind
   externalUrl         String?
-  bundleItemArtifactIds String[]           @default([])
+  bundleItemArtifactIds String[]            @default([])
+  packageObjectKey     String?
+  packageMimeType      String?
+  packageSizeBytes     Int?
+  packageSha256        String?
+  packageBuiltAt       DateTime?
+  packageCacheKey      String?
+  downloadCount        Int                  @default(0)
+  lastDownloadedAt     DateTime?
   createdBy           String?
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
@@ -898,6 +906,7 @@ model Deliverable {
 
   @@index([representativeId, visibility, createdAt])
   @@index([artifactId])
+  @@index([representativeId, sourceKind, packageBuiltAt])
 }
 
 model WorkflowRun {

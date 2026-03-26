@@ -85,6 +85,13 @@ export const deliverableKindSchema = z.enum([
 ]);
 export const deliverableVisibilitySchema = z.enum(["owner_only", "public_material"]);
 export const deliverableSourceKindSchema = z.enum(["artifact", "external_link", "bundle"]);
+export const deliverablePackagingPresetKeySchema = z.enum([
+  "deck",
+  "package",
+  "case_study",
+  "download_pack",
+  "generated_document",
+]);
 export const maxDeliverableBundleItems = 20;
 export const computeRequestedBySchema = z.enum(["system", "owner", "audience"]);
 export const computeRunnerTypeSchema = z.enum(["docker", "vm"]);
@@ -572,6 +579,11 @@ export const deliverableSnapshotSchema = z.object({
   sourceKind: deliverableSourceKindSchema,
   externalUrl: z.string().url().nullable(),
   bundleItemArtifactIds: z.array(z.string()).default([]),
+  downloadCount: z.number().int().nonnegative().default(0),
+  lastDownloadedAt: z.string().datetime().nullable(),
+  packageBuiltAt: z.string().datetime().nullable(),
+  packageSizeBytes: z.number().int().nonnegative().nullable(),
+  hasCachedPackage: z.boolean().default(false),
   createdBy: z.string().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -642,6 +654,100 @@ export const listDeliverablesResponseSchema = z.object({
     displayName: z.string(),
   }),
   deliverables: z.array(deliverableSnapshotSchema),
+});
+
+export const deliverablePackagingPresetSnapshotSchema = z.object({
+  key: deliverablePackagingPresetKeySchema,
+  kind: deliverableKindSchema,
+  visibility: deliverableVisibilitySchema,
+  sourceKind: deliverableSourceKindSchema,
+  title: z.string(),
+  summary: z.string(),
+  recommendedPublicMaterial: z.boolean(),
+  suggestedArtifactKinds: z.array(artifactKindSchema),
+  bundleItemArtifactIds: z.array(z.string()).default([]),
+  artifactId: z.string().nullable().optional(),
+});
+
+export const listDeliverablePackagingPresetsResponseSchema = z.object({
+  representative: z.object({
+    slug: z.string(),
+    displayName: z.string(),
+  }),
+  presets: z.array(deliverablePackagingPresetSnapshotSchema),
+});
+
+export const representativeDeliverableInsightsSnapshotSchema = z.object({
+  representative: z.object({
+    slug: z.string(),
+    displayName: z.string(),
+  }),
+  summary: z.object({
+    totalDeliverables: z.number().int().nonnegative(),
+    publicMaterials: z.number().int().nonnegative(),
+    totalDownloads: z.number().int().nonnegative(),
+    bundlePackageDownloads: z.number().int().nonnegative(),
+    pinnedArtifactsReused: z.number().int().nonnegative(),
+  }),
+  byKind: z.array(
+    z.object({
+      key: deliverableKindSchema,
+      count: z.number().int().nonnegative(),
+      totalDownloads: z.number().int().nonnegative(),
+    }),
+  ),
+  bySourceKind: z.array(
+    z.object({
+      key: deliverableSourceKindSchema,
+      count: z.number().int().nonnegative(),
+      totalDownloads: z.number().int().nonnegative(),
+    }),
+  ),
+  byVisibility: z.array(
+    z.object({
+      key: deliverableVisibilitySchema,
+      count: z.number().int().nonnegative(),
+      totalDownloads: z.number().int().nonnegative(),
+    }),
+  ),
+  topDeliverables: z.object({
+    mostDownloaded: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        downloadCount: z.number().int().nonnegative(),
+        visibility: deliverableVisibilitySchema,
+      }),
+    ),
+    mostRecentlyDownloaded: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        lastDownloadedAt: z.string().datetime(),
+        downloadCount: z.number().int().nonnegative(),
+      }),
+    ),
+    mostRecentlyUpdated: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        updatedAt: z.string().datetime(),
+      }),
+    ),
+  }),
+  artifactReuseHotspots: z.array(
+    z.object({
+      artifactId: z.string(),
+      artifactKind: artifactKindSchema,
+      reuseCount: z.number().int().nonnegative(),
+      isPinned: z.boolean(),
+    }),
+  ),
+  packageHealth: z.object({
+    cachedPackageCount: z.number().int().nonnegative(),
+    stalePackageCount: z.number().int().nonnegative(),
+    oversizedBundleAttempts: z.number().int().nonnegative(),
+  }),
 });
 
 export const deliverableDownloadResponseSchema = z.object({
@@ -765,6 +871,7 @@ export type ArtifactKind = z.infer<typeof artifactKindSchema>;
 export type DeliverableKind = z.infer<typeof deliverableKindSchema>;
 export type DeliverableVisibility = z.infer<typeof deliverableVisibilitySchema>;
 export type DeliverableSourceKind = z.infer<typeof deliverableSourceKindSchema>;
+export type DeliverablePackagingPresetKey = z.infer<typeof deliverablePackagingPresetKeySchema>;
 export type ComputeRequestedBy = z.infer<typeof computeRequestedBySchema>;
 export type ComputeRunnerType = z.infer<typeof computeRunnerTypeSchema>;
 export type ComputeNetworkMode = z.infer<typeof computeNetworkModeSchema>;
@@ -814,6 +921,15 @@ export type DeliverableSnapshot = z.infer<typeof deliverableSnapshotSchema>;
 export type UpsertDeliverableRequest = z.infer<typeof upsertDeliverableRequestSchema>;
 export type UpdateDeliverableRequest = z.infer<typeof updateDeliverableRequestSchema>;
 export type ListDeliverablesResponse = z.infer<typeof listDeliverablesResponseSchema>;
+export type DeliverablePackagingPresetSnapshot = z.infer<
+  typeof deliverablePackagingPresetSnapshotSchema
+>;
+export type ListDeliverablePackagingPresetsResponse = z.infer<
+  typeof listDeliverablePackagingPresetsResponseSchema
+>;
+export type RepresentativeDeliverableInsightsSnapshot = z.infer<
+  typeof representativeDeliverableInsightsSnapshotSchema
+>;
 export type DeliverableDownloadResponse = z.infer<typeof deliverableDownloadResponseSchema>;
 export type ExecuteToolResponse = z.infer<typeof executeToolResponseSchema>;
 export type NativeComputerUseExecutionResponse = z.infer<
