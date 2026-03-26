@@ -514,6 +514,114 @@ type DeliverablePackagingPresetsSnapshot = {
   }>;
 };
 
+type GovernanceLayer =
+  | "delegate_managed"
+  | "owner_managed"
+  | "org_managed"
+  | "customer_account"
+  | "unassigned_default";
+
+type ResourceGovernanceSnapshot = {
+  representative: {
+    slug: string;
+    displayName: string;
+  };
+  summary: {
+    artifactCount: number;
+    pinnedArtifacts: number;
+    orgOrCustomerGovernedArtifacts: number;
+    artifactOwnerOnlyActionCount: number;
+    deliverableCount: number;
+    publicMaterials: number;
+    ownerOnlyDeliverables: number;
+    cachedPackages: number;
+    orgOrCustomerGovernedDeliverables: number;
+    deliverableOwnerOnlyActionCount: number;
+  };
+  byGovernanceLayer: Array<{
+    key: GovernanceLayer;
+    label: string;
+    artifactCount: number;
+    deliverableCount: number;
+    resourceCount: number;
+  }>;
+  byCustomerAccount: Array<{
+    key: string;
+    slug: string;
+    displayName: string;
+    isUnassigned: boolean;
+    visibleArtifactCount: number;
+    deliverableCount: number;
+    publicMaterialCount: number;
+    restrictedActionCount: number;
+  }>;
+  riskyActions: {
+    packageRebuildsRequireOwner: Array<{
+      id: string;
+      title: string;
+      layer: GovernanceLayer;
+    }>;
+    publicMaterialFlipsRequireOwner: Array<{
+      id: string;
+      title: string;
+      layer: GovernanceLayer;
+    }>;
+    blockedArtifactUnpins: Array<{
+      artifactId: string;
+      deliverableTitles: string[];
+      layer: GovernanceLayer;
+    }>;
+  };
+  hygiene: {
+    missingCustomerContextCount: number;
+    ambiguousGovernanceCount: number;
+    publicDeliverablesWithoutAttributionCount: number;
+    items: Array<{
+      key: string;
+      label: string;
+      detail: string;
+      count: number;
+    }>;
+  };
+  artifacts: Array<{
+    id: string;
+    kind: string;
+    customerAccount: {
+      key: string;
+      slug: string;
+      displayName: string;
+      isUnassigned: boolean;
+    };
+    primaryLayer: GovernanceLayer;
+    layers: GovernanceLayer[];
+    ownerOnlyActions: string[];
+    restrictedActions: string[];
+    blockedUnpinByDeliverable: boolean;
+    dependentDeliverableCount: number;
+  }>;
+  deliverables: Array<{
+    id: string;
+    title: string;
+    kind: string;
+    visibility: "owner_only" | "public_material";
+    sourceKind: "artifact" | "external_link" | "bundle";
+    customerAccounts: Array<{
+      key: string;
+      slug: string;
+      displayName: string;
+      isUnassigned: boolean;
+    }>;
+    primaryLayer: GovernanceLayer;
+    layers: GovernanceLayer[];
+    ownerOnlyActions: string[];
+    restrictedActions: string[];
+    customerDownloadEligible: boolean;
+    packageDeliveryEligible: boolean;
+    ambiguousCustomerContext: boolean;
+    hasCachedPackage: boolean;
+  }>;
+};
+
 type McpBindingFormState = {
   bindingId: string | null;
   slug: string;
@@ -582,6 +690,9 @@ export function DashboardCompute({
   const [deliverablePresets, setDeliverablePresets] = useState<
     DeliverablePackagingPresetsSnapshot["presets"]
   >([]);
+  const [resourceGovernance, setResourceGovernance] = useState<ResourceGovernanceSnapshot | null>(
+    null,
+  );
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [artifactDetail, setArtifactDetail] = useState<ComputeArtifactDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -614,6 +725,7 @@ export function DashboardCompute({
       setDeliverables,
       setDeliverableInsights,
       setDeliverablePresets,
+      setResourceGovernance,
       setError,
     );
   }, [representativeSlug]);
@@ -806,6 +918,55 @@ export function DashboardCompute({
         },
       ]
     : [];
+  const artifactGovernanceById = useMemo(
+    () => new Map((resourceGovernance?.artifacts ?? []).map((artifact) => [artifact.id, artifact] as const)),
+    [resourceGovernance],
+  );
+  const deliverableGovernanceById = useMemo(
+    () =>
+      new Map(
+        (resourceGovernance?.deliverables ?? []).map((deliverable) => [deliverable.id, deliverable] as const),
+      ),
+    [resourceGovernance],
+  );
+  const resourceGovernanceCards = resourceGovernance
+    ? [
+        {
+          label: t.resourceGovernanceCards.resources,
+          value: `${resourceGovernance.summary.artifactCount + resourceGovernance.summary.deliverableCount}`,
+          detail: t.resourceGovernanceCards.resourcesDetail,
+        },
+        {
+          label: t.resourceGovernanceCards.customerGoverned,
+          value: `${
+            resourceGovernance.summary.orgOrCustomerGovernedArtifacts +
+            resourceGovernance.summary.orgOrCustomerGovernedDeliverables
+          }`,
+          detail: t.resourceGovernanceCards.customerGovernedDetail,
+          tone:
+            resourceGovernance.summary.orgOrCustomerGovernedArtifacts +
+              resourceGovernance.summary.orgOrCustomerGovernedDeliverables >
+            0
+              ? ("safe" as const)
+              : ("default" as const),
+        },
+        {
+          label: t.resourceGovernanceCards.ownerOnly,
+          value: `${
+            resourceGovernance.summary.artifactOwnerOnlyActionCount +
+            resourceGovernance.summary.deliverableOwnerOnlyActionCount
+          }`,
+          detail: t.resourceGovernanceCards.ownerOnlyDetail,
+          tone: "accent" as const,
+        },
+        {
+          label: t.resourceGovernanceCards.hygiene,
+          value: `${resourceGovernance.hygiene.items.length}`,
+          detail: t.resourceGovernanceCards.hygieneDetail,
+          tone: resourceGovernance.hygiene.items.length ? ("accent" as const) : ("safe" as const),
+        },
+      ]
+    : [];
   const approvalInsightCards = approvalInsights
     ? [
         {
@@ -970,6 +1131,7 @@ export function DashboardCompute({
           setDeliverables,
           setDeliverableInsights,
           setDeliverablePresets,
+          setResourceGovernance,
           setError,
         );
         setMessage(
@@ -1040,6 +1202,7 @@ export function DashboardCompute({
           setDeliverables,
           setDeliverableInsights,
           setDeliverablePresets,
+          setResourceGovernance,
           setError,
         );
         if (payload.nativeComputerUse?.traceArtifactId) {
@@ -1114,6 +1277,7 @@ export function DashboardCompute({
           setDeliverables,
           setDeliverableInsights,
           setDeliverablePresets,
+          setResourceGovernance,
           setError,
         );
         setMcpForm(createEmptyMcpBindingForm());
@@ -1162,6 +1326,7 @@ export function DashboardCompute({
           setDeliverables,
           setDeliverableInsights,
           setDeliverablePresets,
+          setResourceGovernance,
           setError,
         );
         setMessage(t.messages.policyOverlaysSaved);
@@ -1207,6 +1372,7 @@ export function DashboardCompute({
           setDeliverables,
           setDeliverableInsights,
           setDeliverablePresets,
+          setResourceGovernance,
           setError,
         );
         setMessage(t.messages.governanceSaved);
@@ -1283,6 +1449,7 @@ export function DashboardCompute({
           setDeliverables,
           setDeliverableInsights,
           setDeliverablePresets,
+          setResourceGovernance,
           setError,
         );
         setMessage(pinned ? t.messages.artifactPinned : t.messages.artifactUnpinned);
@@ -1387,6 +1554,7 @@ export function DashboardCompute({
           setDeliverables,
           setDeliverableInsights,
           setDeliverablePresets,
+          setResourceGovernance,
           setError,
         );
         setDeliverableForm(createEmptyDeliverableForm());
@@ -3228,39 +3396,63 @@ export function DashboardCompute({
         >
           <div className="row-list">
             {artifacts.length ? (
-              artifacts.map((artifact) => (
-                <button
-                  className={
-                    selectedArtifactId === artifact.id ? "skill-row skill-row-active" : "skill-row"
-                  }
-                  key={artifact.id}
-                  onClick={() => setSelectedArtifactId(artifact.id)}
-                  type="button"
-                >
-                  <div>
-                    <strong>{artifact.kind}</strong>
-                    <p>{artifact.objectKey}</p>
-                    <div className="chip-row">
-                      <span className="chip">{artifact.mimeType}</span>
-                      <span className="chip">{formatBytes(artifact.sizeBytes)}</span>
-                      <span className="chip">{t.downloadCountChip(artifact.downloadCount)}</span>
-                      <span className="chip">{formatTimestamp(artifact.createdAt, locale)}</span>
-                      {artifact.isPinned ? <span className="chip chip-safe">{t.pinnedChip}</span> : null}
-                      {artifact.retentionUntil ? (
-                        <span className="chip">
-                          {t.retentionChip(formatTimestamp(artifact.retentionUntil, locale))}
-                        </span>
+              artifacts.map((artifact) => {
+                const governance = artifactGovernanceById.get(artifact.id);
+                return (
+                  <button
+                    className={
+                      selectedArtifactId === artifact.id ? "skill-row skill-row-active" : "skill-row"
+                    }
+                    key={artifact.id}
+                    onClick={() => setSelectedArtifactId(artifact.id)}
+                    type="button"
+                  >
+                    <div>
+                      <strong>{artifact.kind}</strong>
+                      <p>{artifact.objectKey}</p>
+                      <div className="chip-row">
+                        <span className="chip">{artifact.mimeType}</span>
+                        <span className="chip">{formatBytes(artifact.sizeBytes)}</span>
+                        <span className="chip">{t.downloadCountChip(artifact.downloadCount)}</span>
+                        <span className="chip">{formatTimestamp(artifact.createdAt, locale)}</span>
+                        {artifact.isPinned ? <span className="chip chip-safe">{t.pinnedChip}</span> : null}
+                        {artifact.retentionUntil ? (
+                          <span className="chip">
+                            {t.retentionChip(formatTimestamp(artifact.retentionUntil, locale))}
+                          </span>
+                        ) : null}
+                        {governance ? (
+                          <span className="chip">
+                            {t.resourceGovernanceLayerChip(
+                              formatGovernanceLayer(governance.primaryLayer, locale),
+                            )}
+                          </span>
+                        ) : null}
+                        {governance && governance.customerAccount.isUnassigned ? (
+                          <span className="chip">{t.resourceGovernanceUnassignedChip}</span>
+                        ) : governance ? (
+                          <span className="chip">{governance.customerAccount.displayName}</span>
+                        ) : null}
+                        {governance?.blockedUnpinByDeliverable ? (
+                          <span className="chip chip-danger">{t.resourceGovernanceBlockedUnpinChip}</span>
+                        ) : null}
+                      </div>
+                      {artifact.summary ? <p className="footer-note">{artifact.summary}</p> : null}
+                      {artifact.sessionId ? (
+                        <p className="footer-note">{t.sessionLabel(artifact.sessionId)}</p>
+                      ) : null}
+                      {governance ? (
+                        <p className="footer-note">
+                          {t.resourceGovernanceArtifactMeta(
+                            governance.ownerOnlyActions.length,
+                            governance.dependentDeliverableCount,
+                          )}
+                        </p>
                       ) : null}
                     </div>
-                    {artifact.summary ? (
-                      <p className="footer-note">{artifact.summary}</p>
-                    ) : null}
-                    {artifact.sessionId ? (
-                      <p className="footer-note">{t.sessionLabel(artifact.sessionId)}</p>
-                    ) : null}
-                  </div>
-                </button>
-              ))
+                  </button>
+                );
+              })
             ) : (
               <p className="muted">{t.noArtifacts}</p>
             )}
@@ -3531,86 +3723,293 @@ export function DashboardCompute({
         </DashboardSurface>
 
         <DashboardSurface
+          eyebrow={t.resourceGovernanceEyebrow}
+          meta={
+            <span className="chip">
+              {resourceGovernance
+                ? t.resourceGovernanceChip(resourceGovernance.summary.orgOrCustomerGovernedArtifacts + resourceGovernance.summary.orgOrCustomerGovernedDeliverables)
+                : t.loadingInsights}
+            </span>
+          }
+          title={t.resourceGovernanceTitle}
+          tone="accent"
+        >
+          {resourceGovernance ? (
+            <>
+              <div className="dashboard-highlight-grid">
+                <article className="dashboard-highlight-card dashboard-highlight-card-primary">
+                  <p className="panel-title">{t.resourceGovernanceHeroEyebrow}</p>
+                  <h3>{t.resourceGovernanceHeroTitle}</h3>
+                  <p>{t.resourceGovernanceHeroCopy}</p>
+                  <div className="chip-row">
+                    <span className="chip">
+                      {t.resourceGovernanceHeroCustomerBuckets(resourceGovernance.byCustomerAccount.length)}
+                    </span>
+                    <span className="chip">
+                      {t.resourceGovernanceHeroRestricted(
+                        resourceGovernance.summary.artifactOwnerOnlyActionCount +
+                          resourceGovernance.summary.deliverableOwnerOnlyActionCount,
+                      )}
+                    </span>
+                  </div>
+                </article>
+
+                <DashboardSignalStrip cards={resourceGovernanceCards} />
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.resourceGovernanceTables.layerEyebrow}</p>
+                      <h3>{t.resourceGovernanceTables.layerTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {resourceGovernance.byGovernanceLayer.map((row) => (
+                      <div className="skill-row" key={row.key}>
+                        <div>
+                          <strong>{formatGovernanceLayer(row.key, locale)}</strong>
+                          <p>{t.resourceGovernanceTables.layerDetail(row.resourceCount)}</p>
+                        </div>
+                        <div className="chip-row">
+                          <span className="chip">
+                            {t.resourceGovernanceTables.layerArtifacts(row.artifactCount)}
+                          </span>
+                          <span className="chip">
+                            {t.resourceGovernanceTables.layerDeliverables(row.deliverableCount)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.resourceGovernanceTables.customerEyebrow}</p>
+                      <h3>{t.resourceGovernanceTables.customerTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {resourceGovernance.byCustomerAccount.length ? (
+                      resourceGovernance.byCustomerAccount.map((row) => (
+                        <div className="skill-row" key={row.key}>
+                          <div>
+                            <strong>{row.isUnassigned ? t.resourceGovernanceUnassignedChip : row.displayName}</strong>
+                            <p>{row.slug}</p>
+                          </div>
+                          <div className="chip-row">
+                            <span className="chip">
+                              {t.resourceGovernanceTables.customerArtifacts(row.visibleArtifactCount)}
+                            </span>
+                            <span className="chip">
+                              {t.resourceGovernanceTables.customerDeliverables(row.deliverableCount)}
+                            </span>
+                            <span className="chip">
+                              {t.resourceGovernanceTables.customerRestricted(row.restrictedActionCount)}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{t.resourceGovernanceTables.noCustomers}</p>
+                    )}
+                  </div>
+                </article>
+              </div>
+
+              <div className="table-grid dashboard-table-grid-balanced">
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.resourceGovernanceTables.riskyEyebrow}</p>
+                      <h3>{t.resourceGovernanceTables.riskyTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {resourceGovernance.riskyActions.packageRebuildsRequireOwner.length ? (
+                      resourceGovernance.riskyActions.packageRebuildsRequireOwner.map((item) => (
+                        <div className="skill-row" key={`package:${item.id}`}>
+                          <div>
+                            <strong>{item.title}</strong>
+                            <p>{t.resourceGovernanceTables.packageRebuildOwner}</p>
+                          </div>
+                          <span className="chip">{formatGovernanceLayer(item.layer, locale)}</span>
+                        </div>
+                      ))
+                    ) : null}
+                    {resourceGovernance.riskyActions.publicMaterialFlipsRequireOwner.map((item) => (
+                      <div className="skill-row" key={`public:${item.id}`}>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <p>{t.resourceGovernanceTables.publicFlipOwner}</p>
+                        </div>
+                        <span className="chip">{formatGovernanceLayer(item.layer, locale)}</span>
+                      </div>
+                    ))}
+                    {resourceGovernance.riskyActions.blockedArtifactUnpins.map((item) => (
+                      <div className="skill-row" key={`artifact:${item.artifactId}`}>
+                        <div>
+                          <strong>{item.artifactId}</strong>
+                          <p>{t.resourceGovernanceTables.blockedUnpin(item.deliverableTitles.join(", "))}</p>
+                        </div>
+                        <span className="chip chip-danger">{formatGovernanceLayer(item.layer, locale)}</span>
+                      </div>
+                    ))}
+                    {!resourceGovernance.riskyActions.packageRebuildsRequireOwner.length &&
+                    !resourceGovernance.riskyActions.publicMaterialFlipsRequireOwner.length &&
+                    !resourceGovernance.riskyActions.blockedArtifactUnpins.length ? (
+                      <p className="muted">{t.resourceGovernanceTables.noRisks}</p>
+                    ) : null}
+                  </div>
+                </article>
+
+                <article className="table-card">
+                  <div className="dashboard-card-heading">
+                    <div>
+                      <p className="eyebrow">{t.resourceGovernanceTables.hygieneEyebrow}</p>
+                      <h3>{t.resourceGovernanceTables.hygieneTitle}</h3>
+                    </div>
+                  </div>
+                  <div className="row-list">
+                    {resourceGovernance.hygiene.items.length ? (
+                      resourceGovernance.hygiene.items.map((item) => (
+                        <div className="skill-row" key={item.key}>
+                          <div>
+                            <strong>{item.label}</strong>
+                            <p>{item.detail}</p>
+                          </div>
+                          <span className="chip">{t.auditCount(item.count)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">{t.resourceGovernanceTables.noHygiene}</p>
+                    )}
+                  </div>
+                </article>
+              </div>
+            </>
+          ) : (
+            <p className="muted">{t.loadingInsights}</p>
+          )}
+        </DashboardSurface>
+
+        <DashboardSurface
           eyebrow={t.deliverablesEyebrow}
           meta={<span className="chip">{t.deliverablesChip(deliverables.length)}</span>}
           title={t.deliverablesTitle}
         >
           <div className="row-list">
             {deliverables.length ? (
-              deliverables.map((deliverable) => (
-                <div className="skill-row" key={deliverable.id}>
-                  <div>
-                    <strong>{deliverable.title}</strong>
-                    <p>{deliverable.summary}</p>
-                    <div className="chip-row">
-                      <span className="chip">{deliverableKindLabels[deliverable.kind]}</span>
-                      <span className="chip">{deliverableSourceLabels[deliverable.sourceKind]}</span>
-                      <span className="chip">{t.downloadCountChip(deliverable.downloadCount)}</span>
-                      <span
-                        className={
-                          deliverable.visibility === "public_material"
-                            ? "chip chip-safe"
-                            : "chip"
-                        }
-                      >
-                        {deliverable.visibility === "public_material"
-                          ? t.publicMaterialChip
-                          : t.ownerOnlyChip}
-                      </span>
-                      <span className="chip">{formatTimestamp(deliverable.updatedAt, locale)}</span>
-                      {deliverable.lastDownloadedAt ? (
-                        <span className="chip">
-                          {t.lastDownloadedChip(formatTimestamp(deliverable.lastDownloadedAt, locale))}
+              deliverables.map((deliverable) => {
+                const governance = deliverableGovernanceById.get(deliverable.id);
+                return (
+                  <div className="skill-row" key={deliverable.id}>
+                    <div>
+                      <strong>{deliverable.title}</strong>
+                      <p>{deliverable.summary}</p>
+                      <div className="chip-row">
+                        <span className="chip">{deliverableKindLabels[deliverable.kind]}</span>
+                        <span className="chip">{deliverableSourceLabels[deliverable.sourceKind]}</span>
+                        <span className="chip">{t.downloadCountChip(deliverable.downloadCount)}</span>
+                        <span
+                          className={
+                            deliverable.visibility === "public_material"
+                              ? "chip chip-safe"
+                              : "chip"
+                          }
+                        >
+                          {deliverable.visibility === "public_material"
+                            ? t.publicMaterialChip
+                            : t.ownerOnlyChip}
                         </span>
+                        <span className="chip">{formatTimestamp(deliverable.updatedAt, locale)}</span>
+                        {deliverable.lastDownloadedAt ? (
+                          <span className="chip">
+                            {t.lastDownloadedChip(formatTimestamp(deliverable.lastDownloadedAt, locale))}
+                          </span>
+                        ) : null}
+                        {deliverable.hasCachedPackage ? (
+                          <span className="chip chip-safe">
+                            {t.cachedPackageChip(
+                              deliverable.packageSizeBytes ? formatBytes(deliverable.packageSizeBytes) : null,
+                            )}
+                          </span>
+                        ) : deliverable.sourceKind === "bundle" ? (
+                          <span className="chip">{t.pendingPackageChip}</span>
+                        ) : null}
+                        {deliverable.bundleItemArtifactIds.length ? (
+                          <span className="chip">
+                            {t.bundleItemCountChip(deliverable.bundleItemArtifactIds.length)}
+                          </span>
+                        ) : null}
+                        {governance ? (
+                          <span className="chip">
+                            {t.resourceGovernanceLayerChip(
+                              formatGovernanceLayer(governance.primaryLayer, locale),
+                            )}
+                          </span>
+                        ) : null}
+                        {governance?.ambiguousCustomerContext ? (
+                          <span className="chip chip-danger">{t.resourceGovernanceAmbiguousChip}</span>
+                        ) : governance?.customerAccounts.length ? (
+                          <span className="chip">
+                            {governance.customerAccounts[0]!.isUnassigned
+                              ? t.resourceGovernanceUnassignedChip
+                              : governance.customerAccounts[0]!.displayName}
+                          </span>
+                        ) : null}
+                        {governance?.customerDownloadEligible ? (
+                          <span className="chip chip-safe">{t.resourceGovernanceCustomerEligibleChip}</span>
+                        ) : null}
+                        {governance?.ownerOnlyActions.includes("package_rebuild") ? (
+                          <span className="chip">{t.resourceGovernancePackageOwnerChip}</span>
+                        ) : null}
+                      </div>
+                      {deliverable.artifactId ? (
+                        <p className="footer-note">{t.linkedArtifactLabel(deliverable.artifactId)}</p>
                       ) : null}
-                      {deliverable.hasCachedPackage ? (
-                        <span className="chip chip-safe">
-                          {t.cachedPackageChip(
-                            deliverable.packageSizeBytes ? formatBytes(deliverable.packageSizeBytes) : null,
+                      {governance ? (
+                        <p className="footer-note">
+                          {t.resourceGovernanceDeliverableMeta(
+                            governance.ownerOnlyActions.length,
+                            governance.customerAccounts.length,
                           )}
-                        </span>
-                      ) : deliverable.sourceKind === "bundle" ? (
-                        <span className="chip">{t.pendingPackageChip}</span>
-                      ) : null}
-                      {deliverable.bundleItemArtifactIds.length ? (
-                        <span className="chip">
-                          {t.bundleItemCountChip(deliverable.bundleItemArtifactIds.length)}
-                        </span>
+                        </p>
                       ) : null}
                     </div>
-                    {deliverable.artifactId ? (
-                      <p className="footer-note">{t.linkedArtifactLabel(deliverable.artifactId)}</p>
-                    ) : null}
-                  </div>
 
-                  <div className="button-row">
-                    {deliverable.sourceKind === "external_link" && deliverable.externalUrl ? (
-                      <a
+                    <div className="button-row">
+                      {deliverable.sourceKind === "external_link" && deliverable.externalUrl ? (
+                        <a
+                          className="button-secondary"
+                          href={deliverable.externalUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {t.openExternalDeliverable}
+                        </a>
+                      ) : (
+                        <a
+                          className="button-secondary"
+                          href={`/api/dashboard/representatives/${representativeSlug}/deliverables/${deliverable.id}/download`}
+                        >
+                          {t.downloadDeliverable}
+                        </a>
+                      )}
+                      <button
                         className="button-secondary"
-                        href={deliverable.externalUrl}
-                        rel="noreferrer"
-                        target="_blank"
+                        onClick={() => startEditDeliverable(deliverable)}
+                        type="button"
                       >
-                        {t.openExternalDeliverable}
-                      </a>
-                    ) : (
-                      <a
-                        className="button-secondary"
-                        href={`/api/dashboard/representatives/${representativeSlug}/deliverables/${deliverable.id}/download`}
-                      >
-                        {t.downloadDeliverable}
-                      </a>
-                    )}
-                    <button
-                      className="button-secondary"
-                      onClick={() => startEditDeliverable(deliverable)}
-                      type="button"
-                    >
-                      {t.editDeliverable}
-                    </button>
+                        {t.editDeliverable}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <p className="muted">{t.noDeliverables}</p>
             )}
@@ -3864,6 +4263,7 @@ async function refreshCompute(
   setDeliverables: (value: DeliverablesSnapshot["deliverables"]) => void,
   setDeliverableInsights: (value: DeliverableInsightsSnapshot | null) => void,
   setDeliverablePresets: (value: DeliverablePackagingPresetsSnapshot["presets"]) => void,
+  setResourceGovernance: (value: ResourceGovernanceSnapshot | null) => void,
   setError: (value: string | null) => void,
 ) {
   try {
@@ -3876,6 +4276,7 @@ async function refreshCompute(
       deliverablesResponse,
       deliverableInsightsResponse,
       deliverablePresetsResponse,
+      resourceGovernanceResponse,
     ] =
       await Promise.all([
       fetch(`/api/dashboard/representatives/${representativeSlug}/compute`, { cache: "no-store" }),
@@ -3895,6 +4296,9 @@ async function refreshCompute(
         cache: "no-store",
       }),
       fetch(`/api/dashboard/representatives/${representativeSlug}/deliverables/presets`, {
+        cache: "no-store",
+      }),
+      fetch(`/api/dashboard/representatives/${representativeSlug}/resource-governance`, {
         cache: "no-store",
       }),
     ]);
@@ -3927,6 +4331,10 @@ async function refreshCompute(
       throw new Error(await extractError(deliverablePresetsResponse));
     }
 
+    if (!resourceGovernanceResponse.ok) {
+      throw new Error(await extractError(resourceGovernanceResponse));
+    }
+
     const snapshotPayload = (await snapshotResponse.json()) as ComputeSnapshot;
     const approvalsPayload = (await approvalsResponse.json()) as ComputeApprovalsSnapshot;
     const insightsPayload = (await insightsResponse.json()) as ComputeApprovalInsightsSnapshot;
@@ -3936,6 +4344,8 @@ async function refreshCompute(
       (await deliverableInsightsResponse.json()) as DeliverableInsightsSnapshot;
     const deliverablePresetsPayload =
       (await deliverablePresetsResponse.json()) as DeliverablePackagingPresetsSnapshot;
+    const resourceGovernancePayload =
+      (await resourceGovernanceResponse.json()) as ResourceGovernanceSnapshot;
 
     setSnapshot(snapshotPayload);
     setApprovals(approvalsPayload.approvals);
@@ -3944,6 +4354,7 @@ async function refreshCompute(
     setDeliverables(deliverablesPayload.deliverables);
     setDeliverableInsights(deliverableInsightsPayload);
     setDeliverablePresets(deliverablePresetsPayload.presets);
+    setResourceGovernance(resourceGovernancePayload);
   } catch (error) {
     setError(error instanceof Error ? error.message : "Failed to load compute control plane.");
   }
@@ -4007,6 +4418,30 @@ function formatBytes(value: number) {
   }
 
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatGovernanceLayer(
+  value: GovernanceLayer,
+  locale: Locale,
+) {
+  const labels =
+    locale === "zh"
+      ? {
+          delegate_managed: "Delegate 托管",
+          owner_managed: "Owner 管理",
+          org_managed: "组织管理",
+          customer_account: "客户账户",
+          unassigned_default: "未分配 / 默认",
+        }
+      : {
+          delegate_managed: "Delegate managed",
+          owner_managed: "Owner managed",
+          org_managed: "Org managed",
+          customer_account: "Customer account",
+          unassigned_default: "Unassigned / default",
+        };
+
+  return labels[value];
 }
 
 function createEmptyOverlayForm(): OverlayFormState {
@@ -4415,6 +4850,57 @@ const copy = {
       reuseCount: (count: number) => `reused ${count}x`,
       noTopDeliverables: "还没有产生明显的下载热点。",
       noReuseHotspots: "还没有明显的 artifact 复用热点。",
+    },
+    resourceGovernanceEyebrow: "Resource Governance",
+    resourceGovernanceTitle: "让 artifact 和 deliverable 也进入组织/客户治理视图",
+    resourceGovernanceChip: (count: number) => `${count} 个资源带 org/customer 语义`,
+    resourceGovernanceHeroEyebrow: "Beyond compute",
+    resourceGovernanceHeroTitle: "不只是治理执行，也要治理这些输出能怎么被继续使用",
+    resourceGovernanceHeroCopy:
+      "这一层把组织和客户账户语义扩展到 artifact、deliverable 和 package 路径，让 owner 直接看到哪些动作仍然只能由自己控制。",
+    resourceGovernanceHeroCustomerBuckets: (count: number) => `${count} 个客户 bucket`,
+    resourceGovernanceHeroRestricted: (count: number) => `${count} 个 owner-only / restricted 动作`,
+    resourceGovernanceCards: {
+      resources: "Governed resources",
+      resourcesDetail: "进入资源治理快照的 artifact 与 deliverable 总数。",
+      customerGoverned: "Org/customer scoped",
+      customerGovernedDetail: "已经带上组织或客户治理语义的资源数。",
+      ownerOnly: "Owner-only actions",
+      ownerOnlyDetail: "仍然只能由 owner 决定的动作数。",
+      hygiene: "Hygiene flags",
+      hygieneDetail: "资源归属、客户上下文或归因仍不完整的地方。",
+    },
+    resourceGovernanceLayerChip: (label: string) => `layer · ${label}`,
+    resourceGovernanceUnassignedChip: "unassigned",
+    resourceGovernanceBlockedUnpinChip: "unpin blocked",
+    resourceGovernanceAmbiguousChip: "ambiguous context",
+    resourceGovernanceCustomerEligibleChip: "customer-downloadable",
+    resourceGovernancePackageOwnerChip: "package rebuild owner-only",
+    resourceGovernanceArtifactMeta: (ownerOnlyCount: number, dependencyCount: number) =>
+      `${ownerOnlyCount} 个 owner-only 动作 · ${dependencyCount} 个 deliverable 依赖`,
+    resourceGovernanceDeliverableMeta: (ownerOnlyCount: number, customerCount: number) =>
+      `${ownerOnlyCount} 个 owner-only 动作 · ${customerCount} 个客户 bucket`,
+    resourceGovernanceTables: {
+      layerEyebrow: "By Layer",
+      layerTitle: "资源主要落在哪层治理里",
+      layerDetail: (count: number) => `${count} 个资源`,
+      layerArtifacts: (count: number) => `${count} artifacts`,
+      layerDeliverables: (count: number) => `${count} deliverables`,
+      customerEyebrow: "By Customer",
+      customerTitle: "哪些客户账户能看到哪些资源，以及哪里仍然受限",
+      customerArtifacts: (count: number) => `${count} artifacts`,
+      customerDeliverables: (count: number) => `${count} deliverables`,
+      customerRestricted: (count: number) => `${count} restricted`,
+      noCustomers: "当前还没有客户维度的资源治理行。",
+      riskyEyebrow: "Risky Actions",
+      riskyTitle: "哪些资源动作仍然需要 owner 明确控制",
+      packageRebuildOwner: "Package rebuild 仍然需要 owner 决定",
+      publicFlipOwner: "公开发布或 public material 变更仍然需要 owner 决定",
+      blockedUnpin: (titles: string) => `不能 unpin，因为仍被这些 deliverable 依赖：${titles}`,
+      noRisks: "当前没有明显的资源治理风险动作。",
+      hygieneEyebrow: "Governance Hygiene",
+      hygieneTitle: "哪些资源还缺客户上下文或归因清晰度",
+      noHygiene: "当前没有资源治理卫生问题。",
     },
     packagingPresets: {
       copy: "用 preset 直接预填交付件类型、可见范围和推荐素材，减少重复配置。",
@@ -4830,6 +5316,57 @@ const copy = {
       reuseCount: (count: number) => `reused ${count}x`,
       noTopDeliverables: "No download hotspots yet.",
       noReuseHotspots: "No reuse hotspots yet.",
+    },
+    resourceGovernanceEyebrow: "Resource Governance",
+    resourceGovernanceTitle: "Extend org/customer governance into artifacts, deliverables, and package actions",
+    resourceGovernanceChip: (count: number) => `${count} resources carry org/customer semantics`,
+    resourceGovernanceHeroEyebrow: "Beyond compute",
+    resourceGovernanceHeroTitle: "Govern not just execution, but also how outputs can be reused, downloaded, and repackaged",
+    resourceGovernanceHeroCopy:
+      "This layer brings organization and customer-account governance into artifacts, deliverables, and package flows so the owner can see what still stays owner-only.",
+    resourceGovernanceHeroCustomerBuckets: (count: number) => `${count} customer buckets`,
+    resourceGovernanceHeroRestricted: (count: number) => `${count} owner-only / restricted actions`,
+    resourceGovernanceCards: {
+      resources: "Governed resources",
+      resourcesDetail: "Artifacts and deliverables included in the resource governance snapshot.",
+      customerGoverned: "Org/customer scoped",
+      customerGovernedDetail: "Resources already carrying organization or customer-account semantics.",
+      ownerOnly: "Owner-only actions",
+      ownerOnlyDetail: "Actions that still remain explicitly reserved for the owner.",
+      hygiene: "Hygiene flags",
+      hygieneDetail: "Resource rows still missing attribution or customer context.",
+    },
+    resourceGovernanceLayerChip: (label: string) => `layer · ${label}`,
+    resourceGovernanceUnassignedChip: "unassigned",
+    resourceGovernanceBlockedUnpinChip: "unpin blocked",
+    resourceGovernanceAmbiguousChip: "ambiguous context",
+    resourceGovernanceCustomerEligibleChip: "customer-downloadable",
+    resourceGovernancePackageOwnerChip: "package rebuild owner-only",
+    resourceGovernanceArtifactMeta: (ownerOnlyCount: number, dependencyCount: number) =>
+      `${ownerOnlyCount} owner-only actions · ${dependencyCount} deliverable dependencies`,
+    resourceGovernanceDeliverableMeta: (ownerOnlyCount: number, customerCount: number) =>
+      `${ownerOnlyCount} owner-only actions · ${customerCount} customer buckets`,
+    resourceGovernanceTables: {
+      layerEyebrow: "By Layer",
+      layerTitle: "Where resources primarily sit in the governance stack",
+      layerDetail: (count: number) => `${count} resources`,
+      layerArtifacts: (count: number) => `${count} artifacts`,
+      layerDeliverables: (count: number) => `${count} deliverables`,
+      customerEyebrow: "By Customer",
+      customerTitle: "Which customer accounts can see which resources and where restrictions still cluster",
+      customerArtifacts: (count: number) => `${count} artifacts`,
+      customerDeliverables: (count: number) => `${count} deliverables`,
+      customerRestricted: (count: number) => `${count} restricted`,
+      noCustomers: "No customer-scoped resource rows yet.",
+      riskyEyebrow: "Risky Actions",
+      riskyTitle: "Which resource actions still require explicit owner control",
+      packageRebuildOwner: "Package rebuild still requires owner control",
+      publicFlipOwner: "Publishing or flipping to public material still requires owner control",
+      blockedUnpin: (titles: string) => `Cannot unpin because these deliverables still depend on it: ${titles}`,
+      noRisks: "No prominent risky resource actions right now.",
+      hygieneEyebrow: "Governance Hygiene",
+      hygieneTitle: "Resources still missing clear customer context or attribution",
+      noHygiene: "No resource-governance hygiene issues right now.",
     },
     packagingPresets: {
       copy: "Use a preset to prefill kind, visibility, and recommended material selection before editing details.",

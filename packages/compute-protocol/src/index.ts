@@ -750,6 +750,128 @@ export const representativeDeliverableInsightsSnapshotSchema = z.object({
   }),
 });
 
+export const resourceGovernanceLayerSchema = z.enum([
+  "delegate_managed",
+  "owner_managed",
+  "org_managed",
+  "customer_account",
+  "unassigned_default",
+]);
+
+const resourceGovernanceCustomerRefSchema = z.object({
+  key: z.string(),
+  slug: z.string(),
+  displayName: z.string(),
+  isUnassigned: z.boolean(),
+});
+
+export const representativeResourceGovernanceSnapshotSchema = z.object({
+  representative: z.object({
+    slug: z.string(),
+    displayName: z.string(),
+  }),
+  summary: z.object({
+    artifactCount: z.number().int().nonnegative(),
+    pinnedArtifacts: z.number().int().nonnegative(),
+    orgOrCustomerGovernedArtifacts: z.number().int().nonnegative(),
+    artifactOwnerOnlyActionCount: z.number().int().nonnegative(),
+    deliverableCount: z.number().int().nonnegative(),
+    publicMaterials: z.number().int().nonnegative(),
+    ownerOnlyDeliverables: z.number().int().nonnegative(),
+    cachedPackages: z.number().int().nonnegative(),
+    orgOrCustomerGovernedDeliverables: z.number().int().nonnegative(),
+    deliverableOwnerOnlyActionCount: z.number().int().nonnegative(),
+  }),
+  byGovernanceLayer: z.array(
+    z.object({
+      key: resourceGovernanceLayerSchema,
+      label: z.string(),
+      artifactCount: z.number().int().nonnegative(),
+      deliverableCount: z.number().int().nonnegative(),
+      resourceCount: z.number().int().nonnegative(),
+    }),
+  ),
+  byCustomerAccount: z.array(
+    z.object({
+      key: z.string(),
+      slug: z.string(),
+      displayName: z.string(),
+      isUnassigned: z.boolean(),
+      visibleArtifactCount: z.number().int().nonnegative(),
+      deliverableCount: z.number().int().nonnegative(),
+      publicMaterialCount: z.number().int().nonnegative(),
+      restrictedActionCount: z.number().int().nonnegative(),
+    }),
+  ),
+  riskyActions: z.object({
+    packageRebuildsRequireOwner: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        layer: resourceGovernanceLayerSchema,
+      }),
+    ),
+    publicMaterialFlipsRequireOwner: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        layer: resourceGovernanceLayerSchema,
+      }),
+    ),
+    blockedArtifactUnpins: z.array(
+      z.object({
+        artifactId: z.string(),
+        deliverableTitles: z.array(z.string()),
+        layer: resourceGovernanceLayerSchema,
+      }),
+    ),
+  }),
+  hygiene: z.object({
+    missingCustomerContextCount: z.number().int().nonnegative(),
+    ambiguousGovernanceCount: z.number().int().nonnegative(),
+    publicDeliverablesWithoutAttributionCount: z.number().int().nonnegative(),
+    items: z.array(
+      z.object({
+        key: z.string(),
+        label: z.string(),
+        detail: z.string(),
+        count: z.number().int().nonnegative(),
+      }),
+    ),
+  }),
+  artifacts: z.array(
+    z.object({
+      id: z.string(),
+      kind: artifactKindSchema,
+      customerAccount: resourceGovernanceCustomerRefSchema,
+      primaryLayer: resourceGovernanceLayerSchema,
+      layers: z.array(resourceGovernanceLayerSchema),
+      ownerOnlyActions: z.array(z.string()),
+      restrictedActions: z.array(z.string()),
+      blockedUnpinByDeliverable: z.boolean(),
+      dependentDeliverableCount: z.number().int().nonnegative(),
+    }),
+  ),
+  deliverables: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      kind: deliverableKindSchema,
+      visibility: deliverableVisibilitySchema,
+      sourceKind: deliverableSourceKindSchema,
+      customerAccounts: z.array(resourceGovernanceCustomerRefSchema),
+      primaryLayer: resourceGovernanceLayerSchema,
+      layers: z.array(resourceGovernanceLayerSchema),
+      ownerOnlyActions: z.array(z.string()),
+      restrictedActions: z.array(z.string()),
+      customerDownloadEligible: z.boolean(),
+      packageDeliveryEligible: z.boolean(),
+      ambiguousCustomerContext: z.boolean(),
+      hasCachedPackage: z.boolean(),
+    }),
+  ),
+});
+
 export const deliverableDownloadResponseSchema = z.object({
   fileName: z.string(),
   mimeType: z.string(),
@@ -872,6 +994,7 @@ export type DeliverableKind = z.infer<typeof deliverableKindSchema>;
 export type DeliverableVisibility = z.infer<typeof deliverableVisibilitySchema>;
 export type DeliverableSourceKind = z.infer<typeof deliverableSourceKindSchema>;
 export type DeliverablePackagingPresetKey = z.infer<typeof deliverablePackagingPresetKeySchema>;
+export type ResourceGovernanceLayer = z.infer<typeof resourceGovernanceLayerSchema>;
 export type ComputeRequestedBy = z.infer<typeof computeRequestedBySchema>;
 export type ComputeRunnerType = z.infer<typeof computeRunnerTypeSchema>;
 export type ComputeNetworkMode = z.infer<typeof computeNetworkModeSchema>;
@@ -929,6 +1052,9 @@ export type ListDeliverablePackagingPresetsResponse = z.infer<
 >;
 export type RepresentativeDeliverableInsightsSnapshot = z.infer<
   typeof representativeDeliverableInsightsSnapshotSchema
+>;
+export type RepresentativeResourceGovernanceSnapshot = z.infer<
+  typeof representativeResourceGovernanceSnapshotSchema
 >;
 export type DeliverableDownloadResponse = z.infer<typeof deliverableDownloadResponseSchema>;
 export type ExecuteToolResponse = z.infer<typeof executeToolResponseSchema>;

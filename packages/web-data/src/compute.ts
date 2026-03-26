@@ -6,6 +6,7 @@ import {
   nativeComputerUseExecutionRequestSchema,
   nativeComputerUsePreflightResponseSchema,
   organizationGovernanceOverlaysSchema,
+  representativeResourceGovernanceSnapshotSchema,
   ownerManagedPolicyOverlaysSchema,
   updateArtifactRequestSchema,
   updateArtifactResponseSchema,
@@ -16,6 +17,7 @@ import {
   type NativeComputerUsePreflightSnapshot,
   type OrganizationGovernanceOverlays,
   type OwnerManagedPolicyOverlays,
+  type RepresentativeResourceGovernanceSnapshot,
   type ResolveApprovalResponse,
   type UpdateArtifactResponse,
   type UpsertMcpBindingRequest,
@@ -33,6 +35,7 @@ import {
   type RepresentativeApprovalInsightsSnapshot,
 } from "./compute-insights";
 import { prisma } from "./prisma";
+import { buildRepresentativeResourceGovernanceSnapshot } from "./resource-governance";
 
 const computeSessionInclude = Prisma.validator<Prisma.ComputeSessionDefaultArgs>()({
   include: {
@@ -573,6 +576,136 @@ export async function getRepresentativeApprovalInsights(
 
   const source = await buildRepresentativeApprovalInsightsSource(representative);
   return buildRepresentativeApprovalInsights(source, filters);
+}
+
+export async function getRepresentativeResourceGovernance(
+  representativeSlug: string,
+): Promise<RepresentativeResourceGovernanceSnapshot | null> {
+  const representative = await getRepresentativeIdentity(representativeSlug);
+
+  if (!representative) {
+    return null;
+  }
+
+  const governance = serializeOrganizationGovernance(representative);
+
+  const [artifacts, deliverables] = await Promise.all([
+    prisma.artifact.findMany({
+      where: {
+        representativeId: representative.id,
+      },
+      select: {
+        id: true,
+        kind: true,
+        isPinned: true,
+        contactId: true,
+      },
+      orderBy: [{ createdAt: "desc" }],
+    }),
+    prisma.deliverable.findMany({
+      where: {
+        representativeId: representative.id,
+      },
+      select: {
+        id: true,
+        title: true,
+        kind: true,
+        visibility: true,
+        sourceKind: true,
+        artifactId: true,
+        bundleItemArtifactIds: true,
+        createdBy: true,
+        packageBuiltAt: true,
+      },
+      orderBy: [{ createdAt: "desc" }],
+    }),
+  ]);
+
+  const dependentDeliverablesByArtifact = new Map<
+    string,
+    Array<{
+      id: string;
+      title: string;
+    }>
+  >();
+
+  for (const deliverable of deliverables) {
+    const artifactIds = [
+      ...(deliverable.artifactId ? [deliverable.artifactId] : []),
+      ...deliverable.bundleItemArtifactIds,
+    ];
+    for (const artifactId of artifactIds) {
+      const bucket = dependentDeliverablesByArtifact.get(artifactId) ?? [];
+      bucket.push({
+        id: deliverable.id,
+        title: deliverable.title,
+      });
+      dependentDeliverablesByArtifact.set(artifactId, bucket);
+    }
+  }
+
+  return representativeResourceGovernanceSnapshotSchema.parse(
+    buildRepresentativeResourceGovernanceSnapshot({
+      representative: {
+        slug: representative.slug,
+        displayName: representative.displayName,
+      },
+      ownerManagedOverlays: serializeOwnerManagedOverlays(representative.owner.capabilityProfiles),
+      governance: {
+        ...governance,
+        organization: {
+          id: governance.organization.id ?? null,
+          slug: governance.organization.slug ?? null,
+          displayName: governance.organization.displayName ?? null,
+        },
+        customerAccounts: governance.customerAccounts.map((account) => ({
+          ...account,
+          id: account.id ?? null,
+        })),
+        contactAssignments: governance.contactAssignments.map((assignment) => ({
+          ...assignment,
+          displayName: assignment.displayName ?? null,
+          username: assignment.username ?? null,
+          computeTrustTier: assignment.computeTrustTier ?? null,
+          customerAccountId: assignment.customerAccountId ?? null,
+          customerAccountSlug: assignment.customerAccountSlug ?? null,
+        })),
+      },
+      artifacts: artifacts.map((artifact) => ({
+        id: artifact.id,
+        kind: artifact.kind.toLowerCase() as
+          | "stdout"
+          | "stderr"
+          | "file"
+          | "archive"
+          | "screenshot"
+          | "json"
+          | "trace",
+        isPinned: artifact.isPinned,
+        contactId: artifact.contactId,
+        dependentDeliverableIds:
+          dependentDeliverablesByArtifact.get(artifact.id)?.map((item) => item.id) ?? [],
+        dependentDeliverableTitles:
+          dependentDeliverablesByArtifact.get(artifact.id)?.map((item) => item.title) ?? [],
+      })),
+      deliverables: deliverables.map((deliverable) => ({
+        id: deliverable.id,
+        title: deliverable.title,
+        kind: deliverable.kind.toLowerCase() as
+          | "deck"
+          | "case_study"
+          | "download"
+          | "generated_document"
+          | "package",
+        visibility: deliverable.visibility.toLowerCase() as "owner_only" | "public_material",
+        sourceKind: deliverable.sourceKind.toLowerCase() as "artifact" | "external_link" | "bundle",
+        artifactId: deliverable.artifactId,
+        bundleItemArtifactIds: deliverable.bundleItemArtifactIds,
+        hasCachedPackage: Boolean(deliverable.packageBuiltAt),
+        createdBy: deliverable.createdBy,
+      })),
+    }),
+  );
 }
 
 export async function getRepresentativeComputeArtifacts(
