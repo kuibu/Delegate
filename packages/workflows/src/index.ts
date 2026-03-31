@@ -10,6 +10,17 @@ export const workflowEngineSchema = z.enum([
   "temporal",
 ]);
 
+export const workflowEnginePhaseSchema = z.enum([
+  "dispatch_pending",
+  "waiting_timer",
+  "activity_running",
+  "retry_backoff",
+  "cancel_requested",
+  "completed",
+  "failed",
+  "canceled",
+]);
+
 export const workflowStatusSchema = z.enum([
   "queued",
   "running",
@@ -50,6 +61,7 @@ export const workflowDispatchTargetSchema = z.object({
 
 export type WorkflowKind = z.infer<typeof workflowKindSchema>;
 export type WorkflowEngine = z.infer<typeof workflowEngineSchema>;
+export type WorkflowEnginePhase = z.infer<typeof workflowEnginePhaseSchema>;
 export type WorkflowStatus = z.infer<typeof workflowStatusSchema>;
 export type HandoffFollowUpInput = z.infer<typeof handoffFollowUpInputSchema>;
 export type ApprovalExpirationInput = z.infer<typeof approvalExpirationInputSchema>;
@@ -82,6 +94,10 @@ export function scheduleApprovalExpiration(
 
 export function isWorkflowTerminal(status: WorkflowStatus): boolean {
   return status === "completed" || status === "failed" || status === "canceled";
+}
+
+export function isWorkflowEnginePhaseTerminal(phase: WorkflowEnginePhase): boolean {
+  return phase === "completed" || phase === "failed" || phase === "canceled";
 }
 
 export function getWorkflowEngineConfig(

@@ -5,11 +5,13 @@ import {
   buildWorkflowExternalId,
   getWorkflowEngineConfig,
   handoffFollowUpDedupeKey,
+  isWorkflowEnginePhaseTerminal,
   isWorkflowTerminal,
   LOCAL_WORKFLOW_QUEUE,
   resolveWorkflowDispatchTarget,
   scheduleApprovalExpiration,
   scheduleHandoffFollowUp,
+  workflowEnginePhaseSchema,
 } from "../src/index";
 
 describe("workflow helpers", () => {
@@ -36,6 +38,21 @@ describe("workflow helpers", () => {
     expect(isWorkflowTerminal("completed")).toBe(true);
     expect(isWorkflowTerminal("failed")).toBe(true);
     expect(isWorkflowTerminal("canceled")).toBe(true);
+  });
+
+  it("parses the workflow engine phases used for Temporal-native state modeling", () => {
+    expect(workflowEnginePhaseSchema.parse("dispatch_pending")).toBe("dispatch_pending");
+    expect(workflowEnginePhaseSchema.parse("waiting_timer")).toBe("waiting_timer");
+    expect(workflowEnginePhaseSchema.parse("cancel_requested")).toBe("cancel_requested");
+  });
+
+  it("knows which workflow engine phases are terminal", () => {
+    expect(isWorkflowEnginePhaseTerminal("dispatch_pending")).toBe(false);
+    expect(isWorkflowEnginePhaseTerminal("waiting_timer")).toBe(false);
+    expect(isWorkflowEnginePhaseTerminal("activity_running")).toBe(false);
+    expect(isWorkflowEnginePhaseTerminal("completed")).toBe(true);
+    expect(isWorkflowEnginePhaseTerminal("failed")).toBe(true);
+    expect(isWorkflowEnginePhaseTerminal("canceled")).toBe(true);
   });
 
   it("falls back to the local runner when Temporal is not fully configured", () => {

@@ -247,6 +247,17 @@ enum WorkflowEngine {
   TEMPORAL
 }
 
+enum WorkflowEnginePhase {
+  DISPATCH_PENDING
+  WAITING_TIMER
+  ACTIVITY_RUNNING
+  RETRY_BACKOFF
+  CANCEL_REQUESTED
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
 enum LedgerEntryKind {
   MODEL_USAGE
   COMPUTE_MINUTES
@@ -920,17 +931,24 @@ model WorkflowRun {
   kind             WorkflowKind
   engine           WorkflowEngine @default(LOCAL_RUNNER)
   status           WorkflowStatus @default(QUEUED)
+  enginePhase      WorkflowEnginePhase?
   dedupeKey        String         @unique
   queueName        String?
   externalWorkflowId String?
+  externalRunId    String?
   scheduledAt      DateTime
+  nextWakeAt       DateTime?
   startedAt        DateTime?
   completedAt      DateTime?
   failedAt         DateTime?
+  cancelRequestedAt DateTime?
+  lastObservedAt   DateTime?
   lastError        String?
+  lastEngineError  String?
   input            Json
   output           Json?
   attemptCount     Int            @default(0)
+  dispatchAttemptCount Int        @default(0)
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   representative   Representative @relation(fields: [representativeId], references: [id])
