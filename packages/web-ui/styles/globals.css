@@ -1887,6 +1887,79 @@ button.skill-row:hover {
   align-items: stretch;
 }
 
+.representative-chat-tier-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.representative-chat-tier {
+  width: 100%;
+  border: 1px solid rgba(25, 23, 23, 0.1);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 253, 249, 0.88);
+  text-align: left;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.representative-chat-tier:hover {
+  border-color: rgba(180, 86, 42, 0.38);
+  box-shadow: 0 14px 28px rgba(131, 56, 15, 0.08);
+  transform: translateY(-1px);
+}
+
+.representative-chat-tier-active {
+  border-color: rgba(180, 86, 42, 0.58);
+  box-shadow: 0 16px 32px rgba(131, 56, 15, 0.12);
+  background:
+    linear-gradient(160deg, rgba(255, 248, 240, 0.96), rgba(255, 252, 247, 0.92));
+}
+
+.representative-chat-tier-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.representative-chat-log {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.representative-chat-message {
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(25, 23, 23, 0.08);
+}
+
+.representative-chat-message p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.representative-chat-message-user {
+  background: rgba(240, 247, 255, 0.92);
+}
+
+.representative-chat-message-assistant {
+  background: rgba(255, 252, 247, 0.95);
+}
+
+.representative-chat-form {
+  display: grid;
+  gap: 10px;
+}
+
+.representative-chat-textarea {
+  min-height: 140px;
+}
+
 @media (max-width: 980px) {
   .hero,
   .profile-grid,

@@ -1,7 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@delegate/domain", "@delegate/web-data", "@delegate/web-ui"],
+  allowedDevOrigins: ["127.0.0.1"],
+  transpilePackages: [
+    "@delegate/domain",
+    "@delegate/web-data",
+    "@delegate/web-ui",
+    "@delegate/model-runtime",
+    "@delegate/runtime",
+    "@delegate/lifecycle-hooks",
+  ],
 };
 
 export default nextConfig;

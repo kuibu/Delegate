@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@delegate/domain": "workspace:*",
+    "@delegate/model-runtime": "workspace:*",
+    "@delegate/runtime": "workspace:*",
     "@delegate/web-data": "workspace:*",
     "@delegate/web-ui": "workspace:*",
     "next": "^16.2.1",

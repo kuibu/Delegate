@@ -20,6 +20,8 @@ import {
   type Locale,
 } from "@delegate/web-ui";
 
+import { RepresentativeChatPanel } from "./representative-chat-panel";
+
 type RepresentativeSkill = Representative["skills"][number];
 
 export default async function RepresentativePage({
@@ -191,6 +193,15 @@ export default async function RepresentativePage({
             detail: t.signalCards.skillPacksDetail,
           },
         ]}
+      />
+
+      <RepresentativeChatPanel
+        freeReplyLimit={representative.contract.freeReplyLimit}
+        identitySummary={representative.knowledgePack.identitySummary}
+        locale={locale}
+        pricing={representative.pricing}
+        representativeName={representative.name}
+        representativeSlug={representative.slug}
       />
 
       <DashboardPanelFrame
@@ -547,6 +558,7 @@ const copy = {
     language: { zh: "中文", en: "English" },
     menu: [
       { href: "#overview", label: "概览" },
+      { href: "#chat", label: "对话" },
       { href: "#trust", label: "边界" },
       { href: "#skills", label: "技能" },
       { href: "#knowledge", label: "知识" },
@@ -638,6 +650,7 @@ const copy = {
     language: { zh: "Chinese", en: "English" },
     menu: [
       { href: "#overview", label: "Overview" },
+      { href: "#chat", label: "Chat" },
       { href: "#trust", label: "Trust" },
       { href: "#skills", label: "Skills" },
       { href: "#knowledge", label: "Knowledge" },
