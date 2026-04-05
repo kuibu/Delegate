@@ -258,6 +258,11 @@ enum WorkflowEnginePhase {
   CANCELED
 }
 
+enum WorkflowCommandType {
+  START
+  CANCEL
+}
+
 enum LedgerEntryKind {
   MODEL_USAGE
   COMPUTE_MINUTES
@@ -956,12 +961,30 @@ model WorkflowRun {
   conversation     Conversation?  @relation(fields: [conversationId], references: [id])
   handoffRequest   HandoffRequest? @relation(fields: [handoffRequestId], references: [id])
   approvalRequest  ApprovalRequest? @relation(fields: [approvalRequestId], references: [id])
+  commandOutbox    WorkflowCommandOutbox[]
 
   @@index([representativeId, scheduledAt])
   @@index([engine, status, scheduledAt])
   @@index([status, scheduledAt])
   @@index([handoffRequestId])
   @@index([approvalRequestId])
+}
+
+model WorkflowCommandOutbox {
+  id           String              @id @default(cuid())
+  workflowRunId String
+  commandType  WorkflowCommandType
+  payload      Json?
+  attemptCount Int                 @default(0)
+  availableAt  DateTime            @default(now())
+  processedAt  DateTime?
+  lastError    String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  workflowRun  WorkflowRun         @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+
+  @@index([processedAt, availableAt, createdAt])
+  @@index([workflowRunId, commandType, processedAt])
 }
 
 model BrowserSession {

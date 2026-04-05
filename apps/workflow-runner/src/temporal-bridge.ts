@@ -1,4 +1,8 @@
-import { Client, Connection } from "@temporalio/client";
+import {
+  Client,
+  Connection,
+  WorkflowExecutionAlreadyStartedError,
+} from "@temporalio/client";
 import { NativeConnection, Worker } from "@temporalio/worker";
 import type { WorkflowEngineConfig } from "@delegate/workflows";
 import { fileURLToPath } from "node:url";
@@ -58,11 +62,72 @@ export async function createTemporalBridge(
       return { ...state };
     },
     async startWorkflowExecution(params) {
-      await client.workflow.start("runDelegateWorkflowRun", {
-        args: [params.workflowRunId],
-        taskQueue: params.taskQueue,
-        workflowId: params.workflowId,
-      });
+      try {
+        const handle = await client.workflow.start("runDelegateWorkflowRun", {
+          args: [params.workflowRunId],
+          taskQueue: params.taskQueue,
+          workflowId: params.workflowId,
+          workflowIdReusePolicy: "REJECT_DUPLICATE",
+        });
+
+        return {
+          outcome: "started" as const,
+          runId: handle.firstExecutionRunId,
+          observedAt: new Date(),
+        };
+      } catch (error) {
+        if (!(error instanceof WorkflowExecutionAlreadyStartedError)) {
+          throw error;
+        }
+
+        const handle = client.workflow.getHandle(params.workflowId);
+        const description = await handle.describe();
+
+        return {
+          outcome: "already_started" as const,
+          runId: description.runId,
+          observedAt: new Date(),
+        };
+      }
+    },
+    async cancelWorkflowExecution(params) {
+      const handle = client.workflow.getHandle(
+        params.workflowId,
+        params.runId,
+      );
+
+      try {
+        const description = await handle.describe();
+        if (description.status.name !== "RUNNING") {
+          return {
+            outcome: "already_closed" as const,
+            runId: description.runId,
+            observedAt: new Date(),
+          };
+        }
+
+        await handle.cancel();
+
+        return {
+          outcome: "canceled" as const,
+          runId: description.runId,
+          observedAt: new Date(),
+        };
+      } catch (error) {
+        if (isTemporalWorkflowNotFound(error)) {
+          return {
+            outcome: "not_found" as const,
+            runId: params.runId ?? null,
+            observedAt: new Date(),
+          };
+        }
+
+        throw error;
+      }
     },
   };
+}
+
+function isTemporalWorkflowNotFound(error: unknown) {
+  return error instanceof Error && error.name === "WorkflowNotFoundError";
 }
