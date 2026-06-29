@@ -11,6 +11,7 @@ import {
   resolveWorkflowDispatchTarget,
   scheduleApprovalExpiration,
   scheduleHandoffFollowUp,
+  shouldDispatchWorkflowViaTemporalOutbox,
   temporalWorkflowRunInputSchema,
   workflowEnginePhaseSchema,
 } from "../src/index";
@@ -103,5 +104,14 @@ describe("workflow helpers", () => {
       workflowRunId: "workflow-123",
       scheduledAt: "2026-04-05T12:00:00.000Z",
     });
+  });
+
+  it("flags only Temporal dispatch targets for outbox start commands", () => {
+    expect(
+      shouldDispatchWorkflowViaTemporalOutbox({ effectiveEngine: "temporal" }),
+    ).toBe(true);
+    expect(
+      shouldDispatchWorkflowViaTemporalOutbox({ effectiveEngine: "local_runner" }),
+    ).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import {
   getWorkflowEngineConfig,
   resolveWorkflowDispatchTarget,
   scheduleHandoffFollowUp,
+  shouldDispatchWorkflowViaTemporalOutbox,
 } from "@delegate/workflows";
 import type {
   ConversationPlan,
@@ -1143,6 +1144,7 @@ async function enqueueHandoffFollowUpWorkflowTx(
     representativeKey: params.representativeSlug,
     subjectId: params.handoffId,
   });
+  const isTemporal = shouldDispatchWorkflowViaTemporalOutbox(dispatchTarget);
   const workflow = await tx.workflowRun.create({
     data: {
       representativeId: params.representativeId,
@@ -1150,8 +1152,14 @@ async function enqueueHandoffFollowUpWorkflowTx(
       conversationId: params.conversationId,
       handoffRequestId: params.handoffId,
       kind: "HANDOFF_FOLLOW_UP",
-      engine: dispatchTarget.effectiveEngine === "temporal" ? "TEMPORAL" : "LOCAL_RUNNER",
+      engine: isTemporal ? "TEMPORAL" : "LOCAL_RUNNER",
       status: "QUEUED",
+      ...(isTemporal
+        ? {
+            enginePhase: "DISPATCH_PENDING",
+            nextWakeAt: scheduledAt,
+          }
+        : {}),
       dedupeKey,
       queueName: dispatchTarget.queueName,
       externalWorkflowId: dispatchTarget.externalWorkflowId,
@@ -1160,6 +1168,19 @@ async function enqueueHandoffFollowUpWorkflowTx(
         handoffId: params.handoffId,
         handoffWindowHours,
       },
+      ...(isTemporal
+        ? {
+            commandOutbox: {
+              create: {
+                commandType: "START",
+                payload: {
+                  source: "handoff_follow_up_enqueue",
+                  scheduledAt: scheduledAt.toISOString(),
+                },
+              },
+            },
+          }
+        : {}),
     },
   });
 

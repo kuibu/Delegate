@@ -106,6 +106,12 @@ export function isWorkflowEnginePhaseTerminal(phase: WorkflowEnginePhase): boole
   return phase === "completed" || phase === "failed" || phase === "canceled";
 }
 
+export function shouldDispatchWorkflowViaTemporalOutbox(params: {
+  effectiveEngine: WorkflowEngine;
+}): boolean {
+  return params.effectiveEngine === "temporal";
+}
+
 export function getWorkflowEngineConfig(
   env: Record<string, string | undefined> = process.env,
 ): WorkflowEngineConfig {
