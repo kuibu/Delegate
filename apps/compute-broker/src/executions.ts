@@ -15,6 +15,7 @@ import {
   type NativeComputerProvider,
   type ToolExecutionRequest,
 } from "@delegate/compute-protocol";
+import type { Prisma } from "@prisma/client";
 
 import { createApprovalRequestForExecution } from "./approvals";
 import {
@@ -363,18 +364,10 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
           },
         });
 
-        await tx.workflowRun.updateMany({
-          where: {
-            approvalRequestId: approval.id,
-            status: "QUEUED",
-          },
-          data: {
-            status: "CANCELED",
-            completedAt: resolvedAt,
-            output: {
-              outcome: "canceled_after_manual_rejection",
-            },
-          },
+        await cancelApprovalWorkflowsTx(tx, {
+          approvalId: approval.id,
+          resolvedAt,
+          outcome: "canceled_after_manual_rejection",
         });
 
         return {
@@ -397,17 +390,17 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
   const context = approval.sessionId ? await loadSessionPolicyContext(approval.sessionId) : null;
 
   const resolvedAt = new Date();
-  const updatedApproval = await prisma.approvalRequest.update({
-    where: { id: approval.id },
-    data: {
-      status: "APPROVED",
-      resolvedAt,
-      resolvedBy: input.resolvedBy ?? "owner-dashboard",
-    },
-  });
+  const updatedApproval = await prisma.$transaction(async (tx) => {
+    const nextApproval = await tx.approvalRequest.update({
+      where: { id: approval.id },
+      data: {
+        status: "APPROVED",
+        resolvedAt,
+        resolvedBy: input.resolvedBy ?? "owner-dashboard",
+      },
+    });
 
-  await prisma.$transaction([
-    prisma.eventAudit.create({
+    await tx.eventAudit.create({
       data: {
         representativeId: approval.representativeId,
         contactId: approval.contactId ?? null,
@@ -420,31 +413,25 @@ export async function resolveApproval(approvalId: string, rawInput: unknown) {
           subagentId: blockedExecution?.subagentId ?? null,
         },
       },
-    }),
-    prisma.workflowRun.updateMany({
-      where: {
-        approvalRequestId: approval.id,
-        status: "QUEUED",
-      },
-      data: {
-        status: "CANCELED",
-        completedAt: resolvedAt,
-        output: {
-          outcome: "canceled_after_manual_approval",
+    });
+
+    await cancelApprovalWorkflowsTx(tx, {
+      approvalId: approval.id,
+      resolvedAt,
+      outcome: "canceled_after_manual_approval",
+    });
+
+    if (approval.contactId) {
+      await tx.contact.update({
+        where: { id: approval.contactId },
+        data: {
+          lastApprovalGrantedAt: resolvedAt,
         },
-      },
-    }),
-    ...(approval.contactId
-      ? [
-          prisma.contact.update({
-            where: { id: approval.contactId },
-            data: {
-              lastApprovalGrantedAt: resolvedAt,
-            },
-          }),
-        ]
-      : []),
-  ]);
+      });
+    }
+
+    return nextApproval;
+  });
 
   if (!blockedExecution || !context) {
     return resolveApprovalResponseSchema.parse({
@@ -1600,6 +1587,63 @@ function normalizeExecutionInput(
         estimatedCostCents: input.estimatedCostCents,
         hasPaidEntitlement: input.hasPaidEntitlement,
       };
+    }
+  }
+}
+
+async function cancelApprovalWorkflowsTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    approvalId: string;
+    resolvedAt: Date;
+    outcome: string;
+  },
+) {
+  const workflows = await tx.workflowRun.findMany({
+    where: {
+      approvalRequestId: params.approvalId,
+      status: {
+        in: ["QUEUED", "RUNNING"],
+      },
+    },
+    select: {
+      id: true,
+      engine: true,
+      externalWorkflowId: true,
+    },
+  });
+
+  for (const workflow of workflows) {
+    const needsTemporalCancel =
+      workflow.engine === "TEMPORAL" && Boolean(workflow.externalWorkflowId);
+
+    await tx.workflowRun.update({
+      where: { id: workflow.id },
+      data: {
+        status: "CANCELED",
+        enginePhase: needsTemporalCancel ? "CANCEL_REQUESTED" : "CANCELED",
+        nextWakeAt: null,
+        completedAt: params.resolvedAt,
+        cancelRequestedAt: params.resolvedAt,
+        lastObservedAt: params.resolvedAt,
+        lastEngineError: null,
+        output: {
+          outcome: params.outcome,
+        },
+      },
+    });
+
+    if (needsTemporalCancel) {
+      await tx.workflowCommandOutbox.create({
+        data: {
+          workflowRunId: workflow.id,
+          commandType: "CANCEL",
+          payload: {
+            source: params.outcome,
+            requestedAt: params.resolvedAt.toISOString(),
+          },
+        },
+      });
     }
   }
 }

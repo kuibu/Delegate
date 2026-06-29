@@ -1,0 +1,163 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockPrisma } = vi.hoisted(() => {
+  const prismaMock = {
+    approvalRequest: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+    contact: {
+      update: vi.fn(),
+    },
+    eventAudit: {
+      create: vi.fn(),
+    },
+    toolExecution: {
+      findUnique: vi.fn(),
+    },
+    workflowCommandOutbox: {
+      create: vi.fn(),
+    },
+    workflowRun: {
+      findMany: vi.fn(),
+      update: vi.fn(),
+    },
+    $transaction: vi.fn(),
+  };
+
+  prismaMock.$transaction.mockImplementation(async (value: unknown) => {
+    if (typeof value === "function") {
+      return (value as (client: typeof prismaMock) => unknown)(prismaMock);
+    }
+    if (Array.isArray(value)) {
+      return Promise.all(value);
+    }
+    return value;
+  });
+
+  return {
+    mockPrisma: prismaMock,
+  };
+});
+
+vi.mock("../src/prisma", () => ({
+  prisma: mockPrisma,
+}));
+
+vi.mock("../src/lifecycle-hooks", () => ({
+  computeLifecycleHooks: {
+    emit: vi.fn(),
+  },
+}));
+
+describe("approval workflow cancellation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.COMPUTE_BROKER_INTERNAL_TOKEN = "test-internal-token";
+    mockPrisma.$transaction.mockImplementation(async (value: unknown) => {
+      if (typeof value === "function") {
+        return (value as (client: typeof mockPrisma) => unknown)(mockPrisma);
+      }
+      if (Array.isArray(value)) {
+        return Promise.all(value);
+      }
+      return value;
+    });
+    mockPrisma.approvalRequest.findUnique.mockResolvedValue(buildApproval("PENDING"));
+    mockPrisma.approvalRequest.update.mockImplementation(async ({ data }: { data: { status: string; resolvedAt: Date; resolvedBy: string } }) => ({
+      ...buildApproval(data.status),
+      resolvedAt: data.resolvedAt,
+      resolvedBy: data.resolvedBy,
+    }));
+    mockPrisma.eventAudit.create.mockResolvedValue({ id: "event-1" });
+    mockPrisma.workflowRun.findMany.mockResolvedValue([
+      {
+        id: "workflow-temporal-1",
+        engine: "TEMPORAL",
+        externalWorkflowId: "delegate:rep-1:approval_expiration:approval-1",
+      },
+    ]);
+    mockPrisma.workflowRun.update.mockResolvedValue({ id: "workflow-temporal-1" });
+    mockPrisma.workflowCommandOutbox.create.mockResolvedValue({ id: "cmd-cancel-1" });
+  });
+
+  it("queues a CANCEL command when a pending approval is rejected", async () => {
+    const { resolveApproval } = await import("../src/executions");
+
+    await resolveApproval("approval-1", {
+      resolution: "rejected",
+      resolvedBy: "owner-dashboard",
+    });
+
+    expect(mockPrisma.workflowRun.update).toHaveBeenCalledWith({
+      where: { id: "workflow-temporal-1" },
+      data: expect.objectContaining({
+        status: "CANCELED",
+        enginePhase: "CANCEL_REQUESTED",
+        nextWakeAt: null,
+        cancelRequestedAt: expect.any(Date),
+        output: {
+          outcome: "canceled_after_manual_rejection",
+        },
+      }),
+    });
+    expect(mockPrisma.workflowCommandOutbox.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        workflowRunId: "workflow-temporal-1",
+        commandType: "CANCEL",
+        payload: expect.objectContaining({
+          source: "canceled_after_manual_rejection",
+          requestedAt: expect.any(String),
+        }),
+      }),
+    });
+  });
+
+  it("queues a CANCEL command when a pending approval is approved", async () => {
+    const { resolveApproval } = await import("../src/executions");
+
+    await resolveApproval("approval-1", {
+      resolution: "approved",
+      resolvedBy: "owner-dashboard",
+    });
+
+    expect(mockPrisma.workflowRun.update).toHaveBeenCalledWith({
+      where: { id: "workflow-temporal-1" },
+      data: expect.objectContaining({
+        status: "CANCELED",
+        enginePhase: "CANCEL_REQUESTED",
+        output: {
+          outcome: "canceled_after_manual_approval",
+        },
+      }),
+    });
+    expect(mockPrisma.workflowCommandOutbox.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        workflowRunId: "workflow-temporal-1",
+        commandType: "CANCEL",
+        payload: expect.objectContaining({
+          source: "canceled_after_manual_approval",
+        }),
+      }),
+    });
+  });
+});
+
+function buildApproval(status: string) {
+  return {
+    id: "approval-1",
+    representativeId: "rep-1",
+    contactId: null,
+    conversationId: null,
+    sessionId: null,
+    toolExecutionId: null,
+    subagentId: "compute-agent",
+    status,
+    reason: "policy_requires_approval",
+    requestedActionSummary: "Run command",
+    riskSummary: "Sensitive operation",
+    requestedAt: new Date("2026-04-05T12:00:00.000Z"),
+    resolvedAt: null,
+    resolvedBy: null,
+  };
+}

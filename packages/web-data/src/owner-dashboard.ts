@@ -417,14 +417,26 @@ export async function setHandoffRequestStatus(params: {
       throw new Error("Handoff request not found.");
     }
 
-    const updated = await prisma.handoffRequest.update({
-      where: { id: handoff.id },
-      data: {
-        status: mapHandoffStatusToDb(params.status),
-      },
-      include: {
-        contact: true,
-      },
+    const updated = await prisma.$transaction(async (tx) => {
+      const nextHandoff = await tx.handoffRequest.update({
+        where: { id: handoff.id },
+        data: {
+          status: mapHandoffStatusToDb(params.status),
+        },
+        include: {
+          contact: true,
+        },
+      });
+
+      if (params.status === "accepted" || params.status === "declined" || params.status === "closed") {
+        await cancelHandoffWorkflowsTx(tx, {
+          handoffId: nextHandoff.id,
+          resolvedAt: new Date(),
+          outcome: "canceled_after_handoff_resolution",
+        });
+      }
+
+      return nextHandoff;
     });
 
     await maybeStoreHandoffPatternFromStatusChange({
@@ -432,22 +444,6 @@ export async function setHandoffRequestStatus(params: {
       handoffId: updated.id,
       nextStatus: params.status,
     });
-
-    if (params.status === "accepted" || params.status === "declined" || params.status === "closed") {
-      await prisma.workflowRun.updateMany({
-        where: {
-          handoffRequestId: updated.id,
-          status: "QUEUED",
-        },
-        data: {
-          status: "CANCELED",
-          completedAt: new Date(),
-          output: {
-            outcome: "canceled_after_handoff_resolution",
-          },
-        },
-      });
-    }
 
     return {
       id: updated.id,
@@ -814,6 +810,63 @@ function mapPriorityToLabel(value: number): "High" | "Medium" | "Low" {
     return "Medium";
   }
   return "Low";
+}
+
+async function cancelHandoffWorkflowsTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    handoffId: string;
+    resolvedAt: Date;
+    outcome: string;
+  },
+) {
+  const workflows = await tx.workflowRun.findMany({
+    where: {
+      handoffRequestId: params.handoffId,
+      status: {
+        in: ["QUEUED", "RUNNING"],
+      },
+    },
+    select: {
+      id: true,
+      engine: true,
+      externalWorkflowId: true,
+    },
+  });
+
+  for (const workflow of workflows) {
+    const needsTemporalCancel =
+      workflow.engine === "TEMPORAL" && Boolean(workflow.externalWorkflowId);
+
+    await tx.workflowRun.update({
+      where: { id: workflow.id },
+      data: {
+        status: "CANCELED",
+        enginePhase: needsTemporalCancel ? "CANCEL_REQUESTED" : "CANCELED",
+        nextWakeAt: null,
+        completedAt: params.resolvedAt,
+        cancelRequestedAt: params.resolvedAt,
+        lastObservedAt: params.resolvedAt,
+        lastEngineError: null,
+        output: {
+          outcome: params.outcome,
+        },
+      },
+    });
+
+    if (needsTemporalCancel) {
+      await tx.workflowCommandOutbox.create({
+        data: {
+          workflowRunId: workflow.id,
+          commandType: "CANCEL",
+          payload: {
+            source: params.outcome,
+            requestedAt: params.resolvedAt.toISOString(),
+          },
+        },
+      });
+    }
+  }
 }
 
 function normalizeHandoffStatus(

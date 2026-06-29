@@ -514,6 +514,15 @@ export async function processWorkflowRunById(workflowRunId: string) {
     return;
   }
 
+  if (workflow.status === WorkflowStatus.CANCELED) {
+    await markWorkflowRunCanceledObserved(workflow.id);
+    return;
+  }
+
+  if (workflow.status === WorkflowStatus.COMPLETED || workflow.status === WorkflowStatus.FAILED) {
+    return;
+  }
+
   switch (workflow.kind) {
     case WorkflowKind.APPROVAL_EXPIRATION:
       await processApprovalExpiration(workflow);
@@ -525,8 +534,13 @@ export async function processWorkflowRunById(workflowRunId: string) {
 }
 
 export async function markWorkflowRunFailed(workflowRunId: string, failureMessage: string) {
-  await prisma.workflowRun.update({
-    where: { id: workflowRunId },
+  await prisma.workflowRun.updateMany({
+    where: {
+      id: workflowRunId,
+      status: {
+        not: WorkflowStatus.CANCELED,
+      },
+    },
     data: {
       status: WorkflowStatus.FAILED,
       enginePhase: WorkflowEnginePhase.FAILED,
@@ -534,6 +548,18 @@ export async function markWorkflowRunFailed(workflowRunId: string, failureMessag
       failedAt: new Date(),
       lastObservedAt: new Date(),
       lastError: failureMessage,
+    },
+  });
+}
+
+async function markWorkflowRunCanceledObserved(workflowRunId: string) {
+  await prisma.workflowRun.update({
+    where: { id: workflowRunId },
+    data: {
+      enginePhase: WorkflowEnginePhase.CANCELED,
+      nextWakeAt: null,
+      lastObservedAt: new Date(),
+      lastEngineError: null,
     },
   });
 }
@@ -655,8 +681,13 @@ async function processHandoffFollowUp(workflow: NonNullable<WorkflowRunRecord>) 
 }
 
 async function completeWorkflowRun(workflowRunId: string, output: Record<string, unknown>) {
-  await prisma.workflowRun.update({
-    where: { id: workflowRunId },
+  await prisma.workflowRun.updateMany({
+    where: {
+      id: workflowRunId,
+      status: {
+        not: WorkflowStatus.CANCELED,
+      },
+    },
     data: {
       status: WorkflowStatus.COMPLETED,
       enginePhase: WorkflowEnginePhase.COMPLETED,
