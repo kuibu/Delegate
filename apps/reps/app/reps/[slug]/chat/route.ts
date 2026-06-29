@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { generateRepresentativeReply } from "@delegate/model-runtime";
@@ -9,10 +10,16 @@ import {
 import { getRepresentativeSetupSnapshot } from "@delegate/web-data";
 
 import {
+  appendPublicChatTurns,
   buildPublicChatRepresentative,
   deriveTierUsage,
+  getPublicChatCookieName,
   normalizePublicChatRequest,
+  PUBLIC_CHAT_COOKIE_MAX_AGE_SECONDS,
+  PUBLIC_CHAT_EFFECTIVE_TIER,
+  readPublicChatSessionState,
   type PublicChatResponse,
+  writePublicChatSessionState,
 } from "../public-chat";
 
 export async function POST(
@@ -38,10 +45,14 @@ export async function POST(
       );
     }
 
+    const cookieStore = await cookies();
+    const sessionState = readPublicChatSessionState({
+      representativeSlug: slug,
+      cookieValue: cookieStore.get(getPublicChatCookieName(slug))?.value,
+    });
     const representative = buildPublicChatRepresentative(setup);
     const usage = deriveTierUsage({
-      tier: body.tier,
-      recentTurns: body.recentTurns ?? [],
+      freeRepliesUsed: sessionState.freeRepliesUsed,
       freeReplyLimit: representative.contract.freeReplyLimit,
     });
 
@@ -65,7 +76,7 @@ export async function POST(
         ...(plan.suggestedPlan ? { suggestedPlan: plan.suggestedPlan } : {}),
         reasons: plan.reasons,
       },
-      tier: body.tier,
+      tier: PUBLIC_CHAT_EFFECTIVE_TIER,
       usage,
       runtime: {
         usedModel: false,
@@ -79,7 +90,7 @@ export async function POST(
         subagent,
         userText: body.message,
         recalled: [],
-        recentTurns: body.recentTurns ?? [],
+        recentTurns: sessionState.recentTurns,
         collectorState: null,
       });
 
@@ -98,7 +109,29 @@ export async function POST(
       }
     }
 
-    return NextResponse.json(response);
+    const nextSessionState = appendPublicChatTurns({
+      state: sessionState,
+      userMessage: body.message,
+      assistantMessage: response.reply.text,
+      nextStep: response.plan.nextStep,
+    });
+    const nextResponse = NextResponse.json(response);
+    nextResponse.cookies.set(
+      getPublicChatCookieName(slug),
+      writePublicChatSessionState({
+        representativeSlug: slug,
+        state: nextSessionState,
+      }),
+      {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        maxAge: PUBLIC_CHAT_COOKIE_MAX_AGE_SECONDS,
+        path: `/reps/${slug}`,
+      },
+    );
+
+    return nextResponse;
   } catch (error) {
     return NextResponse.json(
       {

@@ -3,7 +3,6 @@
 import { useState } from "react";
 
 import type { PlanTier, PricingPlan } from "@delegate/domain";
-import type { ModelRuntimeRecentTurn } from "@delegate/model-runtime";
 import {
   DashboardPanelFrame,
   DashboardSignalStrip,
@@ -81,8 +80,6 @@ export function RepresentativeChatPanel(props: {
         },
         body: JSON.stringify({
           message,
-          tier: selectedTier,
-          recentTurns: toRecentTurns(messages),
         }),
       });
 
@@ -96,6 +93,7 @@ export function RepresentativeChatPanel(props: {
       }
 
       setLastUsage(payload.usage);
+      setSelectedTier(payload.tier);
       setMessages((current) => [
         ...current,
         {
@@ -265,16 +263,6 @@ export function RepresentativeChatPanel(props: {
       </DashboardSurfaceGrid>
     </DashboardPanelFrame>
   );
-}
-
-function toRecentTurns(messages: ChatMessage[]): ModelRuntimeRecentTurn[] {
-  return messages
-    .filter((message) => message.id !== "welcome")
-    .map((message) => ({
-      direction: message.role === "assistant" ? "outbound" : "inbound",
-      messageText: message.text,
-      ...(message.meta?.nextStep ? { summary: message.meta.nextStep } : {}),
-    }));
 }
 
 const zhCopy = {

@@ -1,11 +1,10 @@
 import type { PlanTier, Representative } from "@delegate/domain";
 import type { RepresentativeSetupSnapshot } from "@delegate/web-data";
 import type { ModelRuntimeRecentTurn } from "@delegate/model-runtime";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export type PublicChatRequest = {
   message: string;
-  tier: PlanTier;
-  recentTurns?: ModelRuntimeRecentTurn[];
 };
 
 export type PublicChatResponse = {
@@ -33,6 +32,30 @@ export type PublicChatResponse = {
     fallbackReason?: string;
   };
 };
+
+export type PublicChatSessionState = {
+  freeRepliesUsed: number;
+  recentTurns: ModelRuntimeRecentTurn[];
+};
+
+type PublicChatSessionCookiePayload = {
+  version: 1;
+  representativeSlug: string;
+  freeRepliesUsed: number;
+  recentTurns: ModelRuntimeRecentTurn[];
+};
+
+const PUBLIC_CHAT_STATE_VERSION = 1 as const;
+const PUBLIC_CHAT_COOKIE_PREFIX = "delegate-public-chat";
+const PUBLIC_CHAT_SESSION_SECRET =
+  process.env.REP_PUBLIC_CHAT_SESSION_SECRET?.trim() ||
+  process.env.TELEGRAM_WEBHOOK_SECRET?.trim() ||
+  randomBytes(32).toString("hex");
+const PUBLIC_CHAT_RECENT_TURN_LIMIT = 8;
+const PUBLIC_CHAT_TURN_TEXT_LIMIT = 240;
+
+export const PUBLIC_CHAT_EFFECTIVE_TIER: PlanTier = "free";
+export const PUBLIC_CHAT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 
 export function buildPublicChatRepresentative(
   setup: RepresentativeSetupSnapshot,
@@ -70,54 +93,28 @@ export function normalizePublicChatRequest(payload: unknown): PublicChatRequest 
   const body = (payload ?? {}) as Record<string, unknown>;
   const message =
     typeof body.message === "string" ? body.message.trim() : "";
-  const tier = normalizePlanTier(body.tier);
 
   return {
     message,
-    tier,
-    recentTurns: sanitizeRecentTurns(body.recentTurns),
   };
 }
 
 export function deriveTierUsage(params: {
-  tier: PlanTier;
-  recentTurns: ModelRuntimeRecentTurn[];
+  freeRepliesUsed: number;
   freeReplyLimit: number;
 }) {
-  const freeRepliesUsed =
-    params.tier === "free"
-      ? params.recentTurns.filter((turn) => turn.direction === "outbound").length
-      : 0;
-
   return {
-    freeRepliesUsed,
-    freeRepliesRemaining:
-      params.tier === "free"
-        ? Math.max(0, params.freeReplyLimit - freeRepliesUsed)
-        : params.freeReplyLimit,
-    passUnlocked:
-      params.tier === "pass" ||
-      params.tier === "deep_help" ||
-      params.tier === "sponsor",
-    deepHelpUnlocked:
-      params.tier === "deep_help" || params.tier === "sponsor",
+    freeRepliesUsed: params.freeRepliesUsed,
+    freeRepliesRemaining: Math.max(
+      0,
+      params.freeReplyLimit - params.freeRepliesUsed,
+    ),
+    passUnlocked: false,
+    deepHelpUnlocked: false,
   };
 }
 
-function normalizePlanTier(value: unknown): PlanTier {
-  if (
-    value === "free" ||
-    value === "pass" ||
-    value === "deep_help" ||
-    value === "sponsor"
-  ) {
-    return value;
-  }
-
-  return "free";
-}
-
-function sanitizeRecentTurns(value: unknown): ModelRuntimeRecentTurn[] {
+export function sanitizeRecentTurns(value: unknown): ModelRuntimeRecentTurn[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -139,11 +136,127 @@ function sanitizeRecentTurns(value: unknown): ModelRuntimeRecentTurn[] {
 
     turns.push({
       direction,
-      messageText,
+      messageText: truncateRecentTurnText(messageText),
       ...(typeof turn.intent === "string" ? { intent: turn.intent } : {}),
-      ...(typeof turn.summary === "string" ? { summary: turn.summary } : {}),
+      ...(typeof turn.summary === "string"
+        ? { summary: truncateRecentTurnText(turn.summary) }
+        : {}),
     });
   }
 
-  return turns.slice(-8);
+  return turns.slice(-PUBLIC_CHAT_RECENT_TURN_LIMIT);
+}
+
+export function getPublicChatCookieName(representativeSlug: string) {
+  return `${PUBLIC_CHAT_COOKIE_PREFIX}-${representativeSlug}`;
+}
+
+export function readPublicChatSessionState(params: {
+  representativeSlug: string;
+  cookieValue: string | undefined;
+}): PublicChatSessionState {
+  if (!params.cookieValue) {
+    return createEmptyPublicChatSessionState();
+  }
+
+  const [encodedPayload, encodedSignature] = params.cookieValue.split(".");
+  if (!encodedPayload || !encodedSignature) {
+    return createEmptyPublicChatSessionState();
+  }
+
+  const expectedSignature = signPublicChatPayload(encodedPayload);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  const actualBuffer = Buffer.from(encodedSignature);
+  if (
+    expectedBuffer.length !== actualBuffer.length ||
+    !timingSafeEqual(expectedBuffer, actualBuffer)
+  ) {
+    return createEmptyPublicChatSessionState();
+  }
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(encodedPayload, "base64url").toString("utf8"),
+    ) as Partial<PublicChatSessionCookiePayload>;
+
+    if (
+      payload.version !== PUBLIC_CHAT_STATE_VERSION ||
+      payload.representativeSlug !== params.representativeSlug
+    ) {
+      return createEmptyPublicChatSessionState();
+    }
+
+    return {
+      freeRepliesUsed: normalizeFreeRepliesUsed(payload.freeRepliesUsed),
+      recentTurns: sanitizeRecentTurns(payload.recentTurns),
+    };
+  } catch {
+    return createEmptyPublicChatSessionState();
+  }
+}
+
+export function writePublicChatSessionState(params: {
+  representativeSlug: string;
+  state: PublicChatSessionState;
+}) {
+  const payload: PublicChatSessionCookiePayload = {
+    version: PUBLIC_CHAT_STATE_VERSION,
+    representativeSlug: params.representativeSlug,
+    freeRepliesUsed: normalizeFreeRepliesUsed(params.state.freeRepliesUsed),
+    recentTurns: sanitizeRecentTurns(params.state.recentTurns),
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
+    "base64url",
+  );
+
+  return `${encodedPayload}.${signPublicChatPayload(encodedPayload)}`;
+}
+
+export function appendPublicChatTurns(params: {
+  state: PublicChatSessionState;
+  userMessage: string;
+  assistantMessage: string;
+  nextStep?: string;
+}) {
+  return {
+    freeRepliesUsed: normalizeFreeRepliesUsed(params.state.freeRepliesUsed + 1),
+    recentTurns: sanitizeRecentTurns([
+      ...params.state.recentTurns,
+      {
+        direction: "inbound",
+        messageText: params.userMessage,
+      },
+      {
+        direction: "outbound",
+        messageText: params.assistantMessage,
+        ...(params.nextStep ? { summary: params.nextStep } : {}),
+      },
+    ]),
+  } satisfies PublicChatSessionState;
+}
+
+export function createEmptyPublicChatSessionState(): PublicChatSessionState {
+  return {
+    freeRepliesUsed: 0,
+    recentTurns: [],
+  };
+}
+
+function signPublicChatPayload(encodedPayload: string) {
+  return createHmac("sha256", PUBLIC_CHAT_SESSION_SECRET)
+    .update(encodedPayload)
+    .digest("base64url");
+}
+
+function normalizeFreeRepliesUsed(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : 0;
+}
+
+function truncateRecentTurnText(value: string) {
+  const normalized = value.trim();
+  return normalized.length > PUBLIC_CHAT_TURN_TEXT_LIMIT
+    ? normalized.slice(0, PUBLIC_CHAT_TURN_TEXT_LIMIT)
+    : normalized;
 }
