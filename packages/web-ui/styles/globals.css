@@ -12,6 +12,9 @@
   --line: rgba(26, 23, 20, 0.12);
   --line-strong: rgba(26, 23, 20, 0.18);
   --shadow: 0 24px 70px rgba(26, 23, 20, 0.1);
+  --font-sans: "Avenir Next", "Helvetica Neue";
+  --font-serif: Georgia;
+  --font-mono: "SFMono-Regular", Consolas;
   --radius-xl: 28px;
   --radius-lg: 20px;
   --radius-md: 14px;
