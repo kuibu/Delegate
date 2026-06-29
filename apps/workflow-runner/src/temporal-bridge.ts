@@ -64,7 +64,12 @@ export async function createTemporalBridge(
     async startWorkflowExecution(params) {
       try {
         const handle = await client.workflow.start("runDelegateWorkflowRun", {
-          args: [params.workflowRunId],
+          args: [
+            {
+              workflowRunId: params.workflowRunId,
+              scheduledAt: params.scheduledAt.toISOString(),
+            },
+          ],
           taskQueue: params.taskQueue,
           workflowId: params.workflowId,
           workflowIdReusePolicy: "REJECT_DUPLICATE",

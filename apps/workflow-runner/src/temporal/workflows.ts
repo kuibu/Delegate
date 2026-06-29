@@ -1,4 +1,5 @@
-import { proxyActivities } from "@temporalio/workflow";
+import { proxyActivities, sleep } from "@temporalio/workflow";
+import type { TemporalWorkflowRunInput } from "@delegate/workflows";
 
 type TemporalWorkflowActivities = {
   executeWorkflowRunActivity(workflowRunId: string): Promise<void>;
@@ -11,6 +12,13 @@ const { executeWorkflowRunActivity } = proxyActivities<TemporalWorkflowActivitie
   },
 });
 
-export async function runDelegateWorkflowRun(workflowRunId: string): Promise<void> {
-  await executeWorkflowRunActivity(workflowRunId);
+export async function runDelegateWorkflowRun(
+  input: TemporalWorkflowRunInput,
+): Promise<void> {
+  const delayMs = Date.parse(input.scheduledAt) - Date.now();
+  if (Number.isFinite(delayMs) && delayMs > 0) {
+    await sleep(delayMs);
+  }
+
+  await executeWorkflowRunActivity(input.workflowRunId);
 }

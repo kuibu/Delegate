@@ -48,6 +48,7 @@ export type TemporalWorkflowDispatcher = {
     workflowKind: WorkflowKind;
     workflowId: string;
     taskQueue: string;
+    scheduledAt: Date;
   }): Promise<TemporalWorkflowStartResult>;
   cancelWorkflowExecution(params: {
     workflowRunId: string;
@@ -311,6 +312,7 @@ async function dispatchWorkflowStartCommand(
     workflowKind: workflow.kind,
     workflowId: workflow.externalWorkflowId,
     taskQueue: workflow.queueName ?? DEFAULT_TEMPORAL_TASK_QUEUE,
+    scheduledAt: workflow.scheduledAt,
   });
   const effectiveObservedAt = dispatchResult.observedAt ?? new Date();
 

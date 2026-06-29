@@ -11,6 +11,7 @@ import {
   resolveWorkflowDispatchTarget,
   scheduleApprovalExpiration,
   scheduleHandoffFollowUp,
+  temporalWorkflowRunInputSchema,
   workflowEnginePhaseSchema,
 } from "../src/index";
 
@@ -90,5 +91,17 @@ describe("workflow helpers", () => {
         subjectId: "handoff_123",
       }),
     );
+  });
+
+  it("parses the explicit Temporal workflow timing input", () => {
+    expect(
+      temporalWorkflowRunInputSchema.parse({
+        workflowRunId: "workflow-123",
+        scheduledAt: "2026-04-05T12:00:00.000Z",
+      }),
+    ).toEqual({
+      workflowRunId: "workflow-123",
+      scheduledAt: "2026-04-05T12:00:00.000Z",
+    });
   });
 });

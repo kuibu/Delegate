@@ -59,6 +59,11 @@ export const workflowDispatchTargetSchema = z.object({
   fallbackReason: z.string().min(1).optional(),
 });
 
+export const temporalWorkflowRunInputSchema = z.object({
+  workflowRunId: z.string().min(1),
+  scheduledAt: z.string().datetime({ offset: true }),
+});
+
 export type WorkflowKind = z.infer<typeof workflowKindSchema>;
 export type WorkflowEngine = z.infer<typeof workflowEngineSchema>;
 export type WorkflowEnginePhase = z.infer<typeof workflowEnginePhaseSchema>;
@@ -67,6 +72,7 @@ export type HandoffFollowUpInput = z.infer<typeof handoffFollowUpInputSchema>;
 export type ApprovalExpirationInput = z.infer<typeof approvalExpirationInputSchema>;
 export type WorkflowEngineConfig = z.infer<typeof workflowEngineConfigSchema>;
 export type WorkflowDispatchTarget = z.infer<typeof workflowDispatchTargetSchema>;
+export type TemporalWorkflowRunInput = z.infer<typeof temporalWorkflowRunInputSchema>;
 
 export const LOCAL_WORKFLOW_QUEUE = "local:workflow-runner";
 

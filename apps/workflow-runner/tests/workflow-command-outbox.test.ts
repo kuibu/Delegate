@@ -130,6 +130,7 @@ describe("workflow command outbox", () => {
       workflowKind: WorkflowKind.APPROVAL_EXPIRATION,
       workflowId: "delegate:rep-1:approval_expiration:approval-1",
       taskQueue: "delegate-public-runtime",
+      scheduledAt,
     });
     expect(mockPrisma.workflowRun.updateMany).toHaveBeenCalledWith({
       where: {
