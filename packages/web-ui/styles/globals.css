@@ -3,6 +3,7 @@
   --bg-strong: #f3ebdd;
   --ink: #1a1714;
   --muted: #8c8173;
+  --ink-soft: #6f6255;
   --card: rgba(255, 251, 244, 0.88);
   --card-strong: #fff8ef;
   --accent: #c55b2d;
@@ -12,6 +13,7 @@
   --line: rgba(26, 23, 20, 0.12);
   --line-strong: rgba(26, 23, 20, 0.18);
   --shadow: 0 24px 70px rgba(26, 23, 20, 0.1);
+  --shadow-tight: 0 14px 34px rgba(26, 23, 20, 0.08);
   --font-sans: "Avenir Next", "Helvetica Neue";
   --font-serif: Georgia;
   --font-mono: "SFMono-Regular", Consolas;
@@ -44,9 +46,9 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    radial-gradient(circle at top left, rgba(197, 91, 45, 0.14), transparent 36%),
-    radial-gradient(circle at top right, rgba(31, 86, 98, 0.12), transparent 30%),
-    linear-gradient(180deg, var(--bg) 0%, var(--bg-strong) 100%);
+    radial-gradient(circle at 8% -10%, rgba(197, 91, 45, 0.16), transparent 34%),
+    radial-gradient(circle at 92% 2%, rgba(31, 86, 98, 0.14), transparent 32%),
+    linear-gradient(180deg, rgba(255, 249, 241, 0.98) 0%, var(--bg-strong) 100%);
   font-family: var(--font-sans), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 }
 
@@ -750,14 +752,14 @@ button.skill-row:hover {
 }
 
 .marketing-shell {
-  width: min(1280px, calc(100vw - 32px));
+  width: min(1340px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 24px 0 96px;
 }
 
 .marketing-topbar {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(220px, auto) 1fr auto;
   align-items: center;
   gap: 16px;
   position: sticky;
@@ -766,8 +768,9 @@ button.skill-row:hover {
   margin-bottom: 28px;
   padding: 16px 18px;
   border-radius: 24px;
-  border: 1px solid rgba(25, 23, 23, 0.08);
-  background: rgba(255, 250, 243, 0.78);
+  border: 1px solid rgba(25, 23, 23, 0.1);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 247, 0.88), rgba(255, 248, 240, 0.76));
   backdrop-filter: blur(18px);
   box-shadow: 0 18px 44px rgba(25, 23, 23, 0.08);
 }
@@ -882,7 +885,7 @@ button.skill-row:hover {
 
 .marketing-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  grid-template-columns: minmax(0, 1.08fr) minmax(360px, 0.92fr);
   gap: 22px;
   align-items: stretch;
   scroll-margin-top: 108px;
@@ -900,8 +903,23 @@ button.skill-row:hover {
 }
 
 .marketing-hero-copy {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   padding: 42px;
   border-radius: 34px;
+  background:
+    linear-gradient(135deg, rgba(255, 253, 249, 0.94), rgba(255, 247, 236, 0.84)),
+    radial-gradient(circle at 100% 0%, rgba(199, 154, 59, 0.16), transparent 38%);
+}
+
+.marketing-hero-copy::after {
+  content: "";
+  position: absolute;
+  inset: auto 34px 28px 34px;
+  z-index: -1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(31, 86, 98, 0.34), transparent);
 }
 
 .marketing-hero-copy h1 {
@@ -939,10 +957,14 @@ button.skill-row:hover {
 }
 
 .marketing-stage-card-primary {
-  min-height: 240px;
+  display: flex;
+  min-height: 280px;
+  flex-direction: column;
+  justify-content: space-between;
   background:
     radial-gradient(circle at top right, rgba(195, 91, 45, 0.18), transparent 38%),
     linear-gradient(160deg, rgba(255, 250, 243, 0.94), rgba(244, 236, 223, 0.9));
+  border-color: rgba(197, 91, 45, 0.14);
 }
 
 .marketing-stage-card-primary h2,
@@ -970,10 +992,11 @@ button.skill-row:hover {
 }
 
 .marketing-metric {
-  min-height: 142px;
+  min-height: 164px;
   border-radius: 22px;
   padding: 18px;
-  background: rgba(255, 255, 255, 0.66);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 250, 244, 0.68));
   border: 1px solid rgba(25, 23, 23, 0.08);
 }
 
@@ -994,10 +1017,11 @@ button.skill-row:hover {
   border-radius: 28px;
   border: 1px solid rgba(25, 23, 23, 0.08);
   background:
-    linear-gradient(140deg, rgba(37, 76, 88, 0.92), rgba(72, 111, 123, 0.9)),
+    radial-gradient(circle at 100% 0%, rgba(199, 154, 59, 0.24), transparent 34%),
+    linear-gradient(140deg, rgba(31, 86, 98, 0.96), rgba(72, 111, 123, 0.9)),
     rgba(37, 76, 88, 0.9);
   color: #f7f1e7;
-  box-shadow: var(--shadow);
+  box-shadow: 0 28px 72px rgba(31, 86, 98, 0.22);
   scroll-margin-top: 108px;
 }
 
@@ -1041,8 +1065,8 @@ button.skill-row:hover {
   padding: 22px;
   border-radius: 24px;
   border: 1px solid rgba(25, 23, 23, 0.08);
-  background: rgba(255, 251, 246, 0.7);
-  box-shadow: var(--shadow);
+  background: rgba(255, 251, 246, 0.78);
+  box-shadow: var(--shadow-tight);
 }
 
 .marketing-beat-card:nth-child(even) {
@@ -1110,8 +1134,8 @@ button.skill-row:hover {
   overflow: hidden;
   padding: 26px;
   border-radius: 30px;
-  border: 1px solid rgba(25, 23, 23, 0.08);
-  box-shadow: var(--shadow);
+  border: 1px solid rgba(25, 23, 23, 0.1);
+  box-shadow: var(--shadow-tight);
 }
 
 .marketing-section-shell::before,
@@ -1250,8 +1274,9 @@ button.skill-row:hover {
   margin-bottom: 16px;
   padding: 16px 20px;
   border-radius: 24px;
-  border: 1px solid rgba(25, 23, 23, 0.08);
-  background: rgba(255, 249, 241, 0.9);
+  border: 1px solid rgba(25, 23, 23, 0.1);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 247, 0.94), rgba(255, 248, 240, 0.86));
   backdrop-filter: blur(18px);
   box-shadow: 0 18px 44px rgba(25, 23, 23, 0.08);
 }
@@ -1344,7 +1369,7 @@ button.skill-row:hover {
 
 .dashboard-layout {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 340px minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }
@@ -1388,14 +1413,16 @@ button.skill-row:hover {
 
 .dashboard-stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   gap: 18px;
   align-items: start;
   padding: 22px 24px;
   border-radius: 22px;
-  border: 1px solid rgba(25, 23, 23, 0.08);
-  background: rgba(255, 253, 249, 0.92);
-  box-shadow: 0 16px 38px rgba(25, 23, 23, 0.06);
+  border: 1px solid rgba(25, 23, 23, 0.1);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(31, 86, 98, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(255, 253, 249, 0.96), rgba(249, 243, 234, 0.9));
+  box-shadow: var(--shadow-tight);
 }
 
 .dashboard-stage-main {
@@ -1439,7 +1466,8 @@ button.skill-row:hover {
   padding: 16px;
   border-radius: 18px;
   border: 1px solid rgba(25, 23, 23, 0.08);
-  background: rgba(248, 244, 237, 0.92);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(248, 244, 237, 0.92));
 }
 
 .dashboard-stage-stat span {
@@ -1548,7 +1576,7 @@ button.skill-row:hover {
 
 .dashboard-signal-card p {
   margin: 0;
-  color: var(--muted);
+  color: var(--ink-soft);
   line-height: 1.6;
 }
 
@@ -1682,9 +1710,9 @@ button.skill-row:hover {
 .dashboard-highlight-card {
   border-radius: 20px;
   padding: 20px;
-  border: 1px solid rgba(25, 23, 23, 0.08);
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 12px 30px rgba(25, 23, 23, 0.05);
+  border: 1px solid rgba(25, 23, 23, 0.1);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-tight);
 }
 
 .dashboard-highlight-card h3,
@@ -1771,9 +1799,9 @@ button.skill-row:hover {
   min-height: 100%;
   padding: 18px;
   border-radius: 18px;
-  border: 1px solid rgba(25, 23, 23, 0.08);
+  border: 1px solid rgba(25, 23, 23, 0.1);
   background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 12px 30px rgba(25, 23, 23, 0.05);
+  box-shadow: var(--shadow-tight);
 }
 
 .dashboard-surface:hover {
@@ -1859,8 +1887,9 @@ button.skill-row:hover {
   margin-bottom: 18px;
   padding: 16px 18px;
   border-radius: 24px;
-  border: 1px solid rgba(25, 23, 23, 0.08);
-  background: rgba(255, 250, 243, 0.8);
+  border: 1px solid rgba(25, 23, 23, 0.1);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 247, 0.9), rgba(255, 248, 240, 0.78));
   backdrop-filter: blur(18px);
   box-shadow: 0 18px 44px rgba(25, 23, 23, 0.08);
 }
@@ -1875,6 +1904,9 @@ button.skill-row:hover {
 .representative-stage {
   grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
   align-items: stretch;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(197, 91, 45, 0.1), transparent 35%),
+    linear-gradient(180deg, rgba(255, 253, 249, 0.96), rgba(249, 243, 234, 0.92));
 }
 
 .representative-stage h1 {
@@ -1947,11 +1979,13 @@ button.skill-row:hover {
 }
 
 .representative-chat-message-user {
-  background: rgba(240, 247, 255, 0.92);
+  background: rgba(232, 243, 245, 0.94);
+  border-color: rgba(31, 86, 98, 0.16);
 }
 
 .representative-chat-message-assistant {
-  background: rgba(255, 252, 247, 0.95);
+  background: rgba(255, 252, 247, 0.96);
+  border-color: rgba(197, 91, 45, 0.12);
 }
 
 .representative-chat-form {
@@ -1980,6 +2014,9 @@ button.skill-row:hover {
   .marketing-ops-grid,
   .marketing-roadmap-grid,
   .dashboard-layout,
+  .dashboard-stage,
+  .dashboard-panel-intro,
+  .dashboard-inline-section-heading,
   .dashboard-panel-hero,
   .dashboard-highlight-grid,
   .dashboard-mini-metric-grid,
@@ -2058,9 +2095,20 @@ button.skill-row:hover {
     width: min(100vw - 18px, 1580px);
   }
 
+  .marketing-shell {
+    width: min(100vw - 18px, 1340px);
+    padding-top: 10px;
+  }
+
   .dashboard-topbar {
     top: 0;
     padding: 14px;
+  }
+
+  .marketing-topbar,
+  .dashboard-topbar-main,
+  .representative-topbar {
+    grid-template-columns: 1fr;
   }
 
   .dashboard-stage {
@@ -2077,6 +2125,99 @@ button.skill-row:hover {
 
   .dashboard-rail {
     position: static;
+    order: 2;
+  }
+
+  .dashboard-main {
+    order: 1;
+  }
+
+  .dashboard-panel-hero .dashboard-signal-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .representative-chat-panel .dashboard-surface-grid > :last-child {
+    order: -1;
+  }
+
+  .representative-stage h1 {
+    max-width: 16ch;
+  }
+
+  .marketing-beat-card:nth-child(even),
+  .marketing-grid > :nth-child(2),
+  .marketing-plan-grid > :nth-child(2),
+  .marketing-plan-grid > :nth-child(4),
+  .marketing-roadmap-grid > :nth-child(2) {
+    margin-top: 0;
+  }
+
+  .localized-shell[data-locale="en"] h1,
+  .localized-shell[data-locale="en"] h2,
+  .localized-shell[data-locale="en"] h3,
+  .localized-shell[data-locale="zh"] h1,
+  .localized-shell[data-locale="zh"] h2,
+  .localized-shell[data-locale="zh"] h3,
+  .representative-stage h1,
+  .marketing-hero-copy h1,
+  .marketing-stage-card-primary h2,
+  .marketing-band-copy h2,
+  .marketing-story-copy h2,
+  .marketing-cta h2 {
+    max-width: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .marketing-hero-copy,
+  .marketing-stage-card,
+  .marketing-band,
+  .marketing-feature-card,
+  .marketing-story-item,
+  .marketing-plan-card,
+  .marketing-roadmap-card,
+  .marketing-cta,
+  .dashboard-stage,
+  .dashboard-highlight-card,
+  .dashboard-surface {
+    border-radius: 22px;
+  }
+
+  .marketing-hero-copy h1 {
+    font-size: clamp(2.45rem, 13vw, 3.5rem);
+    line-height: 0.98;
+  }
+
+  .marketing-stage-card-primary h2,
+  .marketing-band-copy h2,
+  .marketing-story-copy h2,
+  .marketing-cta h2 {
+    font-size: clamp(2rem, 10vw, 2.75rem);
+  }
+
+  .dashboard-stage h1,
+  .dashboard-panel-intro h2 {
+    font-size: clamp(1.65rem, 8.5vw, 2.35rem);
+    line-height: 1.02;
+  }
+
+  .dashboard-inline-section-heading h3,
+  .dashboard-highlight-card h3 {
+    font-size: clamp(1.18rem, 6vw, 1.55rem);
+  }
+
+  .representative-chat-panel .dashboard-panel-intro {
+    gap: 8px;
+  }
+
+  .representative-chat-tier,
+  .representative-chat-message {
+    border-radius: 16px;
+  }
+
+  .chip {
+    padding: 8px 10px;
+    font-size: 0.72rem;
   }
 
   .dashboard-form-footer {
@@ -2144,6 +2285,16 @@ button.skill-row:hover {
   accent-color: var(--signal-copper);
 }
 
+@media (max-width: 980px) {
+  .dashboard-form-footer {
+    justify-content: start;
+  }
+
+  .dashboard-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .marketing-hero-copy,
   .marketing-stage-card,
@@ -2182,5 +2333,21 @@ button.skill-row:hover {
   .dashboard-signal-card:nth-child(4),
   .dashboard-surface:nth-child(4) {
     animation-delay: 200ms;
+  }
+}
+
+@media (max-width: 640px) {
+  .marketing-hero-copy,
+  .marketing-stage-card,
+  .marketing-band,
+  .marketing-beat-card,
+  .marketing-feature-card,
+  .marketing-story-item,
+  .marketing-plan-card,
+  .marketing-roadmap-card,
+  .dashboard-highlight-card,
+  .dashboard-signal-card,
+  .dashboard-surface {
+    animation: none;
   }
 }

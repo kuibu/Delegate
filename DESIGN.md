@@ -45,8 +45,7 @@
 - **UI/Labels:** Instrument Sans — same as body, but with tighter tracking and stronger weight in controls.
 - **Data/Tables:** IBM Plex Mono — use for numbers, IDs, timestamps, wallet values, and operational traces. It signals instrumentation and supports dense data presentation.
 - **Code:** IBM Plex Mono
-- **Loading:** Google Fonts
-  - `https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap`
+- **Loading:** Use project-local CSS font variables with resilient system fallbacks for builds. If the team wants exact Instrument/IBM rendering later, self-host the font files instead of relying on build-time Google Fonts fetches.
 - **Scale:**
   - hero-display: `5.5rem / 88px`
   - display-1: `4rem / 64px`
@@ -150,3 +149,4 @@
 |------|----------|-----------|
 | 2026-03-24 | Initial design system created | Created by `/design-consultation` after reviewing Delegate's product positioning and researching Linear, Vercel, LangSmith, Intercom, and beehiiv. |
 | 2026-03-24 | Chosen direction: Dispatch Editorial | Delegate is selling public representation, trust boundaries, and paid access, not generic AI intelligence. |
+| 2026-06-29 | Synchronized Site, Dashboard, and Reps surfaces | Tightened the shared Dispatch Editorial system across the marketing site, owner dashboard, and public representative page; improved mobile hierarchy, surface contrast, and trust/action signal rhythm. |

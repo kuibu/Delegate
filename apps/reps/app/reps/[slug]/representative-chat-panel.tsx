@@ -125,6 +125,7 @@ export function RepresentativeChatPanel(props: {
 
   return (
     <DashboardPanelFrame
+      className="representative-chat-panel"
       eyebrow={t.eyebrow}
       id="chat"
       summary={t.summary}
