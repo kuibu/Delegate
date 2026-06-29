@@ -71,7 +71,20 @@ type DashboardOverviewSnapshot = {
     kind: "handoff_follow_up" | "approval_expiration";
     engine: "local_runner" | "temporal";
     status: "queued" | "running" | "completed" | "failed" | "canceled";
+    enginePhase?:
+      | "dispatch_pending"
+      | "waiting_timer"
+      | "activity_running"
+      | "retry_backoff"
+      | "cancel_requested"
+      | "completed"
+      | "failed"
+      | "canceled";
     scheduledAt: string;
+    nextWakeAt?: string;
+    externalWorkflowId?: string;
+    externalRunId?: string;
+    cancelRequestedAt?: string;
     completedAt?: string;
     detail: string;
   }>;
@@ -359,11 +372,34 @@ export function DashboardOverview({
                     <div className="chip-row">
                       <span className="chip">{t.workflowEngineChip(workflow.engine)}</span>
                       <span className="chip">{workflow.status}</span>
-                      <span className="chip">{formatTimestamp(workflow.scheduledAt, locale)}</span>
+                      {workflow.enginePhase ? (
+                        <span className="chip">{t.workflowPhaseChip(workflow.enginePhase)}</span>
+                      ) : null}
+                      <span className="chip">{t.scheduledAtChip(formatTimestamp(workflow.scheduledAt, locale))}</span>
+                      {workflow.nextWakeAt ? (
+                        <span className="chip chip-safe">{t.nextWakeAtChip(formatTimestamp(workflow.nextWakeAt, locale))}</span>
+                      ) : null}
+                      {workflow.cancelRequestedAt ? (
+                        <span className="chip">{t.cancelRequestedChip(formatTimestamp(workflow.cancelRequestedAt, locale))}</span>
+                      ) : null}
                       {workflow.completedAt ? (
                         <span className="chip chip-safe">{formatTimestamp(workflow.completedAt, locale)}</span>
                       ) : null}
                     </div>
+                    {workflow.externalWorkflowId || workflow.externalRunId ? (
+                      <p className="footer-note">
+                        {[
+                          workflow.externalWorkflowId
+                            ? t.workflowIdLabel(compactWorkflowId(workflow.externalWorkflowId))
+                            : null,
+                          workflow.externalRunId
+                            ? t.workflowRunIdLabel(compactWorkflowId(workflow.externalRunId))
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ))
@@ -450,6 +486,14 @@ function formatTimestamp(value: string, locale: Locale): string {
   }).format(date);
 }
 
+function compactWorkflowId(value: string): string {
+  if (value.length <= 28) {
+    return value;
+  }
+
+  return `${value.slice(0, 16)}...${value.slice(-8)}`;
+}
+
 function translateActionLabel(locale: Locale, label: string): string {
   if (locale === "en") {
     return label;
@@ -513,6 +557,13 @@ const copy = {
     workflowChip: (count: number) => `${count} 条 workflows`,
     workflowEngineChip: (engine: "local_runner" | "temporal") =>
       engine === "temporal" ? "Temporal" : "Local runner",
+    workflowPhaseChip: (phase: NonNullable<DashboardOverviewSnapshot["recentWorkflows"][number]["enginePhase"]>) =>
+      `阶段：${phase}`,
+    scheduledAtChip: (value: string) => `计划 ${value}`,
+    nextWakeAtChip: (value: string) => `下次唤醒 ${value}`,
+    cancelRequestedChip: (value: string) => `请求取消 ${value}`,
+    workflowIdLabel: (value: string) => `workflowId: ${value}`,
+    workflowRunIdLabel: (value: string) => `runId: ${value}`,
     workflowQueueTitle: "最近工作流",
     noWorkflows: "当前还没有耐久工作流记录。",
   },
@@ -559,6 +610,13 @@ const copy = {
     workflowChip: (count: number) => `${count} workflows`,
     workflowEngineChip: (engine: "local_runner" | "temporal") =>
       engine === "temporal" ? "Temporal" : "Local runner",
+    workflowPhaseChip: (phase: NonNullable<DashboardOverviewSnapshot["recentWorkflows"][number]["enginePhase"]>) =>
+      `phase: ${phase}`,
+    scheduledAtChip: (value: string) => `scheduled ${value}`,
+    nextWakeAtChip: (value: string) => `next wake ${value}`,
+    cancelRequestedChip: (value: string) => `cancel requested ${value}`,
+    workflowIdLabel: (value: string) => `workflowId: ${value}`,
+    workflowRunIdLabel: (value: string) => `runId: ${value}`,
     workflowQueueTitle: "Recent workflows",
     noWorkflows: "There are no durable workflow records yet.",
   },

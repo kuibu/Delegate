@@ -20,19 +20,20 @@ Delegate already has a real durable workflow backbone:
 - a local runner processes due jobs
 - a Temporal bridge and worker entrypoint already exist in `apps/workflow-runner/src/temporal-bridge.ts` and `apps/workflow-runner/src/temporal/workflows.ts`
 
-What is not true yet is "Temporal-native waiting from creation time."
+Temporal-native waiting from creation time is now implemented for the two current durable workflow kinds.
 
-Today, the Temporal path is still:
+Today, the Temporal path is:
 
-1. write `WorkflowRun` into Postgres
-2. wait for the local poller to see `scheduledAt <= now`
-3. mark the row `RUNNING`
-4. only then start a Temporal workflow
-5. Temporal immediately runs a single activity that reuses the existing DB logic
+1. write `WorkflowRun` and `WorkflowCommandOutbox(START)` in the same committed Postgres flow
+2. let the workflow runner dispatch the START command after commit
+3. start the Temporal workflow immediately using `externalWorkflowId` as the idempotency key
+4. pass `scheduledAt` into the workflow input
+5. have the workflow sleep durably until `scheduledAt`
+6. run a DB-backed idempotent activity that reuses the existing business logic
 
-That means Delegate is already Temporal-capable, but it is not yet using Temporal as the primary owner of durable waiting, timer wake-up, and post-restart resume for these two workflow kinds.
+That means Delegate is now using Temporal as the owner of durable waiting, timer wake-up, and post-restart resume for approval expiration and handoff follow-up.
 
-This RFC proposes a gradual refactor to fix that gap without moving product truth out of Postgres.
+This RFC remains the design record for that gradual refactor and the next steps, without moving product truth out of Postgres.
 
 ## Current Repo Truth
 
@@ -42,7 +43,7 @@ The current product already exposes workflow-backed behavior in a few places:
 
 - approval requests can expire automatically
 - handoff requests can trigger timed owner follow-up reminders
-- the owner dashboard shows workflow engine configuration, queued workflow count, failed workflow count, and recent workflow rows
+- the owner dashboard shows workflow engine configuration, phase-aware workflow metrics, failed workflow count, and recent workflow rows
 - the compute dashboard has a separate "stale approval workflow" heuristic for pending approvals
 
 Relevant code:
@@ -64,12 +65,13 @@ See `prisma/schema.prisma`.
 
 ### Current Temporal integration
 
-The current Temporal bridge is real, but narrow:
+The current Temporal bridge is real and owns create-time durable waiting:
 
 - the worker boots successfully when the Temporal profile is configured
-- the bridge starts `runDelegateWorkflowRun`
-- the workflow immediately calls a single activity
-- the activity simply delegates back into `processWorkflowRunById`
+- the bridge dispatches START and CANCEL commands from `WorkflowCommandOutbox`
+- the bridge starts `runDelegateWorkflowRun` with explicit `workflowRunId` and `scheduledAt` input
+- the workflow sleeps until `scheduledAt` and then calls a single activity
+- the activity delegates back into `processWorkflowRunById`, which re-checks Postgres truth
 
 Relevant code:
 
@@ -79,13 +81,16 @@ Relevant code:
 
 ### Current cancellation behavior
 
-Manual resolution does not currently cancel a Temporal execution.
+Manual resolution now cancels the Postgres business workflow first and delivers Temporal cancellation as cleanup.
 
-Today, approval resolution and handoff resolution only update `WorkflowRun` rows in Postgres:
+Today, approval resolution and handoff resolution:
 
-- manual approval resolves pending `WorkflowRun` rows to `CANCELED`
-- manual handoff closure resolves pending `WorkflowRun` rows to `CANCELED`
-- no code currently calls Temporal `WorkflowHandle.cancel()`
+- resolve the approval or handoff business row in Postgres
+- mark matching active `WorkflowRun` rows `CANCELED`
+- set `enginePhase = CANCEL_REQUESTED` when a Temporal execution may exist
+- write `WorkflowCommandOutbox(CANCEL)` in the same transaction
+- let the dispatcher call Temporal `WorkflowHandle.cancel()`
+- keep activities safe if a workflow wakes after manual resolution
 
 Relevant code:
 
@@ -504,31 +509,32 @@ That heuristic is approval-specific operational logic, not the generic workflow 
 
 ### Phase 0: Documentation and terminology cleanup
 
-- land this RFC
-- update stale docs that still claim Temporal is absent
-- clarify in docs that Delegate already has a Temporal bridge, but not create-time native durable timers yet
+- landed this RFC
+- updated stale docs that claimed Temporal was absent
+- clarified in docs that Delegate has a Temporal bridge, outbox dispatch, native durable timers, and cancellation cleanup for the two current durable workflow kinds
 
 ### Phase 1: Outbox-backed Temporal start
 
-- add `WorkflowCommandOutbox`
-- add `enginePhase` and minimal Temporal metadata fields
-- write `START` commands in the same transaction as `WorkflowRun` creation
-- keep local runner unchanged
-- repurpose the Temporal runner loop into a dispatcher/reconciler, not a timer scheduler
+- done: added `WorkflowCommandOutbox`
+- done: added `enginePhase` and minimal Temporal metadata fields
+- done: write `START` commands in the same transaction as `WorkflowRun` creation
+- done: keep local runner unchanged
+- done: repurpose the Temporal runner loop into a dispatcher/reconciler, not a timer scheduler
 
 ### Phase 2: Native waiting in Temporal
 
-- change Temporal workflows to start at creation time
-- use workflow `sleep()` until `scheduledAt`
-- move "waiting until due" out of the local timer poller
-- keep activities DB-idempotent
+- done: Temporal workflows start at creation time after outbox dispatch
+- done: workflow input includes `scheduledAt`
+- done: workflow uses `sleep()` until `scheduledAt`
+- done: "waiting until due" moved out of the local timer poller for Temporal mode
+- done: activities remain DB-idempotent and no-op after cancellation
 
 ### Phase 3: Cancellation correctness and observability
 
-- add outbox-backed `CANCEL`
-- call Temporal `cancel()` for active workflows
-- add reconciliation for missing `externalRunId`, stale `DISPATCH_PENDING`, and stuck cancel requests
-- expose new dashboard fields and phase-based metrics
+- done: add outbox-backed `CANCEL`
+- done: call Temporal `cancel()` for active workflows from the dispatcher
+- done: expose new dashboard fields and phase-based metrics
+- remaining: add deeper reconciliation for missing `externalRunId`, stale `DISPATCH_PENDING`, and stuck cancel requests
 
 ### Phase 4: Native per-kind workflows
 

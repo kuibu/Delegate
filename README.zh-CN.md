@@ -187,14 +187,16 @@ pnpm registry:search:clawhub "qualification"
 - approval request 会在超时窗口后自动过期
 - owner handoff request 可以排队发送定时 follow-up reminder
 - workflow 的真实状态保存在 Postgres 中，并显示在 dashboard overview
-- workflow run 现在会携带 engine metadata，因此本地 runner 和未来的 Temporal worker 可以共享同一个 enqueue 边界
-- 当 Temporal profile 开启时，workflow run 现在也可以通过真实的 Temporal worker bridge 分发执行
+- workflow run 会携带 engine phase、Temporal workflow ID、run ID、唤醒时间和取消请求状态
+- Temporal 模式下，producer 会在同一次 DB 提交里写入 `WorkflowRun` 和 `WorkflowCommandOutbox(START)`
+- workflow runner 会在 commit 后分发 Temporal command，创建时立即启动 workflow，并在 workflow 内用 timer 等到 `scheduledAt`
+- 手动解决 approval 或 handoff 时，Postgres 业务真相会先进入 canceled，再把 Temporal cancel 当作 best-effort cleanup 投递出去
 
 为了让本地开发保持安全，Delegate 仍默认使用内建 runner：
 
 - `WORKFLOW_ENGINE=local_runner`
 
-如果你想提前为未来的 Temporal worker 做准备，同时不破坏本地行为，请设置：
+如果你想在本地运行 Temporal-backed workflow engine，请设置：
 
 - `WORKFLOW_ENGINE=temporal`
 - `WORKFLOW_TEMPORAL_ADDRESS`

@@ -190,14 +190,16 @@ The first durable workflow slice is also live:
 - approval requests can expire automatically after their timeout window
 - owner handoff requests can enqueue timed follow-up reminders
 - workflow truth stays in Postgres and is surfaced in the dashboard overview
-- workflow runs now carry engine metadata so the local runner and a future Temporal worker can share the same enqueue boundary
-- workflow runs can now dispatch through a real Temporal worker bridge when the Temporal profile is enabled
+- workflow runs carry engine phase metadata, Temporal workflow IDs, run IDs, wake times, and cancel-request state
+- Temporal-mode producers write `WorkflowRun` plus `WorkflowCommandOutbox(START)` in the same committed DB flow
+- the workflow runner dispatches Temporal commands post-commit, starts workflows immediately, and the workflow sleeps durably until `scheduledAt`
+- manual approval or handoff resolution marks Postgres truth canceled first, then delivers Temporal cancellation as best-effort cleanup
 
 To keep local development safe, Delegate still defaults to the built-in runner:
 
 - `WORKFLOW_ENGINE=local_runner`
 
-If you want to prepare for a future Temporal worker without breaking local behavior, set:
+If you want to run the Temporal-backed workflow engine locally, set:
 
 - `WORKFLOW_ENGINE=temporal`
 - `WORKFLOW_TEMPORAL_ADDRESS`

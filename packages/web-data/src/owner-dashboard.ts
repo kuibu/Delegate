@@ -73,7 +73,20 @@ export type DashboardOverviewSnapshot = {
     kind: "handoff_follow_up" | "approval_expiration";
     engine: "local_runner" | "temporal";
     status: "queued" | "running" | "completed" | "failed" | "canceled";
+    enginePhase?:
+      | "dispatch_pending"
+      | "waiting_timer"
+      | "activity_running"
+      | "retry_backoff"
+      | "cancel_requested"
+      | "completed"
+      | "failed"
+      | "canceled";
     scheduledAt: string;
+    nextWakeAt?: string;
+    externalWorkflowId?: string;
+    externalRunId?: string;
+    cancelRequestedAt?: string;
     completedAt?: string;
     detail: string;
   }>;
@@ -135,7 +148,16 @@ export async function getDashboardOverviewSnapshot(
     startOfToday.setHours(0, 0, 0, 0);
 
     const [
-      [todayConversationCount, openHandoffCount, paidInvoiceCount, queuedWorkflowCount, failedWorkflowCount],
+      [
+        todayConversationCount,
+        openHandoffCount,
+        paidInvoiceCount,
+        pendingWorkflowCount,
+        dispatchPendingWorkflowCount,
+        waitingTimerWorkflowCount,
+        cancelRequestedWorkflowCount,
+        failedWorkflowCount,
+      ],
       openVikingMetrics,
     ] =
       await Promise.all([
@@ -167,7 +189,27 @@ export async function getDashboardOverviewSnapshot(
           prisma.workflowRun.count({
             where: {
               representativeId: representative.id,
-              status: "QUEUED",
+              status: {
+                in: ["QUEUED", "RUNNING"],
+              },
+            },
+          }),
+          prisma.workflowRun.count({
+            where: {
+              representativeId: representative.id,
+              enginePhase: "DISPATCH_PENDING",
+            },
+          }),
+          prisma.workflowRun.count({
+            where: {
+              representativeId: representative.id,
+              enginePhase: "WAITING_TIMER",
+            },
+          }),
+          prisma.workflowRun.count({
+            where: {
+              representativeId: representative.id,
+              enginePhase: "CANCEL_REQUESTED",
             },
           }),
           prisma.workflowRun.count({
@@ -301,16 +343,52 @@ export async function getDashboardOverviewSnapshot(
       },
       workflowMetrics: [
         {
-          label: locale === "zh" ? "待执行工作流" : "Queued workflows",
-          value: String(queuedWorkflowCount),
+          label: locale === "zh" ? "活跃工作流" : "Pending workflows",
+          value: String(pendingWorkflowCount),
           detail:
-            queuedWorkflowCount > 0
+            pendingWorkflowCount > 0
               ? locale === "zh"
-                ? "包含审批超时与 handoff 跟进这类跨时间任务"
-                : "Includes approval expiry and handoff follow-up jobs."
+                ? "统计 queued 与 running，包含已经在 Temporal 里等待 timer 的任务"
+                : "Counts queued and running rows, including Temporal executions waiting on timers."
               : locale === "zh"
-                ? "当前没有等待中的耐久工作流"
-                : "No durable workflow jobs are currently queued.",
+                ? "当前没有活跃的耐久工作流"
+                : "No durable workflow jobs are currently active.",
+        },
+        {
+          label: locale === "zh" ? "等待分发" : "Dispatch pending",
+          value: String(dispatchPendingWorkflowCount),
+          detail:
+            dispatchPendingWorkflowCount > 0
+              ? locale === "zh"
+                ? "Postgres 已写入 START intent，等待 dispatcher 交给引擎"
+                : "Postgres has START intent rows waiting for dispatcher delivery."
+              : locale === "zh"
+                ? "没有等待分发的 workflow command"
+                : "No workflow commands are waiting for start dispatch.",
+        },
+        {
+          label: locale === "zh" ? "Timer 等待中" : "Waiting on timer",
+          value: String(waitingTimerWorkflowCount),
+          detail:
+            waitingTimerWorkflowCount > 0
+              ? locale === "zh"
+                ? "Temporal execution 已启动，正在等 scheduledAt"
+                : "Temporal executions have started and are waiting for scheduledAt."
+              : locale === "zh"
+                ? "没有正在等待 timer 的 Temporal workflow"
+                : "No Temporal workflows are currently sleeping on timers.",
+        },
+        {
+          label: locale === "zh" ? "取消投递中" : "Cancel requested",
+          value: String(cancelRequestedWorkflowCount),
+          detail:
+            cancelRequestedWorkflowCount > 0
+              ? locale === "zh"
+                ? "业务状态已取消，正在等待 Temporal cancel cleanup"
+                : "Business state is canceled while Temporal cleanup is being delivered."
+              : locale === "zh"
+                ? "没有等待 cancel cleanup 的 workflow"
+                : "No workflow cancellations are awaiting engine cleanup.",
         },
         {
           label: locale === "zh" ? "工作流引擎" : "Workflow engine",
@@ -364,7 +442,12 @@ export async function getDashboardOverviewSnapshot(
         kind: workflowRun.kind === "HANDOFF_FOLLOW_UP" ? "handoff_follow_up" : "approval_expiration",
         engine: workflowRun.engine === "TEMPORAL" ? "temporal" : "local_runner",
         status: normalizeWorkflowStatus(workflowRun.status),
+        ...(workflowRun.enginePhase ? { enginePhase: normalizeWorkflowEnginePhase(workflowRun.enginePhase) } : {}),
         scheduledAt: workflowRun.scheduledAt.toISOString(),
+        ...(workflowRun.nextWakeAt ? { nextWakeAt: workflowRun.nextWakeAt.toISOString() } : {}),
+        ...(workflowRun.externalWorkflowId ? { externalWorkflowId: workflowRun.externalWorkflowId } : {}),
+        ...(workflowRun.externalRunId ? { externalRunId: workflowRun.externalRunId } : {}),
+        ...(workflowRun.cancelRequestedAt ? { cancelRequestedAt: workflowRun.cancelRequestedAt.toISOString() } : {}),
         ...(workflowRun.completedAt ? { completedAt: workflowRun.completedAt.toISOString() } : {}),
         detail:
           typeof workflowRun.lastError === "string" && workflowRun.lastError.length > 0
@@ -565,7 +648,9 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
           kind: "handoff_follow_up",
           engine: "local_runner",
           status: "queued",
+          enginePhase: "dispatch_pending",
           scheduledAt: hoursAgo(-18),
+          nextWakeAt: hoursAgo(-18),
           detail: "owner_follow_up_due",
         },
         {
@@ -573,6 +658,7 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
           kind: "approval_expiration",
           engine: "local_runner",
           status: "completed",
+          enginePhase: "completed",
           scheduledAt: hoursAgo(3),
           completedAt: hoursAgo(2.5),
           detail: "approval_expired",
@@ -715,12 +801,18 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
   demoFallbackOverviewSnapshot.workflowMetrics =
     locale === "zh"
       ? [
-          { label: "待执行工作流", value: "1", detail: "还有 1 条 handoff 跟进任务等待触发" },
+          { label: "活跃工作流", value: "1", detail: "还有 1 条 handoff 跟进任务处于 active 状态" },
+          { label: "等待分发", value: "1", detail: "demo 中有 1 条 workflow 等待 runner 分发" },
+          { label: "Timer 等待中", value: "0", detail: "demo 当前没有 Temporal timer 正在等待" },
+          { label: "取消投递中", value: "0", detail: "demo 当前没有 cancel cleanup" },
           { label: "工作流引擎", value: "local", detail: "当前使用内置 workflow runner 队列" },
           { label: "失败工作流", value: "0", detail: "最近没有 workflow 失败" },
         ]
       : [
-          { label: "Queued workflows", value: "1", detail: "1 handoff follow-up job is still waiting to fire." },
+          { label: "Pending workflows", value: "1", detail: "1 handoff follow-up job is active." },
+          { label: "Dispatch pending", value: "1", detail: "1 demo workflow is waiting for runner dispatch." },
+          { label: "Waiting on timer", value: "0", detail: "No demo Temporal timer is currently sleeping." },
+          { label: "Cancel requested", value: "0", detail: "No demo workflow cancel cleanup is pending." },
           { label: "Workflow engine", value: "local", detail: "Currently using the built-in workflow runner queue." },
           { label: "Failed workflows", value: "0", detail: "No recent workflow failures." },
         ];
@@ -730,8 +822,11 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
       kind: "handoff_follow_up",
       engine: "local_runner",
       status: "queued",
+      enginePhase: "dispatch_pending",
       scheduledAt:
         demoFallbackOverviewSnapshot.recentWorkflows[0]?.scheduledAt ?? new Date().toISOString(),
+      nextWakeAt:
+        demoFallbackOverviewSnapshot.recentWorkflows[0]?.nextWakeAt ?? new Date().toISOString(),
       detail: "owner_follow_up_due",
     },
     {
@@ -739,6 +834,7 @@ function getOrCreateDemoFallbackOverviewSnapshot(locale: "zh" | "en"): Dashboard
       kind: "approval_expiration",
       engine: "local_runner",
       status: "completed",
+      enginePhase: "completed",
       scheduledAt:
         demoFallbackOverviewSnapshot.recentWorkflows[1]?.scheduledAt ?? new Date().toISOString(),
       completedAt:
@@ -901,6 +997,30 @@ function normalizeWorkflowStatus(
       return "canceled";
     default:
       return "queued";
+  }
+}
+
+function normalizeWorkflowEnginePhase(
+  value: NonNullable<RepresentativeOverviewRecord["workflowRuns"][number]["enginePhase"]>,
+): NonNullable<DashboardOverviewSnapshot["recentWorkflows"][number]["enginePhase"]> {
+  switch (value) {
+    case "WAITING_TIMER":
+      return "waiting_timer";
+    case "ACTIVITY_RUNNING":
+      return "activity_running";
+    case "RETRY_BACKOFF":
+      return "retry_backoff";
+    case "CANCEL_REQUESTED":
+      return "cancel_requested";
+    case "COMPLETED":
+      return "completed";
+    case "FAILED":
+      return "failed";
+    case "CANCELED":
+      return "canceled";
+    case "DISPATCH_PENDING":
+    default:
+      return "dispatch_pending";
   }
 }
 

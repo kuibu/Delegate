@@ -100,6 +100,7 @@ Build:
 
 - Temporal-backed long-running workflows
 - retries, compensations, SLA timers, and follow-up automations
+- current foundation: approval expiration and handoff follow-up now use Postgres truth, outbox-dispatched Temporal start/cancel, native timer waiting, and phase-aware dashboard observability
 - capability services and remote MCP servers
 - signed trust tiers and provenance for installed capabilities
 - scoped subagents for triage, browser, compute, and handoff

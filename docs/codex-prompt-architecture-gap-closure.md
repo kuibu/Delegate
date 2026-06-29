@@ -530,7 +530,7 @@ Current repo state:
 - OpenViking exists
 - artifact layer exists
 - an engine-aware workflow runner already handles approval expiration and handoff follow-up
-- model runtime and MCP transport have first safe slices, and a Temporal worker bridge exists, but create-time native Temporal timers are not in place yet
+- model runtime and MCP transport have first safe slices, and Temporal-backed workflow start, durable timer waiting, outbox dispatch, cancellation delivery, and phase-aware dashboard state now exist for the two current durable workflow kinds
 
 Goal:
 Close the highest-leverage remaining integration gaps after the lower-level slices are landed.

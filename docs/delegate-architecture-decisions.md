@@ -74,6 +74,7 @@ Representative Plane -> Capability Gate -> Isolated Compute Plane -> Audit + Bil
 
 - typed TypeScript workflow handlers for today's core product paths
 - Temporal for retries, compensations, SLA windows, reminders, and asynchronous completion
+- current durable workflows keep Postgres as truth while Temporal handles outbox-dispatched start, native timer waiting, retry, and cancellation cleanup for approval expiration and handoff follow-up
 - model reasoning used for routing, summarization, and parameter filling, not as the only source of workflow truth
 
 ### 6. Memory and state
