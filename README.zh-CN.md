@@ -9,223 +9,145 @@
 
 # Delegate
 
-把 Delegate 想成一个“AI 接待前台”。
+Delegate 是一个 Telegram 原生的公共代表系统，面向 founders、advisors、creators、recruiters，以及其他 inbound 很重的操盘者。
 
-当别人通过 Telegram、WhatsApp、飞书等渠道来找你时，Delegate 会先让你的 AI 分身完成第一轮接待：
+它不是把私人助理暴露给外部用户。Delegate 是一个独立的公共运行时，只基于已批准的公开知识回答问题，通过显式策略处理敏感操作，为更深度的访问收费，并在代表不该独立行动时转交给真人。
 
-- 能回答的，先回答
-- 该收费的，先收费
-- 需要你拍板的，先请示你
-- 需要人工接手的，再转给你
+当前产品切口刻意保持很窄：
 
-它的目标不是替代你，而是先把高频、标准化、可定价的对话接住，让你只在真正需要亲自出面的时刻介入。
+- Telegram-first representative runtime
+- 公开 representative 页面和 public-safe chat
+- founder representative demo data
+- FAQ、intake、付费续聊和 owner handoff
+- 通过隔离 broker 治理 compute
+- approval expiration 和 handoff follow-up 的 durable timer
 
-Delegate 是一个 Telegram 原生的公共代表系统。它面向 founder、advisor、creator、recruiter 以及其他 inbound 很重的操盘者，提供的不是一个“私人助理分身”，而是一个安全、常在线、对外工作的业务代表。
+## 当前已经落地
 
-这个仓库先从最窄、但已经有实际价值的切口开始：
+Delegate 现在包含这些可运行的页面和服务：
 
-- 只做 Telegram
-- 只做 founder representative
-- 只使用公开知识
-- 只允许边界明确的技能
-- 内建人工接管与付费续聊
+- **营销站点** 位于 `apps/site`，使用 Dispatch Editorial 设计系统。
+- **公开 representative 应用** 位于 `apps/reps`，包含代表档案、服务档位、Telegram deep link，以及签名 public-chat session state。
+- **Owner dashboard** 位于 `apps/web`，覆盖代表健康度、governed actions、compute sessions、artifacts、deliverables、packages、OpenViking traces 和 workflow state。
+- **Telegram bot runtime** 位于 `apps/bot`，基于 grammY 和共享 runtime policy。
+- **Compute broker** 位于 `apps/compute-broker`，在 approval 和 policy gate 后提供受治理的 `exec`、`read`、`write`、`process` 和 `browser` 请求。
+- **Workflow runner** 位于 `apps/workflow-runner`，支持 local runner 和 Temporal-backed durable workflow dispatch。
+- **Prisma/Postgres 数据模型** 覆盖 representatives、contacts、conversations、handoffs、approvals、invoices、compute、artifacts、deliverables、workflows 和 audit trails。
+- **OpenViking 集成** 支持 representative-scoped public resources、recall、session commit traces 和 safe memory previews。
+- **ClawHub registry primitives** 为后续非特权 representative skill packs 做准备。
 
-## 当前仓库里有什么
+当前真正实现的 durable workflow kind 只有两个：
 
-- 一个 monorepo 基础，包含三个独立的 Web 端和一个 Telegram bot runtime
-- 一个隔离的 compute plane 基础，带独立 broker、capability policy 包，以及 artifact 存储拓扑
-- 代表、contract、plan、handoff 和 action gate 的共享领域模型
-- 以 ClawHub 为底座的技能注册表原语，供后续 representative skill pack 使用
-- 以 OpenViking 为底座的公开记忆与上下文检索管线
-- 一个确定性的策略引擎，用来决定是直接回答、收集 intake、转人工，还是进入收费流程
-- 一个基于 OpenAI Responses 的回答通道，并在模型凭证缺失或调用失败时提供确定性的回退
-- 一个 Telegram `/compute` 通道，可创建沙箱 session，运行 `exec / read / write / process / browser` 请求，并把审批结果回传到聊天里
-- 一个感知 workflow engine 的工作流运行器，先落地 approval 过期处理和 owner follow-up
-- 三个独立的 Next.js 页面：营销站点、公开 representative 应用和 owner dashboard
-- Telegram Stars 发票处理，结果会回写到会话、钱包状态和 owner inbox
-- 一份 Prisma schema、首个 Postgres migration，以及核心产品实体的确定性 demo seed
+- `APPROVAL_EXPIRATION`
+- `HANDOFF_FOLLOW_UP`
 
-## 为什么是这个架构
+Temporal 已经为这两个 workflow 接入 post-commit command outbox dispatch、native workflow timer、cancellation cleanup 和 dashboard phase observability。普通实时聊天路由仍然不会放进 Temporal。
 
-这个产品最核心的决策是：representative 应该拥有自己的公开运行时，而不是 owner 私人工作区的一个过滤窗口。这意味着：
+## 架构原则
 
-- 不访问私有记忆
-- 不直接访问宿主机文件系统
-- 不自动化 owner 账号
-- 通用的 `exec / read / write / process / browser` 只能通过隔离 compute plane 执行
-- 只允许公开知识和显式授权的技能
-- 外部技能注册表默认必须可审计源码，且不带特权
+Delegate 围绕几条硬边界构建：
 
-这个仓库通过 `Action Gate` 策略层，在文档和代码里同时把这条边界编码下来。
+- **Postgres 是业务真相。** Workflow、billing、handoff、approval 和 dashboard state 都来自 Postgres 记录。
+- **Temporal 负责编排。** Temporal 负责长时 workflow timer 的 start、durable waiting、retry、wake-up 和 cancellation delivery。
+- **公共代表不是私人工作区。** Runtime 不读取 owner-private files、accounts、secrets 或 hidden notes。
+- **Compute 隔离且受治理。** 通用命令和浏览器任务必须经过 compute broker、capability policy、audit records 和 owner-visible approvals。
+- **Memory 有作用域。** OpenViking 存 representative-scoped public resources 和 public-safe long-term context，不存 owner-private state。
+- **策略优先于 prompt 运气。** 敏感操作经过明确的 `allow`、`ask` 或 `deny` 决策，而不是只靠模型自觉。
 
 ## 工作区结构
 
 ```text
 apps/
-  bot/          Telegram runtime powered by grammY
-  compute-broker/ Isolated compute session broker (Phase A)
-  reps/         Public representative pages
-  site/         Marketing website
-  web/          Owner dashboard control plane
-  workflow-runner/ Durable timer and follow-up workflow service
+  bot/              Telegram runtime
+  compute-broker/   Isolated compute and browser broker
+  reps/             Public representative pages and public chat
+  site/             Marketing website
+  web/              Owner dashboard
+  workflow-runner/  Local and Temporal workflow runner
+
 packages/
-  artifacts/    Artifact object-key and retention helpers
-  capability-policy/ Capability gate evaluation primitives
-  compute-protocol/ Typed compute broker payloads and schemas
-  domain/       Shared schemas and demo representative data
-  openviking/   Typed OpenViking client, URI rules, and safety filters
-  registry/     External skill registry clients (ClawHub first)
-  runtime/      Inquiry classification and action-gate policy engine
-  web-data/     Shared dashboard/public-page data access helpers
-  web-ui/       Shared design system and control-plane UI primitives
-  workflows/    Shared workflow kinds, inputs, and scheduling helpers
+  artifacts/          Artifact object-key and retention helpers
+  capability-policy/  Capability gate evaluation primitives
+  compute-protocol/   Typed compute broker payloads and schemas
+  domain/             Shared schemas and demo representative data
+  lifecycle-hooks/    Runtime lifecycle event hooks
+  model-runtime/      Model context assembly and provider runtime
+  openviking/         Typed OpenViking client, URI rules, and safety filters
+  registry/           External skill registry clients
+  runtime/            Inquiry classification and action-gate policy
+  web-data/           Dashboard and public-page data access helpers
+  web-ui/             Shared CSS/design system assets
+  workflows/          Shared workflow kinds, inputs, and scheduling helpers
+
+prisma/
+  schema.prisma       Database schema
+  migrations/         Prisma migrations
+
 docs/
   architecture.md
-  codex-prompt-architecture-gap-closure.md
   delegate-architecture-decisions.md
-  openclaw-adoption.md
+  temporal-native-workflow-rfc.md
+  v2-isolated-compute-plane-plan.md
   openviking-integration.md
   roadmap.md
-prisma/
-  schema.prisma
 ```
 
 ## 快速开始
 
+前置条件：
+
+- Node.js 和 pnpm
+- 如果要跑完整本地栈，需要 Docker
+- 只有在需要真实模型或 OpenViking 调用时，才需要配置 provider API keys
+
+安装依赖并创建本地环境变量文件：
+
 ```bash
 pnpm install
 cp .env.example .env
-pnpm docker:up
-pnpm typecheck
-pnpm test
-pnpm registry:search:clawhub "qualification"
 ```
 
-`pnpm docker:up` 现在会通过 Docker Compose 启动整套本地栈：
+启动完整 Docker Compose 本地栈：
 
-- `postgres`
-- `migrate`
-- `site`
-- `dashboard`
-- `reps`
-- `compute-broker`
-- `workflow-runner`
-- `artifact-store`
-- `artifact-store-init`
-- `openviking`
-- `openviking-console`
-- 当 shell 或 `.env` 里设置了 `TELEGRAM_BOT_TOKEN` 时，也会启动 `bot`
+```bash
+pnpm docker:up
+```
 
-本地地址：
+运行标准检查：
 
-- website: `http://localhost:3000`
-- dashboard: `http://localhost:3001/dashboard?view=overview`
-- representative app: `http://localhost:3002/reps/lin-founder-rep`
-- compute broker: `http://localhost:4010/health`
-- workflow runner: `http://localhost:4020/health`
-- Temporal gRPC（可选 profile）: `localhost:7233`
-- Temporal UI（可选 profile）: `http://localhost:8233`
-- artifact store API: `http://localhost:9000`
-- artifact store console: `http://localhost:9001`
+```bash
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+默认 Docker profile 的本地地址：
+
+- Site: `http://localhost:3000`
+- Dashboard: `http://localhost:3001/dashboard?view=overview`
+- Representative: `http://localhost:3002/reps/lin-founder-rep`
+- Compute broker health: `http://localhost:4010/health`
+- Workflow runner health: `http://localhost:4020/health`
+- Artifact store API: `http://localhost:9000`
+- Artifact store console: `http://localhost:9001`
 - OpenViking API: `http://localhost:1933`
 - OpenViking console docs: `http://localhost:8020/docs`
 
-在 Telegram 私聊里可以这样测试 representative 侧 compute：
-
-```text
-/compute pwd
-/compute read README.md
-/compute write notes/demo.txt ::: hello from delegate
-/compute browser https://example.com
-```
-
-当前的 native computer-use 准备工作是建立在保留的浏览器 session 通道之上的。为了给未来的 OpenAI / Claude computer-use loop 暴露出一个“可以接管”的状态，请设置以下一个或两个变量：
-
-- `COMPUTE_NATIVE_OPENAI_MODEL`
-- `COMPUTE_NATIVE_ANTHROPIC_MODEL`
-
-同时设置对应 provider 的凭证：
-
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
-
-如果这些变量未设置，Delegate 仍然会保留 Playwright 浏览器 session、截图和页面 JSON，但 dashboard 会正确显示 native computer-use 还没有准备好。
-
-如果你要启用真实的 OpenViking ingestion / recall / memory extraction，请在启动整套栈之前设置 `OPENAI_API_KEY` 或 `ARK_API_KEY`。如果模型凭证缺失，Delegate 仍会为本地开发启动 OpenViking 服务，但 representative sync 和 memory capture 会被安全地阻止，而不是拿着伪造凭证去尝试真实写入。
-
-如果你要启用通过 OpenAI Responses 生成 representative 回复，并在需要时回退到 Anthropic，请设置：
-
-- `DELEGATE_MODEL_ENABLED=true`
-- `DELEGATE_MODEL_PROVIDER=openai`
-- `DELEGATE_MODEL_FALLBACK_PROVIDER=anthropic`
-- `DELEGATE_OPENAI_MODEL=gpt-5-mini`
-- `DELEGATE_ANTHROPIC_MODEL=claude-sonnet-4-5`
-- `DELEGATE_MODEL_MAX_INPUT_TOKENS=2400`
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
-
-如果两个 provider 都不可用，Telegram bot 会回退到现有的确定性 reply preview，而不是让整段对话直接失败。
-
-内部模型成本核算可以按 provider 分别配置：
-
-- `DELEGATE_OPENAI_INPUT_COST_USD_PER_1M_TOKENS`
-- `DELEGATE_OPENAI_OUTPUT_COST_USD_PER_1M_TOKENS`
-- `DELEGATE_ANTHROPIC_INPUT_COST_USD_PER_1M_TOKENS`
-- `DELEGATE_ANTHROPIC_OUTPUT_COST_USD_PER_1M_TOKENS`
-
-这些值会写入内部的 `MODEL_USAGE` ledger。如果你希望 dashboard 和审计轨迹里出现非零模型 COGS，请让它们和你当前 provider 的实际价格保持一致。
-
-当前模型通道还包含一个结构化 context assembler 和一组生命周期 trace：
-
-- representative contract + snapshot segments
-- active collector state and recent-turn working context
-- OpenViking recall trimmed by input budget
-- lifecycle hook traces for model context assembly, model reply completion, handoff preparation, tool preflight, tool completion, and session termination
-
-第一段 durable workflow 也已经落地：
-
-- approval request 会在超时窗口后自动过期
-- owner handoff request 可以排队发送定时 follow-up reminder
-- workflow 的真实状态保存在 Postgres 中，并显示在 dashboard overview
-- workflow run 会携带 engine phase、Temporal workflow ID、run ID、唤醒时间和取消请求状态
-- Temporal 模式下，producer 会在同一次 DB 提交里写入 `WorkflowRun` 和 `WorkflowCommandOutbox(START)`
-- workflow runner 会在 commit 后分发 Temporal command，创建时立即启动 workflow，并在 workflow 内用 timer 等到 `scheduledAt`
-- 手动解决 approval 或 handoff 时，Postgres 业务真相会先进入 canceled，再把 Temporal cancel 当作 best-effort cleanup 投递出去
-
-为了让本地开发保持安全，Delegate 仍默认使用内建 runner：
-
-- `WORKFLOW_ENGINE=local_runner`
-
-如果你想在本地运行 Temporal-backed workflow engine，请设置：
-
-- `WORKFLOW_ENGINE=temporal`
-- `WORKFLOW_TEMPORAL_ADDRESS`
-- `WORKFLOW_TEMPORAL_NAMESPACE`
-- `WORKFLOW_TEMPORAL_TASK_QUEUE`
-
-如果 Temporal 相关字段没有配全，Delegate 现在会回退到本地 runner，而不是静默地把任务塞进一个没人处理的队列。
-
-如果你想本地把 Temporal profile 从头到尾跑起来，请使用：
+如果你想手动并排运行三个 Next.js app，可以显式指定端口：
 
 ```bash
-pnpm docker:up:temporal
+PORT=3100 pnpm dev:site
+PORT=3101 pnpm dev:dashboard
+PORT=3102 pnpm dev:reps
 ```
 
-这个命令会启动：
+然后打开：
 
-- `temporal-db-init`
-- `temporal`
-- `temporal-ui`
-- `temporal-namespace-init`
-- `workflow-runner`，并设置 `WORKFLOW_ENGINE=temporal`
+- Site: `http://localhost:3100`
+- Dashboard: `http://localhost:3101/dashboard?view=overview`
+- Representative: `http://localhost:3102/reps/lin-founder-rep`
 
-启动完成后，`http://localhost:4020/health` 应该返回：
-
-- `engine: "temporal"`
-- `temporalReady: true`
-- `temporalBridgeState.status: "running"`
-
-如果你只想在本地非 Docker 的应用开发里启动数据库容器，请使用：
+如果只想为本地非 Docker app 开发启动数据库：
 
 ```bash
 pnpm docker:up:db
@@ -236,64 +158,129 @@ pnpm dev:reps
 pnpm dev:bot
 ```
 
-常用 Docker 命令：
+## Temporal Workflow 模式
+
+Delegate 默认使用内建 local runner：
 
 ```bash
+WORKFLOW_ENGINE=local_runner
+```
+
+在 local-runner 模式下，到期的 workflow rows 会由 `apps/workflow-runner` 直接处理。
+
+如果要运行 Temporal profile：
+
+```bash
+pnpm docker:up:temporal
+```
+
+这个 profile 会启动 Temporal、Temporal UI、namespace setup，以及带 Temporal 设置的 workflow runner。健康后可以检查：
+
+- Temporal UI: `http://localhost:8233`
+- Workflow runner: `http://localhost:4020/health`
+
+健康检查应该返回 `engine: "temporal"`，并显示 Temporal bridge 正在运行。
+
+当前 Temporal 模型是：
+
+1. Producer 在同一次已提交的 Postgres flow 里写入 business truth、`WorkflowRun` 和 `WorkflowCommandOutbox`。
+2. Workflow runner 在 commit 之后分发 `START` 和 `CANCEL` commands。
+3. Temporal 用 `externalWorkflowId` 作为稳定幂等 key，立即启动 workflow。
+4. Workflow 接收 `scheduledAt`，durably sleep 到对应时间，然后运行 DB-backed idempotent activity。
+5. 手动解决业务状态时先更新 Postgres，并把 Temporal cancellation 视为 cleanup，而不是 authority。
+
+如果 Temporal 配置不完整，Delegate 会回退到 `local_runner`，不会把任务塞进无法处理的 Temporal 队列。
+
+## 环境变量指南
+
+默认 `.env.example` 适合本地开发。重要配置包括：
+
+- `DATABASE_URL` 指向 Prisma 使用的 Postgres。
+- `TELEGRAM_BOT_TOKEN`、`TELEGRAM_BOT_USERNAME` 和 `TELEGRAM_WEBHOOK_SECRET` 启用 Telegram bot。
+- `REP_PUBLIC_CHAT_SESSION_SECRET` 可以覆盖 public-chat cookie 签名 secret。如果没有设置，reps app 会依次回退到 `TELEGRAM_WEBHOOK_SECRET` 和本地开发 secret。
+- `DELEGATE_MODEL_ENABLED`、`DELEGATE_MODEL_PROVIDER`、`DELEGATE_OPENAI_MODEL` 和 `DELEGATE_ANTHROPIC_MODEL` 控制 model-backed representative replies。
+- `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 或 `ARK_API_KEY` 启用真实 provider 调用。
+- `OPENVIKING_*` 控制 public memory sync、recall 和 commit 行为。
+- `COMPUTE_*` 控制 broker、Docker runner、browser image 和 native computer-use readiness。
+- `WORKFLOW_*` 控制 local-runner 与 Temporal workflow execution。
+- `ARTIFACT_STORE_*` 控制 MinIO-backed artifact storage。
+
+当 model providers 不可用时，bot 和 public representative 路径会回退到 deterministic previews，而不是让对话失败。
+
+## 常用命令
+
+```bash
+pnpm dev:site
+pnpm dev:dashboard
+pnpm dev:reps
+pnpm dev:bot
+pnpm dev:compute-broker
+pnpm dev:workflow-runner
+
+pnpm db:generate
+pnpm db:validate
+pnpm db:migrate:dev
+pnpm db:deploy
+pnpm db:seed
+pnpm db:setup
+
 pnpm docker:ps
 pnpm docker:logs
 pnpm docker:down
+
+pnpm registry:search:clawhub "qualification"
 ```
 
-## 当前 MVP 范围
+在 representative 私聊里可以这样测试 Telegram compute：
 
-第一段已经实现的切片是 `Founder Representative / private chat / FAQ + intake + paid continuation`。它已经覆盖：
+```text
+/compute pwd
+/compute read README.md
+/compute write notes/demo.txt ::: hello from delegate
+/compute browser https://example.com
+```
 
-- 公开 representative 档案
-- 公开知识包
-- 免费与付费续聊
-- 协作与报价 intake
-- 人工接管路由
-- owner inbox 状态流转
-- Telegram Stars 发票创建与付款确认持久化
-- 显式的 deny / ask-first / allow action gate
-- 以 representative 为作用域的 OpenViking 同步、recall trace、commit trace，以及安全的 memory preview
+## 设计系统
 
-下一批交付切片记录在 [docs/roadmap.md](./docs/roadmap.md)。
+Delegate 使用 [DESIGN.md](./DESIGN.md) 中定义的 **Dispatch Editorial** 方向：
 
-## OpenViking 环境变量
+- 温暖的 paper 和 parchment surfaces
+- sea-ink 和 copper signal colors
+- editorial marketing pages
+- procedural、dense owner dashboard views
+- trust disclosures 靠近 primary actions
 
-通用配置：
+项目在 build 时使用 resilient local CSS font fallbacks。如果之后需要精确的 Instrument Sans、Instrument Serif 或 IBM Plex Mono 渲染，应改为 self-host font files，而不是依赖 build-time Google Fonts fetch。
 
-- `OPENVIKING_ENABLED`
-- `OPENVIKING_BASE_URL`
-- `OPENVIKING_API_KEY`
-- `OPENVIKING_ROOT_API_KEY`
-- `OPENVIKING_TIMEOUT_MS`
-- `OPENVIKING_CONSOLE_URL`
-- `OPENVIKING_AGENT_ID_PREFIX`
-- `OPENVIKING_RESOURCE_SYNC_ENABLED`
-- `OPENVIKING_AUTO_RECALL_DEFAULT`
-- `OPENVIKING_AUTO_CAPTURE_DEFAULT`
+## 文档地图
 
-Provider 配置：
+- [Architecture](./docs/architecture.md): product thesis、runtime loop、security boundary 和 OpenViking rules。
+- [Architecture decisions](./docs/delegate-architecture-decisions.md): 更大的系统方向和 tradeoffs。
+- [Temporal-native workflow RFC](./docs/temporal-native-workflow-rfc.md): workflow state model、outbox、timer、cancellation 和 dashboard semantics。
+- [V2 isolated compute plane plan](./docs/v2-isolated-compute-plane-plan.md): compute 和 browser isolation model。
+- [OpenViking integration](./docs/openviking-integration.md): public memory 和 recall integration。
+- [Roadmap](./docs/roadmap.md): 分阶段产品和平台方向。
+- [Gap analysis](./docs/gap-analysis.md): 剩余产品和架构缺口。
+- [Design system](./DESIGN.md): 视觉方向和 implementation notes。
 
-- OpenAI 路径：`OPENVIKING_PROVIDER=openai`、`OPENAI_API_KEY`，可选 `OPENAI_BASE_URL`
-- Volcengine 路径：`OPENVIKING_PROVIDER=volcengine`、`ARK_API_KEY`，可选 `ARK_API_BASE`
+## 当前边界
 
-更多细节见 [docs/openviking-integration.md](./docs/openviking-integration.md)。
+Delegate 可以：
 
-更偏前瞻的架构决策，包括隔离 compute plane 和 capability gate 的方向，见 [docs/delegate-architecture-decisions.md](./docs/delegate-architecture-decisions.md)。
-Phase A compute plane 的具体交付清单见 [docs/v2-isolated-compute-plane-plan.md](./docs/v2-isolated-compute-plane-plan.md)。
-用于补齐剩余架构缺口的 implementation matrix 和可直接粘贴使用的 Codex prompts 见 [docs/codex-prompt-architecture-gap-closure.md](./docs/codex-prompt-architecture-gap-closure.md)。
+- 基于公开 representative knowledge 回答问题
+- 收集 structured intake
+- 提供 paid continuation
+- 创建 Telegram Stars invoices
+- 创建 owner handoff requests
+- 通过 broker 运行 governed compute 和 browser tasks
+- 持久化 artifacts、deliverables、package downloads、audit events 和 ledgers
+- 通过 durable workflow timers 处理 approval expiration 和 handoff follow-up
 
-当前受治理的 compute 切片已经提供：
+Delegate 明确不会：
 
-- `exec / read / write / process / browser`
-- Docker 隔离执行
-- 基于 Playwright 的确定性浏览器通道
-- 由策略驱动的 `allow / ask / deny`
-- 带 channel / plan-tier 条件的 Delegate 管理型策略覆盖
-- 面向高风险请求的 approval 创建与处理
-- stdout/stderr artifact 持久化到 MinIO
-- owner dashboard 中可见的 compute 通道，能查看 session、approval、artifact 和 ledger
-- 面向 representative compute 请求的 Telegram `/compute` 集成
+- 暴露 owner-private workspace memory
+- 从 representative runtime 运行任意 host commands
+- 静默修改真实 calendar 或 private accounts
+- 把 raw Temporal history 当作业务真相
+- 把普通聊天回复迁进 long-running workflows
+- 信任客户端传来的 public-chat tier 或 recent-turn state 作为权威

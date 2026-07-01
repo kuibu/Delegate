@@ -9,226 +9,145 @@
 
 # Delegate
 
-Think of Delegate as an AI front desk for your inbound conversations.
+Delegate is a Telegram-native public representative system for founders, advisors, creators, recruiters, and other inbound-heavy operators.
 
-When people reach you on Telegram, WhatsApp, Feishu, and similar channels, Delegate lets your AI representative take the first pass:
+It is not a private assistant exposed to the public. Delegate is a separate public runtime that answers from approved public knowledge, routes sensitive work through explicit policy, charges for deeper access, and hands off to a human when the representative should not act alone.
 
-- answer what it can
-- charge when it should
-- ask for your approval when needed
-- hand off to you when a human should step in
+The current product wedge is intentionally narrow:
 
-Delegate is a Telegram-native public representative system. It is built for founders, advisors, creators, recruiters, and other inbound-heavy operators who need a safe, always-on business-facing representative instead of a private assistant clone.
+- Telegram-first representative runtime
+- public representative page and public-safe chat
+- founder representative demo data
+- FAQ, intake, paid continuation, and owner handoff
+- governed compute through an isolated broker
+- durable timers for approval expiration and handoff follow-up
 
-This repository starts with the narrowest useful wedge:
+## What Ships Today
 
-- Telegram only
-- founder representative only
-- public knowledge only
-- bounded skills only
-- human handoff and paid continuation built in
+Delegate currently includes these working surfaces and services:
 
-## What is in the repo right now
+- **Marketing site** in `apps/site`, using the Dispatch Editorial design system.
+- **Public representative app** in `apps/reps`, including representative profiles, service tiers, Telegram deep links, and signed public-chat session state.
+- **Owner dashboard** in `apps/web`, covering representative health, governed actions, compute sessions, artifacts, deliverables, packages, OpenViking traces, and workflow state.
+- **Telegram bot runtime** in `apps/bot`, powered by grammY and shared runtime policy.
+- **Compute broker** in `apps/compute-broker`, providing governed `exec`, `read`, `write`, `process`, and `browser` requests behind approval and policy gates.
+- **Workflow runner** in `apps/workflow-runner`, supporting the local runner and Temporal-backed durable workflow dispatch.
+- **Prisma/Postgres data model** for representatives, contacts, conversations, handoffs, approvals, invoices, compute, artifacts, deliverables, workflows, and audit trails.
+- **OpenViking integration** for representative-scoped public resources, recall, session commit traces, and safe memory previews.
+- **ClawHub registry primitives** for future non-privileged representative skill packs.
 
-- A monorepo foundation for three separate web surfaces plus a Telegram bot runtime
-- An isolated compute-plane foundation with a dedicated broker, capability policy package, and artifact storage topology
-- Shared domain models for representatives, contracts, plans, handoff, and action gates
-- ClawHub-backed skill registry primitives for future representative skill packs
-- OpenViking-backed public memory and context retrieval plumbing
-- A deterministic policy engine that decides whether to answer, collect intake, hand off, or charge
-- An OpenAI Responses-backed answer lane with deterministic fallback when model credentials are missing or calls fail
-- A Telegram `/compute` lane that can create sandboxed sessions, run `exec / read / write / process / browser` requests, and surface approval outcomes back to chat
-- Org/customer governance that now spans compute policy, artifacts, deliverables, and package delivery visibility inside the owner dashboard
-- A governed-action control plane that now unifies approval, artifact, deliverable, and billing consequences into one owner-facing dashboard view
-- An engine-aware workflow runner that processes approval expiry and owner follow-up as the first durable workflow slice
-- Three distinct Next.js surfaces: a marketing site, a public representative app, and an owner dashboard
-- Telegram Stars invoice handling that writes back into conversations, wallet state, and owner inbox
-- A Prisma schema, initial Postgres migration, and deterministic demo seed for the core product entities
+The two durable workflow kinds implemented today are:
 
-## Why this architecture
+- `APPROVAL_EXPIRATION`
+- `HANDOFF_FOLLOW_UP`
 
-The core product decision is that the representative is its own public runtime, not a filtered window into the owner's private workspace. That means:
+Temporal is already wired for those workflows through post-commit command outbox dispatch, native workflow timers, cancellation cleanup, and dashboard phase observability. Ordinary real-time chat routing still stays out of Temporal.
 
-- no private memory access
-- no direct host filesystem access
-- no owner account automation
-- general-purpose `exec / read / write / process / browser` only through an isolated compute plane
-- only public knowledge and explicitly allowed skills
-- external skill registries must be source-auditable and non-privileged by default
-- org/customer governance can narrow control-plane behavior, but it never widens public-user access past owner-defined and Delegate-managed boundaries
+## Architecture Principles
 
-This repo encodes that boundary in both docs and code through the `Action Gate` policy layer.
+Delegate is built around a few hard boundaries:
 
-The dashboard now also surfaces that boundary as a governed-action console, so owners can inspect one shared timeline of policy decisions, approvals, resource changes, and billing effects instead of piecing them together across separate panels.
+- **Postgres is business truth.** Workflow, billing, handoff, approval, and dashboard state come from Postgres records.
+- **Temporal is orchestration.** Temporal handles start, durable waiting, retry, wake-up, and cancellation delivery for long-running workflow timers.
+- **Public representatives are not private workspaces.** The runtime does not read owner-private files, accounts, secrets, or hidden notes.
+- **Compute is isolated and governed.** General-purpose commands and browser work go through the compute broker, capability policy, audit records, and owner-visible approvals.
+- **Memory is scoped.** OpenViking stores representative-scoped public resources and public-safe long-term context, not owner-private state.
+- **Policy beats prompt luck.** Sensitive actions pass through explicit `allow`, `ask`, or `deny` decisions instead of relying only on model behavior.
 
-## Workspace layout
+## Workspace Layout
 
 ```text
 apps/
-  bot/          Telegram runtime powered by grammY
-  compute-broker/ Isolated compute session broker (Phase A)
-  reps/         Public representative pages
-  site/         Marketing website
-  web/          Owner dashboard control plane
-  workflow-runner/ Durable timer and follow-up workflow service
+  bot/              Telegram runtime
+  compute-broker/   Isolated compute and browser broker
+  reps/             Public representative pages and public chat
+  site/             Marketing website
+  web/              Owner dashboard
+  workflow-runner/  Local and Temporal workflow runner
+
 packages/
-  artifacts/    Artifact object-key and retention helpers
-  capability-policy/ Capability gate evaluation primitives
-  compute-protocol/ Typed compute broker payloads and schemas
-  domain/       Shared schemas and demo representative data
-  openviking/   Typed OpenViking client, URI rules, and safety filters
-  registry/     External skill registry clients (ClawHub first)
-  runtime/      Inquiry classification and action-gate policy engine
-  web-data/     Shared dashboard/public-page data access helpers
-  web-ui/       Shared design system and control-plane UI primitives
-  workflows/    Shared workflow kinds, inputs, and scheduling helpers
+  artifacts/          Artifact object-key and retention helpers
+  capability-policy/  Capability gate evaluation primitives
+  compute-protocol/   Typed compute broker payloads and schemas
+  domain/             Shared schemas and demo representative data
+  lifecycle-hooks/    Runtime lifecycle event hooks
+  model-runtime/      Model context assembly and provider runtime
+  openviking/         Typed OpenViking client, URI rules, and safety filters
+  registry/           External skill registry clients
+  runtime/            Inquiry classification and action-gate policy
+  web-data/           Dashboard and public-page data access helpers
+  web-ui/             Shared CSS/design system assets
+  workflows/          Shared workflow kinds, inputs, and scheduling helpers
+
+prisma/
+  schema.prisma       Database schema
+  migrations/         Prisma migrations
+
 docs/
   architecture.md
-  codex-prompt-architecture-gap-closure.md
   delegate-architecture-decisions.md
-  openclaw-adoption.md
+  temporal-native-workflow-rfc.md
+  v2-isolated-compute-plane-plan.md
   openviking-integration.md
   roadmap.md
-prisma/
-  schema.prisma
 ```
 
-## Getting started
+## Quick Start
+
+Prerequisites:
+
+- Node.js and pnpm
+- Docker, if you want the full local stack
+- Provider API keys only when you want live model or OpenViking calls
+
+Install dependencies and create local env:
 
 ```bash
 pnpm install
 cp .env.example .env
-pnpm docker:up
-pnpm typecheck
-pnpm test
-pnpm registry:search:clawhub "qualification"
 ```
 
-`pnpm docker:up` now boots the whole local stack with Docker Compose:
+Start the full Docker Compose stack:
 
-- `postgres`
-- `migrate`
-- `site`
-- `dashboard`
-- `reps`
-- `compute-broker`
-- `workflow-runner`
-- `artifact-store`
-- `artifact-store-init`
-- `openviking`
-- `openviking-console`
-- `bot` when `TELEGRAM_BOT_TOKEN` is set in your shell or `.env`
+```bash
+pnpm docker:up
+```
 
-Local URLs:
+Run the standard checks:
 
-- website: `http://localhost:3000`
-- dashboard: `http://localhost:3001/dashboard?view=overview`
-- representative app: `http://localhost:3002/reps/lin-founder-rep`
-- compute broker: `http://localhost:4010/health`
-- workflow runner: `http://localhost:4020/health`
-- Temporal gRPC (optional profile): `localhost:7233`
-- Temporal UI (optional profile): `http://localhost:8233`
-- artifact store API: `http://localhost:9000`
-- artifact store console: `http://localhost:9001`
+```bash
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+Useful local URLs for the default Docker profile:
+
+- Site: `http://localhost:3000`
+- Dashboard: `http://localhost:3001/dashboard?view=overview`
+- Representative: `http://localhost:3002/reps/lin-founder-rep`
+- Compute broker health: `http://localhost:4010/health`
+- Workflow runner health: `http://localhost:4020/health`
+- Artifact store API: `http://localhost:9000`
+- Artifact store console: `http://localhost:9001`
 - OpenViking API: `http://localhost:1933`
 - OpenViking console docs: `http://localhost:8020/docs`
 
-Representative-side compute examples in Telegram private chat:
-
-```text
-/compute pwd
-/compute read README.md
-/compute write notes/demo.txt ::: hello from delegate
-/compute browser https://example.com
-```
-
-Native computer-use preparation now builds on the retained browser session lane. To surface a ready handoff state for future OpenAI / Claude computer-use loops, set one or both of:
-
-- `COMPUTE_NATIVE_OPENAI_MODEL`
-- `COMPUTE_NATIVE_ANTHROPIC_MODEL`
-
-and the matching provider credentials:
-
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
-
-If these are unset, Delegate still keeps Playwright browser sessions, screenshots, and page JSON, but the dashboard will correctly show that native computer-use is not ready yet.
-
-For real OpenViking ingestion / recall / memory extraction, set either `OPENAI_API_KEY` or `ARK_API_KEY` before starting the stack. If model credentials are missing, Delegate still starts the OpenViking service for local development, but representative sync and memory capture stay safely blocked instead of attempting real writes with fake credentials.
-
-For representative reply generation through OpenAI Responses with optional Anthropic fallback, set:
-
-- `DELEGATE_MODEL_ENABLED=true`
-- `DELEGATE_MODEL_PROVIDER=openai`
-- `DELEGATE_MODEL_FALLBACK_PROVIDER=anthropic`
-- `DELEGATE_OPENAI_MODEL=gpt-5-mini`
-- `DELEGATE_ANTHROPIC_MODEL=claude-sonnet-4-5`
-- `DELEGATE_MODEL_MAX_INPUT_TOKENS=2400`
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
-
-If both providers are unavailable, the Telegram bot falls back to the existing deterministic reply previews instead of failing the conversation.
-
-Internal model-cost accounting is configurable per provider via:
-
-- `DELEGATE_OPENAI_INPUT_COST_USD_PER_1M_TOKENS`
-- `DELEGATE_OPENAI_OUTPUT_COST_USD_PER_1M_TOKENS`
-- `DELEGATE_ANTHROPIC_INPUT_COST_USD_PER_1M_TOKENS`
-- `DELEGATE_ANTHROPIC_OUTPUT_COST_USD_PER_1M_TOKENS`
-
-These values feed the internal `MODEL_USAGE` ledger. Keep them aligned with your current provider pricing if you want non-zero model COGS in the dashboard and audit trail.
-
-The current model lane also ships a structured context assembler and lifecycle traces:
-
-- representative contract + snapshot segments
-- active collector state and recent-turn working context
-- OpenViking recall trimmed by input budget
-- lifecycle hook traces for model context assembly, model reply completion, handoff preparation, tool preflight, tool completion, and session termination
-
-The first durable workflow slice is also live:
-
-- approval requests can expire automatically after their timeout window
-- owner handoff requests can enqueue timed follow-up reminders
-- workflow truth stays in Postgres and is surfaced in the dashboard overview
-- workflow runs carry engine phase metadata, Temporal workflow IDs, run IDs, wake times, and cancel-request state
-- Temporal-mode producers write `WorkflowRun` plus `WorkflowCommandOutbox(START)` in the same committed DB flow
-- the workflow runner dispatches Temporal commands post-commit, starts workflows immediately, and the workflow sleeps durably until `scheduledAt`
-- manual approval or handoff resolution marks Postgres truth canceled first, then delivers Temporal cancellation as best-effort cleanup
-
-To keep local development safe, Delegate still defaults to the built-in runner:
-
-- `WORKFLOW_ENGINE=local_runner`
-
-If you want to run the Temporal-backed workflow engine locally, set:
-
-- `WORKFLOW_ENGINE=temporal`
-- `WORKFLOW_TEMPORAL_ADDRESS`
-- `WORKFLOW_TEMPORAL_NAMESPACE`
-- `WORKFLOW_TEMPORAL_TASK_QUEUE`
-
-If the Temporal fields are incomplete, Delegate now falls back to the local runner instead of silently enqueueing unserviceable jobs.
-
-If you want to run the local Temporal profile end to end, use:
+If you are running the three Next.js apps manually side by side, use explicit ports:
 
 ```bash
-pnpm docker:up:temporal
+PORT=3100 pnpm dev:site
+PORT=3101 pnpm dev:dashboard
+PORT=3102 pnpm dev:reps
 ```
 
-That command boots:
+Then open:
 
-- `temporal-db-init`
-- `temporal`
-- `temporal-ui`
-- `temporal-namespace-init`
-- `workflow-runner` with `WORKFLOW_ENGINE=temporal`
+- Site: `http://localhost:3100`
+- Dashboard: `http://localhost:3101/dashboard?view=overview`
+- Representative: `http://localhost:3102/reps/lin-founder-rep`
 
-Once it is up, `http://localhost:4020/health` should report:
-
-- `engine: "temporal"`
-- `temporalReady: true`
-- `temporalBridgeState.status: "running"`
-
-If you only want the database container for local non-Docker app development, use:
+For database-only local development:
 
 ```bash
 pnpm docker:up:db
@@ -239,68 +158,129 @@ pnpm dev:reps
 pnpm dev:bot
 ```
 
-Useful Docker commands:
+## Temporal Workflow Mode
+
+Delegate defaults to the built-in local runner:
 
 ```bash
+WORKFLOW_ENGINE=local_runner
+```
+
+In local-runner mode, due workflow rows are processed directly by `apps/workflow-runner`.
+
+To run the Temporal profile:
+
+```bash
+pnpm docker:up:temporal
+```
+
+That profile starts Temporal, Temporal UI, namespace setup, and the workflow runner with Temporal settings. Once it is healthy, check:
+
+- Temporal UI: `http://localhost:8233`
+- Workflow runner: `http://localhost:4020/health`
+
+The health response should report `engine: "temporal"` and a running Temporal bridge.
+
+The current Temporal model is:
+
+1. Producers write business truth, `WorkflowRun`, and `WorkflowCommandOutbox` in the same committed Postgres flow.
+2. The workflow runner dispatches `START` and `CANCEL` commands after commit.
+3. Temporal starts the workflow immediately with `externalWorkflowId` as the stable idempotency key.
+4. The workflow receives `scheduledAt`, sleeps durably until that time, then runs a DB-backed idempotent activity.
+5. Manual resolution updates Postgres first and treats Temporal cancellation as cleanup, not authority.
+
+If Temporal configuration is incomplete, Delegate falls back to `local_runner` rather than enqueueing unserviceable Temporal jobs.
+
+## Environment Guide
+
+The default `.env.example` is safe for local development. Important settings:
+
+- `DATABASE_URL` points Prisma to Postgres.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, and `TELEGRAM_WEBHOOK_SECRET` enable the Telegram bot.
+- `REP_PUBLIC_CHAT_SESSION_SECRET` can override the public-chat cookie signing secret. If unset, the reps app falls back to `TELEGRAM_WEBHOOK_SECRET` and then a local development secret.
+- `DELEGATE_MODEL_ENABLED`, `DELEGATE_MODEL_PROVIDER`, `DELEGATE_OPENAI_MODEL`, and `DELEGATE_ANTHROPIC_MODEL` control model-backed representative replies.
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `ARK_API_KEY` enable live provider calls.
+- `OPENVIKING_*` controls public memory sync, recall, and commit behavior.
+- `COMPUTE_*` controls the broker, Docker runner, browser image, and native computer-use readiness.
+- `WORKFLOW_*` controls local-runner versus Temporal workflow execution.
+- `ARTIFACT_STORE_*` controls MinIO-backed artifact storage.
+
+When model providers are unavailable, the bot and public representative paths fall back to deterministic previews instead of failing the conversation.
+
+## Useful Commands
+
+```bash
+pnpm dev:site
+pnpm dev:dashboard
+pnpm dev:reps
+pnpm dev:bot
+pnpm dev:compute-broker
+pnpm dev:workflow-runner
+
+pnpm db:generate
+pnpm db:validate
+pnpm db:migrate:dev
+pnpm db:deploy
+pnpm db:seed
+pnpm db:setup
+
 pnpm docker:ps
 pnpm docker:logs
 pnpm docker:down
+
+pnpm registry:search:clawhub "qualification"
 ```
 
-## Current MVP slice
+Telegram compute examples in a representative private chat:
 
-The first implemented slice is `Founder Representative / private chat / FAQ + intake + paid continuation`. It already models:
+```text
+/compute pwd
+/compute read README.md
+/compute write notes/demo.txt ::: hello from delegate
+/compute browser https://example.com
+```
 
-- public representative profile
-- public knowledge pack
-- free vs paid continuation
-- collaboration and pricing intake
-- human handoff routing
-- owner inbox status flow
-- Telegram Stars invoice creation + payment confirmation persistence
-- explicit deny / ask-first / allow action gating
-- representative-scoped OpenViking sync, recall traces, commit traces, and safe memory previews
+## Design System
 
-The next delivery slices are documented in [docs/roadmap.md](./docs/roadmap.md).
+Delegate uses the **Dispatch Editorial** direction from [DESIGN.md](./DESIGN.md):
 
-## OpenViking env vars
+- warm paper and parchment surfaces
+- sea-ink and copper signal colors
+- editorial marketing pages
+- procedural, dense owner dashboard views
+- trust disclosures close to primary actions
 
-Common settings:
+The project uses resilient local CSS font fallbacks during builds. If exact Instrument Sans, Instrument Serif, or IBM Plex Mono rendering is required later, self-host those font files instead of relying on build-time Google Fonts fetches.
 
-- `OPENVIKING_ENABLED`
-- `OPENVIKING_BASE_URL`
-- `OPENVIKING_API_KEY`
-- `OPENVIKING_ROOT_API_KEY`
-- `OPENVIKING_TIMEOUT_MS`
-- `OPENVIKING_CONSOLE_URL`
-- `OPENVIKING_AGENT_ID_PREFIX`
-- `OPENVIKING_RESOURCE_SYNC_ENABLED`
-- `OPENVIKING_AUTO_RECALL_DEFAULT`
-- `OPENVIKING_AUTO_CAPTURE_DEFAULT`
+## Documentation Map
 
-Provider settings:
+- [Architecture](./docs/architecture.md): product thesis, runtime loop, security boundary, and OpenViking rules.
+- [Architecture decisions](./docs/delegate-architecture-decisions.md): larger system direction and tradeoffs.
+- [Temporal-native workflow RFC](./docs/temporal-native-workflow-rfc.md): workflow state model, outbox, timer, cancellation, and dashboard semantics.
+- [V2 isolated compute plane plan](./docs/v2-isolated-compute-plane-plan.md): compute and browser isolation model.
+- [OpenViking integration](./docs/openviking-integration.md): public memory and recall integration.
+- [Roadmap](./docs/roadmap.md): staged product and platform direction.
+- [Gap analysis](./docs/gap-analysis.md): remaining product and architecture gaps.
+- [Design system](./DESIGN.md): visual direction and implementation notes.
 
-- OpenAI path: `OPENVIKING_PROVIDER=openai`, `OPENAI_API_KEY`, optional `OPENAI_BASE_URL`
-- Volcengine path: `OPENVIKING_PROVIDER=volcengine`, `ARK_API_KEY`, optional `ARK_API_BASE`
+## Current Boundaries
 
-More detail lives in [docs/openviking-integration.md](./docs/openviking-integration.md).
+Delegate can:
 
-The forward-looking architecture decisions, including the isolated compute plane and capability-gate direction, live in [docs/delegate-architecture-decisions.md](./docs/delegate-architecture-decisions.md).
-The concrete Phase A compute-plane delivery checklist lives in [docs/v2-isolated-compute-plane-plan.md](./docs/v2-isolated-compute-plane-plan.md).
-The implementation matrix and ready-to-paste Codex prompts for closing the remaining architecture gaps live in [docs/codex-prompt-architecture-gap-closure.md](./docs/codex-prompt-architecture-gap-closure.md).
+- answer from public representative knowledge
+- collect structured intake
+- offer paid continuation
+- create Telegram Stars invoices
+- create owner handoff requests
+- run governed compute and browser tasks through the broker
+- persist artifacts, deliverables, package downloads, audit events, and ledgers
+- expire approvals and follow up on handoffs through durable workflow timers
 
-The current governed compute slice now ships:
+Delegate intentionally does not:
 
-- `exec / read / write / process / browser`
-- Docker-isolated execution
-- Playwright-backed deterministic browser lane
-- policy-driven `allow / ask / deny`
-- Delegate-managed policy overlays with channel / plan-tier conditions
-- approval creation and resolution for risky requests
-- team/customer approval insights for approvers, customer-account risk, stale workflow hygiene, and blocked hotspots
-- stdout/stderr artifact persistence to MinIO
-- deliverable analytics for downloads, reuse hotspots, visibility splits, and cached package health
-- owner-facing packaging presets for decks, packages, case studies, download packs, and generated documents
-- persisted bundle package caching so public downloads no longer rebuild every zip on every request
-- owner dashboard compute lane with session, approval, artifact, and ledger visibility
-- Telegram `/compute` integration for representative-facing compute requests
+- expose owner-private workspace memory
+- run arbitrary host commands from the representative runtime
+- mutate real calendars or private accounts silently
+- treat raw Temporal history as business truth
+- migrate ordinary chat replies into long-running workflows
+- trust client-supplied public-chat tier or recent-turn state as authority
