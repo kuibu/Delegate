@@ -9,9 +9,11 @@
 
 # Delegate
 
-Delegate 是一个 Telegram 原生的公共代表系统，面向 founders、advisors、creators、recruiters，以及其他 inbound 很重的操盘者。
+Delegate 是 **Agent Monetization Network（AMN）** 的第一条产品楔子。AMN 是一个面向 AI Agents 和 Digital Representatives 的开放收益网络。
 
-它不是把私人助理暴露给外部用户。Delegate 是一个独立的公共运行时，只基于已批准的公开知识回答问题，通过显式策略处理敏感操作，为更深度的访问收费，并在代表不该独立行动时转交给真人。
+AMN 的长期命题很简单：任何 Agent 都可以赚钱，任何用户都可以充值，任何平台都可以接入，收益应该公开透明。Delegate 把这个命题先落成一个具体的公共数字代表：一个 Telegram-native 接口，只基于已批准的公开知识回答问题，通过显式策略处理敏感操作，为更深度的访问收费，并在代表不该独立行动时转交给真人。
+
+它不是把私人助理暴露给外部用户。Delegate 是一个独立的公共运行时，也是面向单个 Digital Representative 的充值 / 资料入口。
 
 当前产品切口刻意保持很窄：
 
@@ -19,6 +21,7 @@ Delegate 是一个 Telegram 原生的公共代表系统，面向 founders、advi
 - 公开 representative 页面和 public-safe chat
 - founder representative demo data
 - FAQ、intake、付费续聊和 owner handoff
+- 通过 Telegram Stars、invoices、credits 和 sponsor pool state 形成早期 Agent Wallet 语义
 - 通过隔离 broker 治理 compute
 - approval expiration 和 handoff follow-up 的 durable timer
 
@@ -30,6 +33,7 @@ Delegate 现在包含这些可运行的页面和服务：
 - **公开 representative 应用** 位于 `apps/reps`，包含代表档案、服务档位、Telegram deep link，以及签名 public-chat session state。
 - **Owner dashboard** 位于 `apps/web`，覆盖代表健康度、governed actions、compute sessions、artifacts、deliverables、packages、OpenViking traces 和 workflow state。
 - **Telegram bot runtime** 位于 `apps/bot`，基于 grammY 和共享 runtime policy。
+- **早期 monetization control plane** 覆盖 Telegram Stars invoices、paid continuation、wallet-like credits、sponsor pool state 和 billing signals。
 - **Compute broker** 位于 `apps/compute-broker`，在 approval 和 policy gate 后提供受治理的 `exec`、`read`、`write`、`process` 和 `browser` 请求。
 - **Workflow runner** 位于 `apps/workflow-runner`，支持 local runner 和 Temporal-backed durable workflow dispatch。
 - **Prisma/Postgres 数据模型** 覆盖 representatives、contacts、conversations、handoffs、approvals、invoices、compute、artifacts、deliverables、workflows 和 audit trails。
@@ -43,6 +47,35 @@ Delegate 现在包含这些可运行的页面和服务：
 
 Temporal 已经为这两个 workflow 接入 post-commit command outbox dispatch、native workflow timer、cancellation cleanup 和 dashboard phase observability。普通实时聊天路由仍然不会放进 Temporal。
 
+## AMN 目标模型
+
+AMN 是 Delegate 正在走向的更大网络。目标模型是：
+
+```text
+Creator 创建 Agent
+  -> Agent 获得自己的 Agent Wallet
+  -> User 在 Web、Telegram、WhatsApp、飞书、企业微信或 App 中发现 Agent
+  -> User 给这个具体 Agent 充值
+  -> Agent 为 User 提供服务
+  -> Billing 按 token、任务或订阅扣费
+  -> Settlement 计算 Creator 收益
+  -> Ledger 发布透明证明
+```
+
+AMN 目标层次包括：
+
+- **AMN Pay:** 未来统一充值入口，可从任意平台拉起。
+- **Billing Engine:** 按 token usage、completed tasks、subscriptions 或 service packages 计费。
+- **Wallet Engine:** 管理每个 Agent / Digital Representative 的余额。
+- **Settlement Engine:** 计算 Creator revenue、platform fees、provider costs 和 withdrawals。
+- **Transparent Ledger:** 记录 recharge、charge、settlement 和 proof events，让用户和 creator 可以验证状态。
+
+今天已经实现的是 Delegate 这条楔子：Telegram Stars payments、pricing tiers、paid continuation、wallet-like dashboard state、invoices、sponsor credits、governed compute costs 和 durable follow-up workflows。
+
+尚未实现的是：通用 AMN Pay、微信支付、支付宝、Stripe 聚合、提现、Merkle proof 发布、开放 wallet APIs，以及完整自动 settlement。
+
+Telegram 是特殊入口：Telegram bot 内的数字商品和数字服务仍应遵循 Telegram 规则，包括在需要时使用 Telegram Stars。AMN Pay 是未来 Web / 统一充值路径，不是绕过平台政策的理由。
+
 ## 架构原则
 
 Delegate 围绕几条硬边界构建：
@@ -50,6 +83,7 @@ Delegate 围绕几条硬边界构建：
 - **Postgres 是业务真相。** Workflow、billing、handoff、approval 和 dashboard state 都来自 Postgres 记录。
 - **Temporal 负责编排。** Temporal 负责长时 workflow timer 的 start、durable waiting、retry、wake-up 和 cancellation delivery。
 - **公共代表不是私人工作区。** Runtime 不读取 owner-private files、accounts、secrets 或 hidden notes。
+- **用户充值给某个 Agent，不是泛泛充值给平台。** 页面应该清楚说明余额属于哪个 Digital Representative。
 - **Compute 隔离且受治理。** 通用命令和浏览器任务必须经过 compute broker、capability policy、audit records 和 owner-visible approvals。
 - **Memory 有作用域。** OpenViking 存 representative-scoped public resources 和 public-safe long-term context，不存 owner-private state。
 - **策略优先于 prompt 运气。** 敏感操作经过明确的 `allow`、`ask` 或 `deny` 决策，而不是只靠模型自觉。
@@ -271,6 +305,7 @@ Delegate 可以：
 - 收集 structured intake
 - 提供 paid continuation
 - 创建 Telegram Stars invoices
+- 为特定 Digital Representative 展示早期 Agent Wallet / recharge-entry 状态
 - 创建 owner handoff requests
 - 通过 broker 运行 governed compute 和 browser tasks
 - 持久化 artifacts、deliverables、package downloads、audit events 和 ledgers
@@ -284,3 +319,4 @@ Delegate 明确不会：
 - 把 raw Temporal history 当作业务真相
 - 把普通聊天回复迁进 long-running workflows
 - 信任客户端传来的 public-chat tier 或 recent-turn state 作为权威
+- 在能力未落地前声称 AMN Pay、提现、通用 wallet APIs、自动 settlement 或 Merkle proofs 已经交付

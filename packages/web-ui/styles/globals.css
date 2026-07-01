@@ -1922,6 +1922,28 @@ button.skill-row:hover {
   align-items: stretch;
 }
 
+.representative-qr-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 132px;
+  margin-bottom: 14px;
+  border: 1px dashed rgba(197, 91, 45, 0.34);
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(255, 249, 241, 0.94), rgba(243, 235, 221, 0.78)),
+    repeating-linear-gradient(
+      45deg,
+      rgba(31, 86, 98, 0.08) 0,
+      rgba(31, 86, 98, 0.08) 8px,
+      transparent 8px,
+      transparent 16px
+    );
+  color: var(--sea-ink);
+  font-family: var(--font-mono);
+  font-weight: 800;
+  letter-spacing: 0.18em;
+}
+
 .representative-chat-tier-grid {
   display: grid;
   gap: 12px;

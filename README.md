@@ -9,9 +9,11 @@
 
 # Delegate
 
-Delegate is a Telegram-native public representative system for founders, advisors, creators, recruiters, and other inbound-heavy operators.
+Delegate is the first product wedge for **Agent Monetization Network (AMN)**, an open monetization network for AI Agents and Digital Representatives.
 
-It is not a private assistant exposed to the public. Delegate is a separate public runtime that answers from approved public knowledge, routes sensitive work through explicit policy, charges for deeper access, and hands off to a human when the representative should not act alone.
+AMN's long-term thesis is simple: any Agent can earn, any user can recharge, any platform can connect, and revenue should be transparent. Delegate turns that thesis into a concrete public digital representative: a Telegram-native interface that answers from approved public knowledge, routes sensitive work through explicit policy, charges for deeper access, and hands off to a human when the representative should not act alone.
+
+It is not a private assistant exposed to the public. Delegate is a separate public runtime and recharge/profile surface for one Digital Representative at a time.
 
 The current product wedge is intentionally narrow:
 
@@ -19,6 +21,7 @@ The current product wedge is intentionally narrow:
 - public representative page and public-safe chat
 - founder representative demo data
 - FAQ, intake, paid continuation, and owner handoff
+- early Agent Wallet semantics through Telegram Stars, invoices, credits, and sponsor pool state
 - governed compute through an isolated broker
 - durable timers for approval expiration and handoff follow-up
 
@@ -30,6 +33,7 @@ Delegate currently includes these working surfaces and services:
 - **Public representative app** in `apps/reps`, including representative profiles, service tiers, Telegram deep links, and signed public-chat session state.
 - **Owner dashboard** in `apps/web`, covering representative health, governed actions, compute sessions, artifacts, deliverables, packages, OpenViking traces, and workflow state.
 - **Telegram bot runtime** in `apps/bot`, powered by grammY and shared runtime policy.
+- **Early monetization control plane** covering Telegram Stars invoices, paid continuation, wallet-like credits, sponsor pool state, and billing signals.
 - **Compute broker** in `apps/compute-broker`, providing governed `exec`, `read`, `write`, `process`, and `browser` requests behind approval and policy gates.
 - **Workflow runner** in `apps/workflow-runner`, supporting the local runner and Temporal-backed durable workflow dispatch.
 - **Prisma/Postgres data model** for representatives, contacts, conversations, handoffs, approvals, invoices, compute, artifacts, deliverables, workflows, and audit trails.
@@ -43,6 +47,35 @@ The two durable workflow kinds implemented today are:
 
 Temporal is already wired for those workflows through post-commit command outbox dispatch, native workflow timers, cancellation cleanup, and dashboard phase observability. Ordinary real-time chat routing still stays out of Temporal.
 
+## AMN Target Model
+
+AMN is the broader network Delegate is growing toward. The target model is:
+
+```text
+Creator creates an Agent
+  -> Agent receives its own Agent Wallet
+  -> Users discover the Agent on Web, Telegram, WhatsApp, Feishu, WeCom, or an app
+  -> Users recharge that specific Agent
+  -> Agent serves the user
+  -> Billing charges for tokens, tasks, or subscriptions
+  -> Settlement calculates Creator revenue
+  -> Ledger publishes transparent proof
+```
+
+The intended AMN layers are:
+
+- **AMN Pay:** a future unified recharge entry that can be opened from any platform.
+- **Billing Engine:** charges for token usage, completed tasks, subscriptions, or service packages.
+- **Wallet Engine:** manages balances per Agent / Digital Representative.
+- **Settlement Engine:** calculates Creator revenue, platform fees, provider costs, and withdrawals.
+- **Transparent Ledger:** records recharge, charge, settlement, and proof events so users and creators can verify state.
+
+What is implemented today is the Delegate wedge: Telegram Stars payments, pricing tiers, paid continuation, wallet-like dashboard state, invoices, sponsor credits, governed compute costs, and durable follow-up workflows.
+
+What is not implemented yet: generic AMN Pay, WeChat Pay, Alipay, Stripe aggregation, withdrawals, Merkle proof publication, open wallet APIs, or full settlement automation.
+
+Telegram remains special: Telegram bot digital goods and services should continue following Telegram's rules, including Telegram Stars where required. AMN Pay is a future web/unified recharge path, not a reason to bypass platform policy.
+
 ## Architecture Principles
 
 Delegate is built around a few hard boundaries:
@@ -50,6 +83,7 @@ Delegate is built around a few hard boundaries:
 - **Postgres is business truth.** Workflow, billing, handoff, approval, and dashboard state come from Postgres records.
 - **Temporal is orchestration.** Temporal handles start, durable waiting, retry, wake-up, and cancellation delivery for long-running workflow timers.
 - **Public representatives are not private workspaces.** The runtime does not read owner-private files, accounts, secrets, or hidden notes.
+- **Users recharge an Agent, not the platform generically.** The page should make clear which Digital Representative receives the balance.
 - **Compute is isolated and governed.** General-purpose commands and browser work go through the compute broker, capability policy, audit records, and owner-visible approvals.
 - **Memory is scoped.** OpenViking stores representative-scoped public resources and public-safe long-term context, not owner-private state.
 - **Policy beats prompt luck.** Sensitive actions pass through explicit `allow`, `ask`, or `deny` decisions instead of relying only on model behavior.
@@ -271,6 +305,7 @@ Delegate can:
 - collect structured intake
 - offer paid continuation
 - create Telegram Stars invoices
+- show early Agent Wallet / recharge-entry state for a specific Digital Representative
 - create owner handoff requests
 - run governed compute and browser tasks through the broker
 - persist artifacts, deliverables, package downloads, audit events, and ledgers
@@ -284,3 +319,4 @@ Delegate intentionally does not:
 - treat raw Temporal history as business truth
 - migrate ordinary chat replies into long-running workflows
 - trust client-supplied public-chat tier or recent-turn state as authority
+- claim AMN Pay, withdrawals, generic wallet APIs, settlement automation, or Merkle proofs are shipped before they exist

@@ -72,6 +72,20 @@ export default async function RepresentativePage({
   const deliverableKindLabels = buildDeliverableKindLabels(locale);
   const deliverableSourceLabels = buildDeliverableSourceLabels(locale);
   const menu = t.menu;
+  const telegramEntryUrl = telegramBotUsername
+    ? buildTelegramPlanLink(telegramBotUsername, representative.slug, "free")
+    : undefined;
+  const platformAccounts = [
+    {
+      name: "Telegram",
+      status: telegramEntryUrl ? t.platformLive : t.platformSetupNeeded,
+      detail: t.platformTelegramDetail,
+      href: telegramEntryUrl,
+    },
+    { name: "WhatsApp", status: t.platformRoadmap, detail: t.platformWhatsAppDetail },
+    { name: locale === "zh" ? "飞书" : "Feishu", status: t.platformRoadmap, detail: t.platformFeishuDetail },
+    { name: locale === "zh" ? "企业微信" : "WeCom", status: t.platformRoadmap, detail: t.platformWeComDetail },
+  ];
 
   return (
     <main className="dashboard-shell representative-shell localized-shell" data-locale={locale} lang={locale === "zh" ? "zh-CN" : "en"}>
@@ -194,6 +208,66 @@ export default async function RepresentativePage({
           },
         ]}
       />
+
+      <DashboardPanelFrame
+        eyebrow={t.rechargeEyebrow}
+        id="recharge"
+        summary={t.rechargeSummary(representative.name)}
+        title={t.rechargeTitle}
+      >
+        <DashboardSurfaceGrid columns={3}>
+          <DashboardSurface eyebrow={t.agentWalletEyebrow} title={t.agentWalletTitle} tone="accent">
+            <p className="section-copy">{t.agentWalletCopy(representative.name)}</p>
+            <div className="chip-row">
+              <span className="chip chip-safe">{t.agentWalletCurrentChip}</span>
+              <span className="chip">{t.telegramStarsChip}</span>
+              <span className="chip">{t.amnPayRoadmapChip}</span>
+            </div>
+            <p className="footer-note">{t.balanceDisclosure(representative.name)}</p>
+            {telegramEntryUrl ? (
+              <div className="button-row">
+                <a className="button-primary" href={telegramEntryUrl} rel="noreferrer" target="_blank">
+                  {t.rechargeCta}
+                </a>
+              </div>
+            ) : null}
+          </DashboardSurface>
+
+          <DashboardSurface eyebrow={t.platformAccountsEyebrow} title={t.platformAccountsTitle}>
+            <div className="row-list">
+              {platformAccounts.map((account) => (
+                <div className="skill-row" key={account.name}>
+                  <div>
+                    <strong>{account.name}</strong>
+                    <p>{account.detail}</p>
+                    <div className="chip-row">
+                      <span className={account.href ? "chip chip-safe" : "chip"}>{account.status}</span>
+                    </div>
+                  </div>
+                  {account.href ? (
+                    <a className="button-secondary" href={account.href} rel="noreferrer" target="_blank">
+                      {t.openPlatform}
+                    </a>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </DashboardSurface>
+
+          <DashboardSurface eyebrow={t.trustProofEyebrow} title={t.trustProofTitle}>
+            <div className="representative-qr-placeholder" aria-label={t.qrAriaLabel}>
+              <span>QR</span>
+            </div>
+            <p className="section-copy">{t.trustProofCopy}</p>
+            <div className="chip-row">
+              <span className="chip chip-safe">{t.ratingChip}</span>
+              <span className="chip">{t.claimStatusChip}</span>
+              <span className="chip">{t.publicSourcesChip}</span>
+            </div>
+            <p className="footer-note">{t.refundDisclosure}</p>
+          </DashboardSurface>
+        </DashboardSurfaceGrid>
+      </DashboardPanelFrame>
 
       <RepresentativeChatPanel
         freeReplyLimit={representative.contract.freeReplyLimit}
@@ -558,6 +632,7 @@ const copy = {
     language: { zh: "中文", en: "English" },
     menu: [
       { href: "#overview", label: "概览" },
+      { href: "#recharge", label: "充值" },
       { href: "#chat", label: "对话" },
       { href: "#trust", label: "边界" },
       { href: "#skills", label: "技能" },
@@ -575,6 +650,40 @@ const copy = {
       "这个代表只会记住属于本代表范围内的公开安全互动，不会读取主人的私有工作区、私有文件或私有账号。",
     askInTelegram: "在 Telegram 中提问",
     viewControlPlane: "查看控制台",
+    rechargeEyebrow: "Agent Wallet",
+    rechargeTitle: "这是给当前数字代表充值和继续服务的入口",
+    rechargeSummary: (name: string) =>
+      `${name} 的余额、服务档位和平台入口应该在同一个公开页面里被看清楚。`,
+    agentWalletEyebrow: "Recharge scope",
+    agentWalletTitle: "余额属于这个 Agent，不是平台通用余额",
+    agentWalletCopy: (name: string) =>
+      `AMN 的目标模型是让用户给具体 Agent 充值。当前 ${name} 已经通过 Telegram Stars、付费续用和 dashboard credits 表达早期钱包语义；统一 AMN Pay 仍是后续路线。`,
+    agentWalletCurrentChip: "当前：Stars / credits",
+    telegramStarsChip: "Telegram Stars 优先",
+    amnPayRoadmapChip: "AMN Pay roadmap",
+    balanceDisclosure: (name: string) =>
+      `充值或购买的服务余额仅用于 ${name} 这个数字代表的服务，不代表进入 owner 私人工作区，也不会自动授权其它 Agent。`,
+    rechargeCta: "立即充值 / 继续服务",
+    platformAccountsEyebrow: "Platform accounts",
+    platformAccountsTitle: "跨平台入口汇聚",
+    platformLive: "已接入",
+    platformSetupNeeded: "待配置",
+    platformRoadmap: "roadmap",
+    platformTelegramDetail: "当前主入口。Telegram 内数字服务继续遵循 Telegram Stars 规则。",
+    platformWhatsAppDetail: "未来可作为消息入口，拉起统一 AMN recharge 页面。",
+    platformFeishuDetail: "未来可作为企业协作入口，余额与计费仍归属当前 Agent。",
+    platformWeComDetail: "未来可作为企业微信入口，沿用同一 Agent Wallet 语义。",
+    openPlatform: "打开",
+    trustProofEyebrow: "Proof + QR",
+    trustProofTitle: "评分、来源和二维码占位",
+    trustProofCopy:
+      "这里预留公开评分、充值二维码和来源证明位置。未认领代表必须明确标注来源和授权状态，不能让用户误以为已获得本人官方授权。",
+    qrAriaLabel: "充值二维码占位",
+    ratingChip: "历史评分 4.8/5 demo",
+    claimStatusChip: "claimed demo",
+    publicSourcesChip: "公开来源",
+    refundDisclosure:
+      "数字服务充值通常用于当前 Agent 的持续服务，原则上不作为一次性礼物处理；具体退款规则以后应在正式 AMN Pay 页面清楚展示。",
     signalCards: {
       freeRepliesLabel: "免费回复",
       freeRepliesDetail: "首次接触阶段能被代表独立接住的免费深度。",
@@ -650,6 +759,7 @@ const copy = {
     language: { zh: "Chinese", en: "English" },
     menu: [
       { href: "#overview", label: "Overview" },
+      { href: "#recharge", label: "Recharge" },
       { href: "#chat", label: "Chat" },
       { href: "#trust", label: "Trust" },
       { href: "#skills", label: "Skills" },
@@ -667,6 +777,40 @@ const copy = {
       "This representative may remember prior public-safe interactions within this representative only. It does not access the owner's private workspace, private files, or private accounts.",
     askInTelegram: "Ask in Telegram",
     viewControlPlane: "View control plane",
+    rechargeEyebrow: "Agent Wallet",
+    rechargeTitle: "This is the recharge and continuation entry for this Digital Representative",
+    rechargeSummary: (name: string) =>
+      `${name}'s balance scope, service tiers, and platform entry points should be visible on one public page.`,
+    agentWalletEyebrow: "Recharge scope",
+    agentWalletTitle: "Balance belongs to this Agent, not a generic platform pool",
+    agentWalletCopy: (name: string) =>
+      `AMN's target model lets users recharge a specific Agent. Today ${name} expresses the early wallet idea through Telegram Stars, paid continuation, and dashboard credits; unified AMN Pay remains roadmap.`,
+    agentWalletCurrentChip: "Today: Stars / credits",
+    telegramStarsChip: "Telegram Stars first",
+    amnPayRoadmapChip: "AMN Pay roadmap",
+    balanceDisclosure: (name: string) =>
+      `Recharge or purchase value is scoped to ${name}'s Digital Representative service. It does not grant private workspace access and does not automatically authorize other Agents.`,
+    rechargeCta: "Recharge / continue service",
+    platformAccountsEyebrow: "Platform accounts",
+    platformAccountsTitle: "Cross-platform entry points",
+    platformLive: "live",
+    platformSetupNeeded: "setup needed",
+    platformRoadmap: "roadmap",
+    platformTelegramDetail: "Current primary entry. Telegram digital services continue to follow Telegram Stars rules.",
+    platformWhatsAppDetail: "Future message entry that can open a unified AMN recharge page.",
+    platformFeishuDetail: "Future collaboration entry where balance and billing still belong to this Agent.",
+    platformWeComDetail: "Future WeCom entry using the same Agent Wallet semantics.",
+    openPlatform: "Open",
+    trustProofEyebrow: "Proof + QR",
+    trustProofTitle: "Rating, source, and QR placeholder",
+    trustProofCopy:
+      "This reserves space for public rating, recharge QR, and source proof. Unclaimed representatives must disclose source and authorization state clearly so users do not assume official endorsement.",
+    qrAriaLabel: "Recharge QR placeholder",
+    ratingChip: "4.8/5 demo rating",
+    claimStatusChip: "claimed demo",
+    publicSourcesChip: "public sources",
+    refundDisclosure:
+      "Digital service recharge is generally scoped to ongoing service from this Agent, not treated as a one-time gift. Formal refund rules should be shown clearly on the future AMN Pay page.",
     signalCards: {
       freeRepliesLabel: "Free replies",
       freeRepliesDetail: "The free depth this representative can absorb in first-contact mode.",
