@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
-import type { PlanTier, Representative } from "@delegate/domain";
+import type { Representative } from "@delegate/domain";
 import {
   getRepresentativePublicDeliverables,
   getRepresentativeSetupSnapshot,
@@ -40,7 +40,6 @@ export default async function RepresentativePage({
     countryHint: extractCountryHint(headerStore),
   });
   const t = pickCopy(locale, copy);
-  const telegramBotUsername = process.env.TELEGRAM_BOT_USERNAME?.replace(/^@/, "");
   const siteBaseUrl = resolveServiceUrl(process.env.NEXT_PUBLIC_SITE_URL, "http://localhost:3000");
   const dashboardBaseUrl = resolveServiceUrl(
     process.env.NEXT_PUBLIC_DASHBOARD_URL,
@@ -72,16 +71,14 @@ export default async function RepresentativePage({
   const deliverableKindLabels = buildDeliverableKindLabels(locale);
   const deliverableSourceLabels = buildDeliverableSourceLabels(locale);
   const menu = t.menu;
-  const telegramEntryUrl = telegramBotUsername
-    ? buildTelegramPlanLink(telegramBotUsername, representative.slug, "free")
-    : undefined;
   const platformAccounts = [
     {
-      name: "Telegram",
-      status: telegramEntryUrl ? t.platformLive : t.platformSetupNeeded,
-      detail: t.platformTelegramDetail,
-      href: telegramEntryUrl,
+      name: "Web",
+      status: t.platformLive,
+      detail: t.platformWebDetail,
+      href: "#chat",
     },
+    { name: "Telegram", status: t.platformRoadmap, detail: t.platformTelegramDetail },
     { name: "WhatsApp", status: t.platformRoadmap, detail: t.platformWhatsAppDetail },
     { name: locale === "zh" ? "飞书" : "Feishu", status: t.platformRoadmap, detail: t.platformFeishuDetail },
     { name: locale === "zh" ? "企业微信" : "WeCom", status: t.platformRoadmap, detail: t.platformWeComDetail },
@@ -162,16 +159,9 @@ export default async function RepresentativePage({
           </article>
 
           <div className="button-row representative-stage-links">
-            {telegramBotUsername ? (
-              <a
-                className="button-primary"
-                href={buildTelegramPlanLink(telegramBotUsername, representative.slug, "free")}
-                rel="noreferrer"
-                target="_blank"
-              >
-                {t.askInTelegram}
-              </a>
-            ) : null}
+            <a className="button-primary" href="#chat">
+              {t.startOnWeb}
+            </a>
             <a
               className="button-secondary"
               href={buildLocalizedHref(`${dashboardBaseUrl}/dashboard?rep=${representative.slug}&view=setup`, locale)}
@@ -220,17 +210,15 @@ export default async function RepresentativePage({
             <p className="section-copy">{t.agentWalletCopy(representative.name)}</p>
             <div className="chip-row">
               <span className="chip chip-safe">{t.agentWalletCurrentChip}</span>
-              <span className="chip">{t.telegramStarsChip}</span>
+              <span className="chip">{t.webFirstChip}</span>
               <span className="chip">{t.amnPayRoadmapChip}</span>
             </div>
             <p className="footer-note">{t.balanceDisclosure(representative.name)}</p>
-            {telegramEntryUrl ? (
-              <div className="button-row">
-                <a className="button-primary" href={telegramEntryUrl} rel="noreferrer" target="_blank">
-                  {t.rechargeCta}
-                </a>
-              </div>
-            ) : null}
+            <div className="button-row">
+              <a className="button-primary" href="#plans">
+                {t.rechargeCta}
+              </a>
+            </div>
           </DashboardSurface>
 
           <DashboardSurface eyebrow={t.platformAccountsEyebrow} title={t.platformAccountsTitle}>
@@ -245,7 +233,11 @@ export default async function RepresentativePage({
                     </div>
                   </div>
                   {account.href ? (
-                    <a className="button-secondary" href={account.href} rel="noreferrer" target="_blank">
+                    <a
+                      className="button-secondary"
+                      href={account.href}
+                      {...(account.href.startsWith("#") ? {} : { rel: "noreferrer", target: "_blank" })}
+                    >
                       {t.openPlatform}
                     </a>
                   ) : null}
@@ -470,7 +462,7 @@ export default async function RepresentativePage({
               title={plan.name}
               tone={plan.tier === "deep_help" ? "accent" : "default"}
             >
-              <span className="price">{plan.stars} Stars</span>
+              <span className="price">{plan.stars} credits</span>
               <p>{plan.summary}</p>
               <div className="chip-row">
                 <span className="chip">{t.repliesChip(plan.includedReplies)}</span>
@@ -478,18 +470,14 @@ export default async function RepresentativePage({
                   <span className="chip chip-safe">{t.priorityHandoffChip}</span>
                 ) : null}
               </div>
-              {telegramBotUsername ? (
-                <div className="button-row">
-                  <a
-                    className={plan.tier === "free" ? "button-secondary" : "button-primary"}
-                    href={buildTelegramPlanLink(telegramBotUsername, representative.slug, plan.tier)}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    {plan.tier === "free" ? t.openInTelegram : t.buyInTelegram}
-                  </a>
-                </div>
-              ) : null}
+              <div className="button-row">
+                <a
+                  className={plan.tier === "free" ? "button-secondary" : "button-primary"}
+                  href={plan.tier === "free" ? "#chat" : "#recharge"}
+                >
+                  {plan.tier === "free" ? t.startWebChat : t.previewRecharge}
+                </a>
+              </div>
             </DashboardSurface>
           ))}
         </DashboardSurfaceGrid>
@@ -511,16 +499,9 @@ export default async function RepresentativePage({
               {t.entryPointsCopy(groupActivationLabels[representative.groupActivation])}
             </p>
             <div className="button-row">
-              {telegramBotUsername ? (
-                <a
-                  className="button-primary"
-                  href={buildTelegramPlanLink(telegramBotUsername, representative.slug, "free")}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  {t.openRepresentative}
-                </a>
-              ) : null}
+              <a className="button-primary" href="#chat">
+                {t.openRepresentative}
+              </a>
               <a
                 className="button-secondary"
                 href={buildLocalizedHref(`${dashboardBaseUrl}/dashboard?rep=${representative.slug}&view=memory`, locale)}
@@ -533,18 +514,6 @@ export default async function RepresentativePage({
       </DashboardPanelFrame>
     </main>
   );
-}
-
-function buildTelegramPlanLink(
-  botUsername: string,
-  representativeSlug: string,
-  tier: PlanTier,
-): string {
-  if (tier === "free") {
-    return `https://t.me/${botUsername}?start=rep_${representativeSlug}`;
-  }
-
-  return `https://t.me/${botUsername}?start=buy_${representativeSlug}__${tier}`;
 }
 
 function resolveServiceUrl(envValue: string | undefined, fallback: string): string {
@@ -626,7 +595,7 @@ function buildDeliverableSourceLabels(locale: Locale) {
 
 const copy = {
   zh: {
-    brandTagline: "Trust-first public representative profile",
+    brandTagline: "Web-first public representative profile",
     menuAriaLabel: "代表页分区",
     languageAriaLabel: "语言切换",
     language: { zh: "中文", en: "English" },
@@ -648,7 +617,7 @@ const copy = {
     worksForLabel: "Who this representative works for",
     memoryDisclosure:
       "这个代表只会记住属于本代表范围内的公开安全互动，不会读取主人的私有工作区、私有文件或私有账号。",
-    askInTelegram: "在 Telegram 中提问",
+    startOnWeb: "在网页中开始",
     viewControlPlane: "查看控制台",
     rechargeEyebrow: "Agent Wallet",
     rechargeTitle: "这是给当前数字代表充值和继续服务的入口",
@@ -657,9 +626,9 @@ const copy = {
     agentWalletEyebrow: "Recharge scope",
     agentWalletTitle: "余额属于这个 Agent，不是平台通用余额",
     agentWalletCopy: (name: string) =>
-      `AMN 的目标模型是让用户给具体 Agent 充值。当前 ${name} 已经通过 Telegram Stars、付费续用和 dashboard credits 表达早期钱包语义；统一 AMN Pay 仍是后续路线。`,
-    agentWalletCurrentChip: "当前：Stars / credits",
-    telegramStarsChip: "Telegram Stars 优先",
+      `AMN 的目标模型是让用户给具体 Agent 充值。第一版 ${name} 先通过网页服务档位、充值预览和 dashboard credits 表达早期钱包语义；统一 AMN Pay 与消息平台充值仍是后续路线。`,
+    agentWalletCurrentChip: "当前：web credits",
+    webFirstChip: "Web first",
     amnPayRoadmapChip: "AMN Pay roadmap",
     balanceDisclosure: (name: string) =>
       `充值或购买的服务余额仅用于 ${name} 这个数字代表的服务，不代表进入 owner 私人工作区，也不会自动授权其它 Agent。`,
@@ -669,7 +638,8 @@ const copy = {
     platformLive: "已接入",
     platformSetupNeeded: "待配置",
     platformRoadmap: "roadmap",
-    platformTelegramDetail: "当前主入口。Telegram 内数字服务继续遵循 Telegram Stars 规则。",
+    platformWebDetail: "第一版主入口。用户先在网页代表页完成理解、试聊、服务档位预览和转接。",
+    platformTelegramDetail: "后续消息入口。若未来提供 Telegram 内数字服务，会遵循 Telegram Stars 规则。",
     platformWhatsAppDetail: "未来可作为消息入口，拉起统一 AMN recharge 页面。",
     platformFeishuDetail: "未来可作为企业协作入口，余额与计费仍归属当前 Agent。",
     platformWeComDetail: "未来可作为企业微信入口，沿用同一 Agent Wallet 语义。",
@@ -699,7 +669,7 @@ const copy = {
     trustTitle: "用户一进来就该先看到边界和契约",
     allowedEyebrow: "Allowed",
     allowedTitle: "代表会做什么",
-    allowList: ["回答 FAQ", "收集合作/报价/预约信息", "发公开资料", "发起人工转接", "提示 Stars 付费解锁"],
+    allowList: ["回答 FAQ", "收集合作/报价/预约信息", "发公开资料", "发起人工转接", "提示网页服务升级"],
     notAllowedEyebrow: "Not allowed",
     notAllowedTitle: "代表明确不会做什么",
     denyList: ["访问私有文件系统", "读取主人的私有记忆", "代主人登录账户", "擅自修改真实日程", "做不可逆商业承诺"],
@@ -739,8 +709,8 @@ const copy = {
     accessLayerEyebrow: "Access layer",
     repliesChip: (count: number) => `${count} replies`,
     priorityHandoffChip: "priority handoff",
-    openInTelegram: "在 Telegram 中打开",
-    buyInTelegram: "在 Telegram 中购买",
+    startWebChat: "开始网页试聊",
+    previewRecharge: "查看充值预览",
     handoffEyebrow: "Human Handoff",
     handoffSummary: "当公开代表接近边界时，转接不该是一句拒答，而应该是一条明确可预期的升级路径。",
     handoffTitle: "主人最终接手的是高价值收件项，不是原始噪音",
@@ -748,12 +718,12 @@ const copy = {
     handoffCopyTitle: "对外升级说明",
     entryPointsEyebrow: "Entry points",
     entryPointsTitle: "继续对话的公开入口",
-    entryPointsCopy: (strategy: string) => `优先入口仍然是 Telegram 私聊；在群组场景下，代表只会按 ${strategy} 的策略保守响应。`,
-    openRepresentative: "打开代表入口",
+    entryPointsCopy: (strategy: string) => `第一版入口是网页代表页。Telegram、群组和其它消息平台后续接入时，也会沿用 ${strategy} 这类保守激活策略。`,
+    openRepresentative: "回到网页对话",
     inspectMemoryPolicy: "查看记忆策略",
   },
   en: {
-    brandTagline: "Trust-first public representative profile",
+    brandTagline: "Web-first public representative profile",
     menuAriaLabel: "Representative sections",
     languageAriaLabel: "Language switcher",
     language: { zh: "Chinese", en: "English" },
@@ -775,7 +745,7 @@ const copy = {
     worksForLabel: "Who this representative works for",
     memoryDisclosure:
       "This representative may remember prior public-safe interactions within this representative only. It does not access the owner's private workspace, private files, or private accounts.",
-    askInTelegram: "Ask in Telegram",
+    startOnWeb: "Start on web",
     viewControlPlane: "View control plane",
     rechargeEyebrow: "Agent Wallet",
     rechargeTitle: "This is the recharge and continuation entry for this Digital Representative",
@@ -784,9 +754,9 @@ const copy = {
     agentWalletEyebrow: "Recharge scope",
     agentWalletTitle: "Balance belongs to this Agent, not a generic platform pool",
     agentWalletCopy: (name: string) =>
-      `AMN's target model lets users recharge a specific Agent. Today ${name} expresses the early wallet idea through Telegram Stars, paid continuation, and dashboard credits; unified AMN Pay remains roadmap.`,
-    agentWalletCurrentChip: "Today: Stars / credits",
-    telegramStarsChip: "Telegram Stars first",
+      `AMN's target model lets users recharge a specific Agent. The first ${name} version expresses the early wallet idea through web service tiers, recharge previews, and dashboard credits; unified AMN Pay and message-platform recharge remain roadmap.`,
+    agentWalletCurrentChip: "Today: web credits",
+    webFirstChip: "Web first",
     amnPayRoadmapChip: "AMN Pay roadmap",
     balanceDisclosure: (name: string) =>
       `Recharge or purchase value is scoped to ${name}'s Digital Representative service. It does not grant private workspace access and does not automatically authorize other Agents.`,
@@ -796,7 +766,8 @@ const copy = {
     platformLive: "live",
     platformSetupNeeded: "setup needed",
     platformRoadmap: "roadmap",
-    platformTelegramDetail: "Current primary entry. Telegram digital services continue to follow Telegram Stars rules.",
+    platformWebDetail: "First-version primary entry for understanding, trial chat, service preview, and handoff.",
+    platformTelegramDetail: "Future message entry. If Telegram digital services ship later, they should follow Telegram Stars rules.",
     platformWhatsAppDetail: "Future message entry that can open a unified AMN recharge page.",
     platformFeishuDetail: "Future collaboration entry where balance and billing still belong to this Agent.",
     platformWeComDetail: "Future WeCom entry using the same Agent Wallet semantics.",
@@ -826,7 +797,7 @@ const copy = {
     trustTitle: "People should see the contract before they see the magic",
     allowedEyebrow: "Allowed",
     allowedTitle: "What this representative will do",
-    allowList: ["Answer FAQs", "Collect collaboration, quote, and scheduling details", "Deliver public materials", "Create safe handoff requests", "Offer Stars-powered paid continuation"],
+    allowList: ["Answer FAQs", "Collect collaboration, quote, and scheduling details", "Deliver public materials", "Create safe handoff requests", "Offer web service upgrades"],
     notAllowedEyebrow: "Not allowed",
     notAllowedTitle: "What this representative will not do",
     denyList: ["Access private file systems", "Read the owner's private memory", "Log into owner accounts", "Change the real calendar directly", "Make irreversible commercial commitments"],
@@ -866,8 +837,8 @@ const copy = {
     accessLayerEyebrow: "Access layer",
     repliesChip: (count: number) => `${count} replies`,
     priorityHandoffChip: "priority handoff",
-    openInTelegram: "Open in Telegram",
-    buyInTelegram: "Buy in Telegram",
+    startWebChat: "Start web chat",
+    previewRecharge: "Preview recharge",
     handoffEyebrow: "Human Handoff",
     handoffSummary: "When the public representative reaches its boundary, escalation should feel like a predictable workflow instead of a vague refusal.",
     handoffTitle: "The owner should receive high-value inbox items, not raw noise",
@@ -875,8 +846,8 @@ const copy = {
     handoffCopyTitle: "Public escalation copy",
     entryPointsEyebrow: "Entry points",
     entryPointsTitle: "Public paths to continue the conversation",
-    entryPointsCopy: (strategy: string) => `Telegram private chat is still the primary path. In groups, the representative responds conservatively using a ${strategy} activation policy.`,
-    openRepresentative: "Open representative",
+    entryPointsCopy: (strategy: string) => `The first-version entry point is the web representative page. Telegram, groups, and other message platforms can later reuse conservative activation policies such as ${strategy}.`,
+    openRepresentative: "Return to web chat",
     inspectMemoryPolicy: "Inspect memory policy",
   },
 } as const;

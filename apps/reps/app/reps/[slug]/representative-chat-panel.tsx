@@ -180,7 +180,7 @@ export function RepresentativeChatPanel(props: {
                 >
                   <div className="representative-chat-tier-header">
                     <strong>{plan.name}</strong>
-                    <span>{plan.stars} Stars</span>
+                    <span>{plan.stars} credits</span>
                   </div>
                   <p>{plan.summary}</p>
                   <div className="chip-row">

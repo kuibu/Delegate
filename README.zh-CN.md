@@ -11,17 +11,17 @@
 
 Delegate 是 **Agent Monetization Network（AMN）** 的第一条产品楔子。AMN 是一个面向 AI Agents 和 Digital Representatives 的开放收益网络。
 
-AMN 的长期命题很简单：任何 Agent 都可以赚钱，任何用户都可以充值，任何平台都可以接入，收益应该公开透明。Delegate 把这个命题先落成一个具体的公共数字代表：一个 Telegram-native 接口，只基于已批准的公开知识回答问题，通过显式策略处理敏感操作，为更深度的访问收费，并在代表不该独立行动时转交给真人。
+AMN 的长期命题很简单：任何 Agent 都可以赚钱，任何用户都可以充值，任何平台都可以接入，收益应该公开透明。Delegate 把这个命题先落成一个具体的公共数字代表：一个 web-first 接口，只基于已批准的公开知识回答问题，通过显式策略处理敏感操作，展示充值 / 服务深度，并在代表不该独立行动时转交给真人。
 
 它不是把私人助理暴露给外部用户。Delegate 是一个独立的公共运行时，也是面向单个 Digital Representative 的充值 / 资料入口。
 
 当前产品切口刻意保持很窄：
 
-- Telegram-first representative runtime
+- Web-first representative runtime
 - 公开 representative 页面和 public-safe chat
 - founder representative demo data
 - FAQ、intake、付费续聊和 owner handoff
-- 通过 Telegram Stars、invoices、credits 和 sponsor pool state 形成早期 Agent Wallet 语义
+- 通过网页服务 credits、invoices 和 sponsor pool state 形成早期 Agent Wallet 语义
 - 通过隔离 broker 治理 compute
 - approval expiration 和 handoff follow-up 的 durable timer
 
@@ -30,10 +30,10 @@ AMN 的长期命题很简单：任何 Agent 都可以赚钱，任何用户都可
 Delegate 现在包含这些可运行的页面和服务：
 
 - **营销站点** 位于 `apps/site`，使用 Dispatch Editorial 设计系统。
-- **公开 representative 应用** 位于 `apps/reps`，包含代表档案、服务档位、Telegram deep link，以及签名 public-chat session state。
+- **公开 representative 应用** 位于 `apps/reps`，包含代表档案、服务档位、网页聊天、充值入口模块，以及签名 public-chat session state。
 - **Owner dashboard** 位于 `apps/web`，覆盖代表健康度、governed actions、compute sessions、artifacts、deliverables、packages、OpenViking traces 和 workflow state。
-- **Telegram bot runtime** 位于 `apps/bot`，基于 grammY 和共享 runtime policy。
-- **早期 monetization control plane** 覆盖 Telegram Stars invoices、paid continuation、wallet-like credits、sponsor pool state 和 billing signals。
+- **可选 Telegram bot runtime 基础** 位于 `apps/bot`，基于 grammY 和共享 runtime policy，作为未来渠道基础设施保留，不作为第一版 Delegate 产品主入口。
+- **早期 monetization control plane** 覆盖 paid continuation、wallet-like credits、sponsor pool state、invoice records 和 billing signals。
 - **Compute broker** 位于 `apps/compute-broker`，在 approval 和 policy gate 后提供受治理的 `exec`、`read`、`write`、`process` 和 `browser` 请求。
 - **Workflow runner** 位于 `apps/workflow-runner`，支持 local runner 和 Temporal-backed durable workflow dispatch。
 - **Prisma/Postgres 数据模型** 覆盖 representatives、contacts、conversations、handoffs、approvals、invoices、compute、artifacts、deliverables、workflows 和 audit trails。
@@ -54,7 +54,7 @@ AMN 是 Delegate 正在走向的更大网络。目标模型是：
 ```text
 Creator 创建 Agent
   -> Agent 获得自己的 Agent Wallet
-  -> User 在 Web、Telegram、WhatsApp、飞书、企业微信或 App 中发现 Agent
+  -> User 先在 Web 发现 Agent，未来再扩展到 Telegram、WhatsApp、飞书、企业微信或 App
   -> User 给这个具体 Agent 充值
   -> Agent 为 User 提供服务
   -> Billing 按 token、任务或订阅扣费
@@ -70,11 +70,11 @@ AMN 目标层次包括：
 - **Settlement Engine:** 计算 Creator revenue、platform fees、provider costs 和 withdrawals。
 - **Transparent Ledger:** 记录 recharge、charge、settlement 和 proof events，让用户和 creator 可以验证状态。
 
-今天已经实现的是 Delegate 这条楔子：Telegram Stars payments、pricing tiers、paid continuation、wallet-like dashboard state、invoices、sponsor credits、governed compute costs 和 durable follow-up workflows。
+今天已经实现的是 web-first Delegate 楔子：公开 representative 页面、网页聊天、pricing tiers、充值入口 UI、paid continuation 语义、wallet-like dashboard state、invoice records、sponsor credits、governed compute costs 和 durable follow-up workflows。
 
 尚未实现的是：通用 AMN Pay、微信支付、支付宝、Stripe 聚合、提现、Merkle proof 发布、开放 wallet APIs，以及完整自动 settlement。
 
-Telegram 是特殊入口：Telegram bot 内的数字商品和数字服务仍应遵循 Telegram 规则，包括在需要时使用 Telegram Stars。AMN Pay 是未来 Web / 统一充值路径，不是绕过平台政策的理由。
+Telegram 是未来渠道基础设施。如果 Delegate 后续提供 bot 内数字商品和数字服务，仍应遵循 Telegram 规则，包括在需要时使用 Telegram Stars。AMN Pay 是未来 Web / 统一充值路径，不是绕过平台政策的理由。
 
 ## 架构原则
 
@@ -92,7 +92,7 @@ Delegate 围绕几条硬边界构建：
 
 ```text
 apps/
-  bot/              Telegram runtime
+  bot/              Optional Telegram runtime foundation
   compute-broker/   Isolated compute and browser broker
   reps/             Public representative pages and public chat
   site/             Marketing website
@@ -230,7 +230,7 @@ pnpm docker:up:temporal
 默认 `.env.example` 适合本地开发。重要配置包括：
 
 - `DATABASE_URL` 指向 Prisma 使用的 Postgres。
-- `TELEGRAM_BOT_TOKEN`、`TELEGRAM_BOT_USERNAME` 和 `TELEGRAM_WEBHOOK_SECRET` 启用 Telegram bot。
+- `TELEGRAM_BOT_TOKEN`、`TELEGRAM_BOT_USERNAME` 和 `TELEGRAM_WEBHOOK_SECRET` 启用可选 Telegram bot 基础设施，但第一版 Delegate 产品先做网页版。
 - `REP_PUBLIC_CHAT_SESSION_SECRET` 可以覆盖 public-chat cookie 签名 secret。如果没有设置，reps app 会依次回退到 `TELEGRAM_WEBHOOK_SECRET` 和本地开发 secret。
 - `DELEGATE_MODEL_ENABLED`、`DELEGATE_MODEL_PROVIDER`、`DELEGATE_OPENAI_MODEL` 和 `DELEGATE_ANTHROPIC_MODEL` 控制 model-backed representative replies。
 - `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 或 `ARK_API_KEY` 启用真实 provider 调用。
@@ -265,14 +265,7 @@ pnpm docker:down
 pnpm registry:search:clawhub "qualification"
 ```
 
-在 representative 私聊里可以这样测试 Telegram compute：
-
-```text
-/compute pwd
-/compute read README.md
-/compute write notes/demo.txt ::: hello from delegate
-/compute browser https://example.com
-```
+第一版产品主路径优先 dogfood 浏览器代表页 `http://localhost:3102/reps/lin-founder-rep`，以及 owner dashboard `http://localhost:3101/dashboard?view=overview`。
 
 ## 设计系统
 
@@ -304,7 +297,7 @@ Delegate 可以：
 - 基于公开 representative knowledge 回答问题
 - 收集 structured intake
 - 提供 paid continuation
-- 创建 Telegram Stars invoices
+- 展示 web-first 充值 / 服务深度 UI 和 invoice records
 - 为特定 Digital Representative 展示早期 Agent Wallet / recharge-entry 状态
 - 创建 owner handoff requests
 - 通过 broker 运行 governed compute 和 browser tasks

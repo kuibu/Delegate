@@ -11,17 +11,17 @@
 
 Delegate is the first product wedge for **Agent Monetization Network (AMN)**, an open monetization network for AI Agents and Digital Representatives.
 
-AMN's long-term thesis is simple: any Agent can earn, any user can recharge, any platform can connect, and revenue should be transparent. Delegate turns that thesis into a concrete public digital representative: a Telegram-native interface that answers from approved public knowledge, routes sensitive work through explicit policy, charges for deeper access, and hands off to a human when the representative should not act alone.
+AMN's long-term thesis is simple: any Agent can earn, any user can recharge, any platform can connect, and revenue should be transparent. Delegate turns that thesis into a concrete public digital representative: a web-first interface that answers from approved public knowledge, routes sensitive work through explicit policy, shows recharge/service depth, and hands off to a human when the representative should not act alone.
 
 It is not a private assistant exposed to the public. Delegate is a separate public runtime and recharge/profile surface for one Digital Representative at a time.
 
 The current product wedge is intentionally narrow:
 
-- Telegram-first representative runtime
+- Web-first representative runtime
 - public representative page and public-safe chat
 - founder representative demo data
 - FAQ, intake, paid continuation, and owner handoff
-- early Agent Wallet semantics through Telegram Stars, invoices, credits, and sponsor pool state
+- early Agent Wallet semantics through web-facing service credits, invoices, and sponsor pool state
 - governed compute through an isolated broker
 - durable timers for approval expiration and handoff follow-up
 
@@ -30,10 +30,10 @@ The current product wedge is intentionally narrow:
 Delegate currently includes these working surfaces and services:
 
 - **Marketing site** in `apps/site`, using the Dispatch Editorial design system.
-- **Public representative app** in `apps/reps`, including representative profiles, service tiers, Telegram deep links, and signed public-chat session state.
+- **Public representative app** in `apps/reps`, including representative profiles, service tiers, web chat, recharge-entry modules, and signed public-chat session state.
 - **Owner dashboard** in `apps/web`, covering representative health, governed actions, compute sessions, artifacts, deliverables, packages, OpenViking traces, and workflow state.
-- **Telegram bot runtime** in `apps/bot`, powered by grammY and shared runtime policy.
-- **Early monetization control plane** covering Telegram Stars invoices, paid continuation, wallet-like credits, sponsor pool state, and billing signals.
+- **Optional Telegram bot runtime foundation** in `apps/bot`, powered by grammY and shared runtime policy, kept as future channel infrastructure rather than the first Delegate product surface.
+- **Early monetization control plane** covering paid continuation, wallet-like credits, sponsor pool state, invoice records, and billing signals.
 - **Compute broker** in `apps/compute-broker`, providing governed `exec`, `read`, `write`, `process`, and `browser` requests behind approval and policy gates.
 - **Workflow runner** in `apps/workflow-runner`, supporting the local runner and Temporal-backed durable workflow dispatch.
 - **Prisma/Postgres data model** for representatives, contacts, conversations, handoffs, approvals, invoices, compute, artifacts, deliverables, workflows, and audit trails.
@@ -54,7 +54,7 @@ AMN is the broader network Delegate is growing toward. The target model is:
 ```text
 Creator creates an Agent
   -> Agent receives its own Agent Wallet
-  -> Users discover the Agent on Web, Telegram, WhatsApp, Feishu, WeCom, or an app
+  -> Users discover the Agent on the web first, then later on Telegram, WhatsApp, Feishu, WeCom, or an app
   -> Users recharge that specific Agent
   -> Agent serves the user
   -> Billing charges for tokens, tasks, or subscriptions
@@ -70,11 +70,11 @@ The intended AMN layers are:
 - **Settlement Engine:** calculates Creator revenue, platform fees, provider costs, and withdrawals.
 - **Transparent Ledger:** records recharge, charge, settlement, and proof events so users and creators can verify state.
 
-What is implemented today is the Delegate wedge: Telegram Stars payments, pricing tiers, paid continuation, wallet-like dashboard state, invoices, sponsor credits, governed compute costs, and durable follow-up workflows.
+What is implemented today is the web-first Delegate wedge: public representative pages, web chat, pricing tiers, recharge-entry UI, paid continuation semantics, wallet-like dashboard state, invoice records, sponsor credits, governed compute costs, and durable follow-up workflows.
 
 What is not implemented yet: generic AMN Pay, WeChat Pay, Alipay, Stripe aggregation, withdrawals, Merkle proof publication, open wallet APIs, or full settlement automation.
 
-Telegram remains special: Telegram bot digital goods and services should continue following Telegram's rules, including Telegram Stars where required. AMN Pay is a future web/unified recharge path, not a reason to bypass platform policy.
+Telegram remains future channel infrastructure for this product direction. If Delegate later ships bot-based digital goods and services, they should follow Telegram's rules, including Telegram Stars where required. AMN Pay is a future web/unified recharge path, not a reason to bypass platform policy.
 
 ## Architecture Principles
 
@@ -92,7 +92,7 @@ Delegate is built around a few hard boundaries:
 
 ```text
 apps/
-  bot/              Telegram runtime
+  bot/              Optional Telegram runtime foundation
   compute-broker/   Isolated compute and browser broker
   reps/             Public representative pages and public chat
   site/             Marketing website
@@ -230,7 +230,7 @@ If Temporal configuration is incomplete, Delegate falls back to `local_runner` r
 The default `.env.example` is safe for local development. Important settings:
 
 - `DATABASE_URL` points Prisma to Postgres.
-- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, and `TELEGRAM_WEBHOOK_SECRET` enable the Telegram bot.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, and `TELEGRAM_WEBHOOK_SECRET` enable the optional Telegram bot foundation, but the first Delegate product version is web-first.
 - `REP_PUBLIC_CHAT_SESSION_SECRET` can override the public-chat cookie signing secret. If unset, the reps app falls back to `TELEGRAM_WEBHOOK_SECRET` and then a local development secret.
 - `DELEGATE_MODEL_ENABLED`, `DELEGATE_MODEL_PROVIDER`, `DELEGATE_OPENAI_MODEL`, and `DELEGATE_ANTHROPIC_MODEL` control model-backed representative replies.
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `ARK_API_KEY` enable live provider calls.
@@ -265,14 +265,7 @@ pnpm docker:down
 pnpm registry:search:clawhub "qualification"
 ```
 
-Telegram compute examples in a representative private chat:
-
-```text
-/compute pwd
-/compute read README.md
-/compute write notes/demo.txt ::: hello from delegate
-/compute browser https://example.com
-```
+The first product path to dogfood is the browser representative page at `http://localhost:3102/reps/lin-founder-rep`, plus the owner dashboard at `http://localhost:3101/dashboard?view=overview`.
 
 ## Design System
 
@@ -304,7 +297,7 @@ Delegate can:
 - answer from public representative knowledge
 - collect structured intake
 - offer paid continuation
-- create Telegram Stars invoices
+- show web-first recharge/service-depth UI and invoice records
 - show early Agent Wallet / recharge-entry state for a specific Digital Representative
 - create owner handoff requests
 - run governed compute and browser tasks through the broker
